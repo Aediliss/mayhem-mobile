@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseCsbk, csbkLine } from '../src/dsp/fleet/csbk.js';
-import { conPlusLsn } from '../src/dsp/fleet/csbk-vendor.js';
+import { conPlusLsn, parseXptGrant } from '../src/dsp/fleet/csbk-vendor.js';
 import { crcCcitt, DMR_CRC_MASK, dmrDataBurst } from '../src/dsp/fleet/codes.js';
-import { lcBytes } from '../src/dsp/fleet/lc.js';
+import { lcBytes, rs129Parity, RS_MASK } from '../src/dsp/fleet/lc.js';
 import { FleetProcessor } from '../src/dsp/fleet/fleet.js';
 import { H17_TABLE, SlcAssembler, parseSlc, readTact, slcBits, slcCachs, type Slc } from '../src/dsp/fleet/slc.js';
 import { fmModulate, toInt8 } from './lib/iq.js';
@@ -147,4 +147,44 @@ test('Dispatch: a Connect Plus control channel\'s short LC names its network and
   const sys = fleet.snapshot().systems.find(s => s.proto === 'DMR');
   assert.ok(sys);
   assert.deepEqual([sys!.label, sys!.trunk, sys!.sites[0]?.label], ['CONNECT PLUS NETWORK 5', 'CONNECT PLUS', 'site 12']);
+});
+
+// ---- Hytera XPT channel grant (full LC, FLCO 9 under FID 0x68)
+
+function xptGrantLc(repeater: number, tg: number, src: number, dt = 1): Uint8Array {
+  const b = new Uint8Array(12); b[0] = 9; b[1] = 0x68; b[2] = repeater << 4;
+  b[3] = tg >> 16; b[4] = (tg >> 8) & 255; b[5] = tg & 255; b[6] = src >> 16; b[7] = (src >> 8) & 255; b[8] = src & 255;
+  const p = rs129Parity(b), m = RS_MASK[dt]; b[9] = p[0] ^ (m >> 16); b[10] = p[1] ^ ((m >> 8) & 255); b[11] = p[2] ^ (m & 255);
+  return b;
+}
+
+test('Hytera XPT channel grant: fields, Reed-Solomon checked, other LCs left alone', () => {
+  const g = xptGrantLc(2, 601, 1201);
+  assert.deepEqual(parseXptGrant(g, 1), { repeater: 2, tg: 601, src: 1201, ok: true });
+  const bad = g.slice(); bad[4] ^= 0x5a; bad[7] ^= 0x33; assert.equal(parseXptGrant(bad, 1)?.ok, false);
+  assert.equal(parseXptGrant(lcBytes({ group: true, dst: 601, src: 1201, fid: 0x68 }, 1), 1), null);
+});
+
+test('Dispatch: an XPT channel grant on one repeater maps the granted repeater number to the carrier its call is on', { timeout: 120_000 }, () => {
+  // repeater A: an XPT site state (free repeater 3; it puts the carrier in a system), then voice headers carrying the
+  // XPT grant to repeater 2
+  const siteState = csbk(10, 0x68, [[0, 4, 3]]), grant = xptGrantLc(2, 601, 1201), idle = new Uint8Array(12);
+  const aB: Uint8Array[] = []; for (let i = 0; i < 240; i++) aB.push(i & 1 ? (i % 4 === 1 ? dmrDataBurst(1, 1, 3, siteState) : dmrDataBurst(1, 1, 1, grant)) : dmrDataBurst(0, 1, 9, idle));
+  // repeater 2: the call's own voice headers (TG 601 from 1201) on TS1
+  const hdr = lcBytes({ group: true, dst: 601, src: 1201, fid: 0x68 }, 1);
+  const bB: Uint8Array[] = []; for (let i = 0; i < 240; i++) bB.push(i & 1 ? dmrDataBurst(1, 1, 9, idle) : dmrDataBurst(0, 1, 1, hdr));
+  const iq = mix([fsk(aB), CC - CENTER], [fsk(bB), TRAFFIC - CENTER]);
+  const fleet = new FleetProcessor(null);
+  const t0 = Date.UTC(2026, 10, 26, 12); let sent = 0;
+  fleet.now = () => t0 + (sent / RATE) * 1000;
+  fleet.centerHz = CENTER; fleet.reset(RATE);
+  const i8 = toInt8(iq, 100), BUF = 131072;
+  for (let o = 0; o < i8.length; o += BUF) { const b = i8.subarray(o, Math.min(i8.length, o + BUF)); fleet.onIq(b, RATE); sent += b.length / 2; }
+  const snap = fleet.snapshot();
+  const sys = snap.systems.find(s => s.trunk === 'HYTERA XPT');
+  assert.ok(sys, `systems: ${JSON.stringify(snap.systems.map(s => [s.key, s.trunk]))}`);
+  assert.deepEqual(sys!.lpcns.map(l => [l.lpcn, Math.abs(l.hz - TRAFFIC) < 5_000]), [[2, true]]);
+  const call = snap.calls.find(c => c.tg === 601 && c.sys === sys!.key);
+  assert.ok(call, `calls: ${JSON.stringify(snap.calls.map(c => [c.sys, c.tg, c.hz, c.slot]))}`);
+  assert.equal(call!.src, 1201);
 });

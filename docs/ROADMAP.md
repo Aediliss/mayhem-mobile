@@ -84,7 +84,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | MPT1327 — in Dispatch via the plug-in hook | SDRTrunk `module/decode/mpt1327`, `edac/CRCFleetsync` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · MPT1327 spec PDF not reachable (Ofcom 403) |
 | [x] | | DMR Tier III: Connect Plus, Hytera XPT (control blocks; see notes for what is left) | SDRTrunk `module/decode/dmr/message/data/csbk/motorola/ConnectPlus*`, `.../hytera/Hytera*` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · DSD-FME not used (its BCH routine is non-commercial only, see EDACS) |
 | [x] | | DMR short LC (CACH): Connect Plus network/site, Hytera XPT free repeater | ETSI TS 102 361-1 (BPTC(68,36), CRC-8); SDRTrunk `lc/shorty`, `bptc/BPTC_68_36` | SDRTrunk GPL-3.0-or-later ✔ |
-| [ ] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
+| [x] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
 | [x] | | Two-tone sequential receive named: Motorola Quick Call II (reeds, cap code, call kind, group call), GE Type 99 | Midian Electronics tone signaling charts (tables, timings); PGHscanner/qsl.net k3fs QC-II table (cross-check) | facts (frequencies, timings) only; no code copied |
 | [ ] | | GE Star (digital ANI) | none found: no published description | — (skipped until a spec turns up) |
 | [x] | | Alias import (RadioReference CSV / OP25 tags / SDRTrunk XML) → names in Dispatch | file formats only (RadioReference CSV export, OP25 tag TSV, SDRTrunk playlist XML) | no code used; formats implemented from their layout |
@@ -390,3 +390,18 @@ for "or later" first.
   Connect Plus recording in Dispatch shows "TG 4321 · FD Main" on the call card and "FD Main" on its tile.
   Hardware: none needed; with any system Dispatch hears, import its RadioReference talkgroup CSV (Database → the
   system → talkgroups → download), scoped to its protocol, and the talkgroups should read by name.
+- **Phase 6 · Hytera XPT channel grant** (`parseXptGrant` in `dsp/fleet/csbk-vendor.ts`, tests in
+  `test/dmr-vendor.test.ts`): the full LC with opcode 9 under Hytera's feature set (repeater 4 bits, talkgroup, caller),
+  checked by the LC's Reed-Solomon(12,9), which upstream's `parseLc` dropped (it reads opcodes 0 and 3 only). Logged
+  always; on a carrier already in a DMR system it marks the system HYTERA XPT, lists a grant with the repeater number as
+  its logical channel, and lets Dispatch learn that repeater's carrier from the voice header that follows there (as for
+  DMR logical channels). The grant does not carry a time slot: it is listed on the slot it was heard on and matched to
+  a voice header on either. Upstream touch points (FORK, `fleet.ts`): an import, one line after `parseLc` in
+  `dmrBurst`, and `xptGrant` in a FORK block.
+  Tests prove: fields; a corrupted LC fails its check; a plain Hytera group voice LC is not taken for a grant;
+  Dispatch's real engine, with repeater A sending an XPT site state and grants to repeater 2 and repeater 2 carrying
+  TG 601's voice headers, maps repeater 2 to its carrier and lists TG 601 from 1201 in the HYTERA XPT system.
+  Not confirmed on air: the time slot of the call a grant sends to (taken from the burst it came in); an XPT repeater
+  whose carrier sent no CSBK has no system yet, so its grants are only logged.
+  Hardware: as for Hytera XPT above; after a few calls the system's logical channels should list repeater numbers with
+  their frequencies.
