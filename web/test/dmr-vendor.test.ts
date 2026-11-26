@@ -8,6 +8,7 @@ import { conPlusLsn } from '../src/dsp/fleet/csbk-vendor.js';
 import { crcCcitt, DMR_CRC_MASK, dmrDataBurst } from '../src/dsp/fleet/codes.js';
 import { lcBytes } from '../src/dsp/fleet/lc.js';
 import { FleetProcessor } from '../src/dsp/fleet/fleet.js';
+import { H17_TABLE, SlcAssembler, parseSlc, readTact, slcBits, slcCachs, type Slc } from '../src/dsp/fleet/slc.js';
 import { fmModulate, toInt8 } from './lib/iq.js';
 
 /** A CSBK: opcode, feature set, then 64 payload bits given as [offset, width, value] from the first payload bit; CRC'd. */
@@ -95,4 +96,55 @@ test('Dispatch: a Connect Plus grant lists the call, the voice header on the gra
   assert.ok(call, `calls: ${JSON.stringify(snap.calls.map(c => [c.tg, c.hz, c.slot]))}`);
   assert.deepEqual([call!.proto, call!.src, call!.slot], ['DMR', 1234567, 1]);
   assert.ok(Math.abs(call!.hz - TRAFFIC) < 5_000, `call at ${call!.hz}`);
+});
+
+// ---- short LC (CACH)
+
+function slcThrough(cachs: Uint8Array[]): Slc[] {
+  const a = new SlcAssembler(), out: Slc[] = []; a.onSlc = x => out.push(x);
+  for (const c of cachs) a.push(c);
+  return out;
+}
+const PAYLOAD_POS = [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 15, 16, 17, 19, 20, 21, 23];
+
+test('short LC: Hamming(17,12) from x^5+x^2+1 equals SDRTrunk\'s table; round trip, corrections, rejections', () => {
+  // SDRTrunk edac/Hamming17.java CHECKSUMS for the 12 data bits (GPL-3.0; used here as test vectors only)
+  assert.deepEqual(H17_TABLE, [0x1B, 0x1F, 0x1D, 0x1C, 0x0E, 0x07, 0x11, 0x1A, 0x0D, 0x14, 0x0A, 0x05]);
+  const con = slcBits(10, (5 << 12) | (12 << 4));                     // Connect Plus control channel, network 5, site 12
+  assert.deepEqual(parseSlc(con), { kind: 'conplus', control: true, net: 5, site: 12, text: 'CONNECT PLUS CONTROL CHANNEL · NETWORK 5 · SITE 12' });
+  const cachs = slcCachs(con);
+  assert.deepEqual(cachs.map(c => readTact(c).lcss), [1, 3, 3, 2]);
+  assert.deepEqual(slcThrough(cachs).map(x => x.kind), ['conplus']);
+  // one flipped bit in each fragment: each lands in a different row or the parity row, and is corrected
+  for (let k = 0; k < 4; k++) { const bad = cachs.map(c => c.slice()); bad[k][PAYLOAD_POS[5]] ^= 1; assert.equal(slcThrough(bad).length, 1, `fragment ${k}`); }
+  // many flipped bits: rejected, not miscorrected
+  const worse = cachs.map(c => c.slice()); for (const p of [1, 3, 6, 9, 13]) worse[1][p] ^= 1; for (const p of [2, 5, 10]) worse[2][p] ^= 1;
+  assert.deepEqual(slcThrough(worse), []);
+  // a fragment missing: nothing (and the next whole one still decodes)
+  assert.deepEqual(slcThrough([cachs[0], cachs[1], cachs[3], ...cachs]).map(x => x.kind), ['conplus']);
+  // Hytera XPT: vendor 0x68 under opcode 8, the access-type bit of the TACT flipped
+  const xpt = slcThrough(slcCachs(slcBits(8, (0x68 << 16) | (3 << 12) | (0 << 8)), true));
+  assert.deepEqual(xpt.map(x => x.text), ['HYTERA XPT · FREE REPEATER 3']);
+  assert.equal(parseSlc(slcBits(2, 0x4a94 << 8)).kind, 'params');
+});
+
+test('Dispatch: a Connect Plus control channel\'s short LC names its network and site', { timeout: 120_000 }, () => {
+  const grant = csbk(3, 0x06, [[0, 24, 1234567], [24, 24, 4321], [48, 5, 5]]);
+  const cachs = slcCachs(slcBits(10, (5 << 12) | (12 << 4)));
+  const bursts: Uint8Array[] = [];
+  for (let i = 0; i < 240; i++) {
+    const d = dmrDataBurst(i & 1, 1, 3, grant), c = cachs[i % 4];
+    for (let k = 0; k < 12; k++) d[k] = (c[2 * k] << 1) | c[2 * k + 1];
+    bursts.push(d);
+  }
+  const iq = mix([fsk(bursts), CC - CENTER]);
+  const fleet = new FleetProcessor(null);
+  const t0 = Date.UTC(2026, 10, 26, 12); let sent = 0;
+  fleet.now = () => t0 + (sent / RATE) * 1000;
+  fleet.centerHz = CENTER; fleet.reset(RATE);
+  const i8 = toInt8(iq, 100), BUF = 131072;
+  for (let o = 0; o < i8.length; o += BUF) { const b = i8.subarray(o, Math.min(i8.length, o + BUF)); fleet.onIq(b, RATE); sent += b.length / 2; }
+  const sys = fleet.snapshot().systems.find(s => s.proto === 'DMR');
+  assert.ok(sys);
+  assert.deepEqual([sys!.label, sys!.trunk, sys!.sites[0]?.label], ['CONNECT PLUS NETWORK 5', 'CONNECT PLUS', 'site 12']);
 });

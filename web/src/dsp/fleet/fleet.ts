@@ -27,6 +27,7 @@ import { PLUGINS, plugOf, plugOfKey, provePlanFor, lcnHz, type LcnPlan, type Plu
 import './edacs-plugin.js';   // FORK: registers EDACS
 import './mpt1327-plugin.js';   // FORK: registers MPT1327
 import './ltr-plugin.js';   // FORK: registers LTR / LTR Passport
+import { SlcAssembler, type Slc } from './slc.js';   // FORK: DMR short LC
 
 export const CH_RATE = 24_000;
 /** How far from its system's area a DMR unit position may resolve, and from the receiver before the area is known (km). */
@@ -518,6 +519,7 @@ export class FleetProcessor implements IqProcessor {
     ch.cw.onText = t => this.cwText(c, t);
     ch.osw.onOsw = (o, gap) => this.oswWord(c, ch, o, gap);
     for (const x of ch.plugs) x.rx.onEvents = (ev, hex) => this.plugEvents(c, x.p, x.rx, ev, hex);   // FORK: plug-in protocols
+    ch.dmr.onCach = cach => this.slcCach(c, cach);   // FORK: DMR short LC
     if (c.tdma) this.p2On(c, ch);
     this.chans.set(c.key, ch);
     { const pr = this.calls.at('', c.hz, 0); if (pr?.proto === 'SMARTNET' || (plugOf(pr?.proto) && pr?.codec === 'fm')) this.fmOn(c, ch); }   // FORK: + plug-in analog calls
@@ -1083,6 +1085,29 @@ export class FleetProcessor implements IqProcessor {
     });
   }
   // FORK: end of plug-in protocols
+
+  // FORK: ------------------------------------------------------------------------------------ DMR short LC (slc.ts)
+  // The CACH's short LC: Connect Plus says its network and site, Hytera XPT its free repeater. Read on a carrier
+  // already known as DMR; it labels the system the carrier's CSBKs or voice already put it in.
+  private readonly slcAsm = new Map<number, SlcAssembler>();
+  /** Per carrier: the site number its short LC gave (Connect Plus). */
+  private readonly slcSite = new Map<number, number>();
+  private slcCach(c: Carrier, cach: Uint8Array): void {
+    if (c.cls !== 'DMR') return;
+    let a = this.slcAsm.get(c.key);
+    if (!a) { a = new SlcAssembler(); a.onSlc = (x, bits) => this.slcRead(c, x, bits); this.slcAsm.set(c.key, a); }
+    a.push(cach);
+  }
+  private slcRead(c: Carrier, x: Slc, bits: Uint8Array): void {
+    const now = this.now(), s = c.sys ? this.systems.get(c.sys) : undefined;
+    if (s?.proto === 'DMR') {
+      if (x.kind === 'conplus') { s.trunk = 'CONNECT PLUS'; s.model = 'CONNECT PLUS'; s.net = x.net; this.slcSite.set(c.key, x.site); this.pending = true; }
+      else if (x.kind === 'xpt') { s.trunk = 'HYTERA XPT'; this.pending = true; }
+    }
+    let hx = ''; for (let i = 0; i < 36; i += 4) hx += ((bits[i] << 3) | (bits[i + 1] << 2) | (bits[i + 2] << 1) | bits[i + 3]).toString(16);
+    this.addLog({ ms: now, hz: c.hz, proto: 'DMR', name: 'SHORT LC', text: `CC ${c.cc} · SHORT LC · ${x.text}`, hex: hx, ok: true });
+  }
+  // FORK: end of DMR short LC
 
   // ------------------------------------------------------------------------------------------------ P25
   private p25Frame(c: Carrier, nac: number, duid: number): void {
@@ -1659,7 +1684,8 @@ export class FleetProcessor implements IqProcessor {
       const call = g.find(c => c.callsign)?.callsign ?? '', keys = new Set(g.map(c => c.key));
       const lcns = [...s.lcns].filter(([, v]) => keys.has(gridKey(v.hz)) || g.some(c => c.hz === v.hz)).map(([lcn, v]) => ({ lcn, hz: v.hz, slot: v.slot })).sort((a, b) => a.lcn - b.lcn);
       const ids = new Set<number>(); for (const c of g) for (const id of c.unitIds.keys()) ids.add(id);
-      return { key: `${s.key}/${n}`, label: call || (s.net >= 0 ? `site ${s.net}` : `site ${n}`), rfss: -1, site: n, nac: -1, ccHz: g.map(c => c.hz).sort((a, b) => a - b),
+      const slcSite = g.map(c => this.slcSite.get(c.key)).find(v => v !== undefined);   // FORK: a Connect Plus site from the short LC
+      return { key: `${s.key}/${n}`, label: call || (slcSite !== undefined ? `site ${slcSite}` : s.net >= 0 ? `site ${s.net}` : `site ${n}`), rfss: -1, site: slcSite ?? n, nac: -1, ccHz: g.map(c => c.hz).sort((a, b) => a - b),   // FORK: + short LC site
         lastMs: Math.max(...g.map(c => c.lastMs)), levelDb: Math.max(...g.map(c => c.levelDb)), neighbors: [], secondary: [], time: '', callsign: call,
         carriers: g.map(c => c.key), lcns, rest: s.rest, busy: s.busy, idens: [], units: ids.size, lra: -1, cls: -1 };
     });

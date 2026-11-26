@@ -83,7 +83,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | LTR / LTR Passport — in Dispatch via the plug-in hook | SDRTrunk `module/decode/ltrstandard`, `passport`, `edac/CRCLTR`, `CRCPassport` | SDRTrunk GPL-3.0-or-later ✔ (file headers); no public spec |
 | [x] | ★ | MPT1327 — in Dispatch via the plug-in hook | SDRTrunk `module/decode/mpt1327`, `edac/CRCFleetsync` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · MPT1327 spec PDF not reachable (Ofcom 403) |
 | [x] | | DMR Tier III: Connect Plus, Hytera XPT (control blocks; see notes for what is left) | SDRTrunk `module/decode/dmr/message/data/csbk/motorola/ConnectPlus*`, `.../hytera/Hytera*` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · DSD-FME not used (its BCH routine is non-commercial only, see EDACS) |
-| [ ] | | DMR short LC (CACH): Connect Plus network/site, Hytera XPT free repeater and XPT channel grant (full LC opcode 9) | SDRTrunk `lc/shorty`, `lc/full/hytera` | SDRTrunk GPL-3.0-or-later ✔ |
+| [x] | | DMR short LC (CACH): Connect Plus network/site, Hytera XPT free repeater | ETSI TS 102 361-1 (BPTC(68,36), CRC-8); SDRTrunk `lc/shorty`, `bptc/BPTC_68_36` | SDRTrunk GPL-3.0-or-later ✔ |
+| [ ] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
 | [ ] | | Two-tone sequential (QC-II) receive, GE Star | upstream `ui_test` (TX) tables | in-repo |
 | [ ] | | Alias import (RadioReference / OP25 / SDRTrunk CSV/TSV) | OP25 | OP25 (boatbod) GPL-3.0-or-later ✔ (headers) |
 
@@ -332,3 +333,22 @@ for "or later" first.
   Dispatch on the band. A Connect Plus control channel should be labelled CONNECT PLUS · COLOR CODE n, grants should list
   with talkgroup and source, and after a few calls each LCN should show its repeater's frequency; Hytera XPT repeaters
   should be labelled HYTERA XPT with preamble callers listed as units.
+- **Phase 6 · DMR short LC** (`dsp/fleet/slc.ts`, tests in `test/dmr-vendor.test.ts`): the 24-bit CACH at the head of
+  every base-station burst: TACT checked by its Hamming(7,4) (Hytera XPT's flipped access-type bit accepted), the four
+  17-bit fragments put together by their LCSS (first, continuation, continuation, last; a single fragment carries no
+  check and is not read), de-interleaved (17 mod 67), each Hamming(17,12) row corrected (the code built from its
+  generator x^5+x^2+1), the column-parity row checked (one column off = a bad parity bit), then the CRC-8
+  (x^8+x^2+x+1). Read: Connect Plus control / traffic channel (network, site), Hytera XPT channel (free repeater,
+  priority call), control / traffic system parameters, Capacity Plus rest channel; anything else is logged.
+  On a carrier already classed DMR: Connect Plus puts its network on the system (label CONNECT PLUS NETWORK n) and its
+  site on the site row (site n); XPT marks the system HYTERA XPT. Upstream touch points (FORK): `rx.ts` DmrFramer gains
+  `onCach` (one line where each burst is emitted); `fleet.ts` wires it in `open()`, a FORK block reads it, and the DMR
+  site label prefers the short LC's site.
+  Tests prove: the derived Hamming table equals SDRTrunk's; round trip; one bad bit in any fragment corrected (rows and
+  parity row); a burst of bad bits rejected, not miscorrected; a missing fragment yields nothing and the next whole
+  message still decodes; XPT with the scrambled TACT; Dispatch's real engine labels a Connect Plus control channel
+  CONNECT PLUS NETWORK 5, site 12. Browser check (Chromium): the system and call card read CONNECT PLUS NETWORK 5.
+  Seen on the way (upstream, not changed): a traffic repeater's voice header heard before Dispatch has mapped its
+  logical channel makes a short-lived call with no system beside the granted one.
+  Hardware: as for Connect Plus / XPT above. A Connect Plus control channel should become CONNECT PLUS NETWORK n with its
+  site number; the log should show SHORT LC rows on Connect Plus and XPT repeaters.
