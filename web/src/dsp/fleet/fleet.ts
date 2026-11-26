@@ -12,6 +12,7 @@ import { RealFir, lowpassTaps } from '../ham/filters.js';
 import { crc12Ok, DMR_CRC_MASK, hex } from './codes.js';
 import { parseTsbk, resolveChannel, svcFlags, tsbkLine, h, type Field, type Iden, type Tsbk } from './tsbk.js';
 import { parseCsbk, unwrap16, csbkLine, VendorCheck, type Csbk } from './csbk.js';
+import { parseXptGrant } from './csbk-vendor.js';   // FORK: Hytera XPT channel grant
 import { SymbolRx, P25Framer, DmrFramer, CwReader, looksLikeCallsign, slice, type P25Block, type DmrEvent } from './rx.js';
 import { P25Decoder } from '../ham/p25.js';
 import './vocoders.js';
@@ -1109,6 +1110,22 @@ export class FleetProcessor implements IqProcessor {
   }
   // FORK: end of DMR short LC
 
+  // FORK: Hytera XPT channel grant (csbk-vendor.ts). XPT has no control channel: a voice LC header on one repeater says
+  // which repeater (1-15) the call goes to. It is listed as a grant with that repeater as its logical channel, and the
+  // repeater's carrier is learnt the way DMR logical channels are, from the voice header that follows on it. The grant
+  // does not say the time slot: it is listed on the slot it was heard on and matched on either.
+  private xptGrant(c: Carrier, slot: number, x: { repeater: number; tg: number; src: number }, now: number): void {
+    const s = c.sys ? this.systems.get(c.sys) : undefined;
+    this.addLog({ ms: now, hz: c.hz, proto: 'DMR', name: 'XPT CHANNEL GRANT', text: `CC ${c.cc} · TS${slot + 1} · HYTERA XPT CHANNEL GRANT · TG ${x.tg} ← ${x.src} · REPEATER ${x.repeater}`, hex: '', ok: true });
+    if (!s || s.proto !== 'DMR' || !x.tg || x.repeater < 1) return;
+    s.trunk = 'HYTERA XPT';
+    const hz = s.lpcnHz.get(x.repeater) ?? 0;
+    this.pendingGrants = this.pendingGrants.filter(g => now - g.ms < 3_000);
+    for (const sl of [0, 1]) this.pendingGrants.push({ sys: s.key, tg: x.tg, group: true, lpcn: x.repeater, slot: sl, ms: now });
+    this.grant(s.key, { ms: now, lastMs: now, sys: s.key, kind: 'grant', tg: x.tg, group: true, src: x.src, ch: `REPEATER ${x.repeater}`, hz, slot, tdma: false, emergency: false, encrypted: false, carrierHz: c.hz, site: '', lpcn: x.repeater, chDerived: hz > 0 }, false);
+    if (x.src) this.touchUnit(s.key, x.src, c, now, 'grant', { hex: '', line: `XPT grant TG ${x.tg} on repeater ${x.repeater}` }, '', x.tg);
+  }
+
   // ------------------------------------------------------------------------------------------------ P25
   private p25Frame(c: Carrier, nac: number, duid: number): void {
     const now = this.now();
@@ -1220,6 +1237,7 @@ export class FleetProcessor implements IqProcessor {
       if (c.role !== 'control' && c.role !== 'rest') c.role = 'voice';
       this.pending = true;
       const lc = parseLc(b.bytes, b.dt);
+      if (!lc) { const x = parseXptGrant(b.bytes, b.dt); if (x?.ok) this.xptGrant(c, b.slot, x, now); }   // FORK: Hytera XPT channel grant (csbk-vendor.ts)
       if (lc?.ok) {
         // a terminator labels the call it ends; on its own it is no call
         if (b.dt === 1 || this.calls.onAirAt(c.sys, c.hz, b.slot)) {

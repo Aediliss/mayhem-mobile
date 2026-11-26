@@ -45,6 +45,9 @@ import type { Burst } from './dsp/analyzer/capture.js';
 import { Tx, type SigMode } from './tx.js';
 import * as Apps from './tx-apps.js';
 import type { Aircraft } from './dsp/adsb.js';
+import type { AcTrack } from './dsp/modeac.js';   // FORK: Mode A/C
+/** FORK: Mode A/C codes heard as tracks (the worker's latest list). */
+let modeAc: AcTrack[] = [];
 import type { Vessel } from './dsp/ais.js';
 import type { AprsStation } from './dsp/aprs.js';
 import { aprsSymbolName } from './aprs-info.js';
@@ -84,7 +87,7 @@ import { LoraLocal } from './dsp/lora/local.js';
 import { SONDE_BANDS, SONDE_WIDE, SONDE_NARROW, wideCenter as sondeWideCenter, narrowWindows as sondeWindows, type SondeChannelRow } from './dsp/sonde/front.js';
 import type { SondeRow } from './dsp/sonde/track.js';
 import type { HamMode, AgcMode } from './dsp/ham/demod.js';
-import { SATS, Sgp4, look, doppler, passes, fetchTles, type Tle, type Pass, dopplerUp, type SatService } from './sat.js';
+import { SATS, Sgp4, look, doppler, passes, fetchTles, type Tle, type Pass, dopplerUp, type SatService, retiredText } from './sat.js';   // FORK: + retiredText
 import { ISM_COUNTS } from './dsp/ism/counts.js';
 import type { CellSnap, CellRow, SibRec as CellSibRec } from './dsp/cell/cell.js';
 import type { FeedRow as CellFeedRow } from './dsp/cell/feed.js';
@@ -2887,6 +2890,8 @@ function satRefresh(recomputePasses = false): void {
   const how = q('#sat-how');
   if (how) how.textContent = `${svc.up ? 'Two-way, license needed to transmit. ' : 'Receive only. '}${svc.how ?? ''}`.trim();
   const info = q('#sat-now');
+  // FORK: a decommissioned satellite is still in orbit (CelesTrak still has its TLE) but sends nothing: no passes to chase
+  if (cur.def.retired) { if (info) info.innerHTML = `<div class="kv"><span>${cur.def.name}</span><span>${retiredText(cur.def)} · no longer transmitting · tuned so you can confirm the silence</span></div>`; const plr = q('#sat-passes'); if (plr) plr.innerHTML = '<div class="empty">retired · passes not listed</div>'; return; }
   if (!cur.sgp) { if (info) info.innerHTML = `<div class="kv"><span>${cur.def.name}</span><span>${s.tles.size ? 'no orbit data from CelesTrak — retired or renamed; the receiver is tuned anyway' : 'waiting for orbit data…'}</span></div>`; const pl0 = q('#sat-passes'); if (pl0) pl0.innerHTML = '<div class="empty">no TLE, no passes</div>'; return; }
   if (!home) { if (info) info.innerHTML = `<div class="kv"><span>${cur.def.name}</span><span>allow location to get look angles, Doppler and passes</span></div>`; return; }
   const now = Date.now(), l = look(cur.sgp, now, home.lat, home.lon);
@@ -2963,7 +2968,7 @@ function renderSat(view: HTMLElement, tabs: string): void {
       <span id="ham-tone" hidden>—</span>
       <div id="scope" class="panel"></div></section>
     <section class="controls">${tabs}
-      ${hsHtml(`<div class="tiles auto">${SATS.map(x => `<button class="tl" data-sat="${x.norad}"><b>${x.name}</b><small>${x.services.map(v => v.name).join(' · ')}</small></button>`).join('')}</div>`)}
+      ${hsHtml(`<div class="tiles auto">${SATS.map(x => `<button class="tl ${x.retired ? 'dim' : ''}" data-sat="${x.norad}"${x.retired ? ` title="${retiredText(x)}: no longer transmitting"` : ''}><b>${x.name}</b><small>${x.retired ? 'RETIRED' : x.services.map(v => v.name).join(' · ')}</small></button>`).join('')}${'' /* FORK: retired satellites dimmed */}</div>`)}
       <div id="sat-what" class="about"></div>
       <div class="rl offers">WHAT IT OFFERS · tap to set the receiver up for it</div>${hsHtml('<div id="sat-services" class="tiles auto"></div>')}
       <div id="sat-how" class="about"></div>
@@ -3974,7 +3979,7 @@ function renderPacket(view: HTMLElement, app: AppId): void {
     case 'pager': controls = `<div class="row">${(['flex', 'pocsag', 'both'] as const).map(w => `<button class="chip" data-pager="${w}">${w === 'both' ? 'FLEX + POCSAG' : w.toUpperCase()}</button>`).join('')}</div>` + presetHtml('CHANNEL · MHz', [['929.6125', 929_612_500], ['929.6625', 929_662_500], ['931.9375', 931_937_500], ['466.175', 466_175_000]]) + stepHtml([1e5, 12_500, 2_500]); break;
     case 'acars': controls = presetHtml('CHANNEL · MHz', [['131.550 US', 131_550_000], ['131.525 EU', 131_525_000], ['131.725 EU2', 131_725_000], ['131.450 JP', 131_450_000], ['130.025', 130_025_000]]) + `<div class="note">Registration, flight, label and text from each message, CRC checked.</div>`; break;
     case 'subghz': controls = presetHtml('BAND · MHz', [['433.92', 433_920_000], ['315.00', 315_000_000], ['868.35', 868_350_000], ['915.00', 915_000_000], ['303.875', 303_875_000]]) + `<div class="row">${(['weather', 'remotes', 'cars'] as const).map(f => `<button class="chip" data-ism="${f}">${f === 'weather' ? `WEATHER ${ISM_COUNTS.weather}` : f === 'remotes' ? `REMOTES ${ISM_COUNTS.remotes}` : `CAR KEYS ${ISM_COUNTS.cars}`}</button>`).join('')}</div>`; break;
-    case 'btle': controls = `<div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}</div>`; break;
+    case 'btle': controls = `<div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}<button class="chip" data-btleauto title="step through 37, 38 and 39">AUTO</button>${'' /* FORK: AUTO channel rotation */}</div>`; break;
   }
   // A radio that cannot reach this app's band says so right on the screen, not just in a passing status line.
   const why = radio ? blockedBecause(APP_NEEDS[app], radio.limits) : '';
@@ -3985,7 +3990,8 @@ function renderPacket(view: HTMLElement, app: AppId): void {
   scope = attach(app === 'btle' ? new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }) : tunableScope('scope', 80, 70));
   qa<HTMLButtonElement>('[data-ism]', view).forEach(b => { const f = b.dataset.ism as keyof typeof state.ism; b.classList.toggle('on', state.ism[f]); b.onclick = () => { state.ism[f] = !state.ism[f]; b.classList.toggle('on', state.ism[f]); worker?.postMessage({ type: 'ismFamilies', ...state.ism }); }; });
   qa<HTMLButtonElement>('[data-pager]', view).forEach(b => { b.classList.toggle('on', b.dataset.pager === state.pager); b.onclick = () => { state.pager = b.dataset.pager as typeof state.pager; worker?.postMessage({ type: 'pager', which: state.pager }); qa('[data-pager]').forEach(x => x.classList.toggle('on', x === b)); }; });
-  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });
+  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { setBtleAuto(false); state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });   // FORK: a channel picked stops AUTO
+  qa<HTMLButtonElement>('[data-btleauto]', view).forEach(b => b.onclick = () => setBtleAuto(!btleAuto));   // FORK: AUTO
   refreshList(app); refreshAis(); refreshBtle();
 }
 
@@ -4021,7 +4027,7 @@ function renderBle(view: HTMLElement): void {
   view.innerHTML = `
     <section class="${visCls('btle')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
     <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. Nothing will decode here. A HackRF covers 1 MHz to 6 GHz.</div>` : ''}
-      <div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}</div>
+      <div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}<button class="chip" data-btleauto title="step through 37, 38 and 39">AUTO</button>${'' /* FORK: AUTO channel rotation */}</div>
       <div id="ble-alert" class="ble-warn big" hidden></div>
       <div class="ctlrow">${segHtml(['cards', 'log'].map(v => `<button data-bleview="${v}">${v.toUpperCase()}</button>`))}${pauseClearHtml('btle')}</div>
       <div id="ble-stage" class="mt-stage"><div id="ble-cards" class="mt-cards"></div><div id="ble-detail" class="mt-detail" hidden></div></div>
@@ -4029,7 +4035,8 @@ function renderBle(view: HTMLElement): void {
       <div class="note about">One card per device, by its address: the maker from its manufacturer ID, the type from what it advertises (Find My, Tile, SmartTag, Find Hub, iBeacon, Eddystone, Fast Pair, AirPods, phones, watches). A tracker that stays near you for 20 minutes, or is still there after you move 500 m (with location allowed), is flagged. Phones and tags change their random address every 15 minutes or so, so one phone can show up as several cards over time.</div>
     </section>`;
   scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
-  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });
+  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { setBtleAuto(false); state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });   // FORK: a channel picked stops AUTO
+  qa<HTMLButtonElement>('[data-btleauto]', view).forEach(b => b.onclick = () => setBtleAuto(!btleAuto));   // FORK: AUTO
   qa<HTMLButtonElement>('[data-bleview]', view).forEach(b => b.onclick = () => { bleUi.view = b.dataset.bleview as typeof bleUi.view; refreshBle(true); });
   $('ble-cards').onclick = (e) => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-ble]'); if (c) { bleUi.sel = bleUi.sel === c.dataset.ble ? '' : c.dataset.ble!; refreshBle(true); } };
   $('ble-detail').onclick = (e) => { if ((e.target as HTMLElement).closest('[data-bdo="close"]')) { bleUi.sel = ''; refreshBle(true); } };
@@ -4047,8 +4054,8 @@ function renderBle(view: HTMLElement): void {
   }, 1000);
   refreshList('btle'); refreshBtle(); refreshBle(true);
 }
-function onBleAdv(m: { pdu: number[]; db: number; ch: number }): void {
-  const a = parseAdv(m.pdu, m.db, m.ch); if (!a) return;
+function onBleAdv(m: { pdu: number[]; db: number; ch: number; phy?: string }): void {   // FORK: + phy
+  const a = parseAdv(m.pdu, m.db, m.ch, m.phy); if (!a) return;   // FORK: + phy
   bleUi.tracker.add(a, Date.now(), bleUi.pos);
   if (state.app === 'btle') refreshBle();
 }
@@ -8391,6 +8398,7 @@ function renderAdsb(view: HTMLElement): void {
       <div id="adsb-card" class="accard" hidden></div>
       <div id="adsb-map" class="panel map"></div>
       <div id="adsb-list" class="panel list"></div>
+      <div id="adsb-modeac" class="caption" hidden></div><!-- FORK: Mode A/C tracks -->
       </section>`;
   scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
   q('#pause-adsb')?.insertAdjacentHTML('beforebegin', `<button id="adsb-full" class="ib" title="full-screen map" aria-label="full-screen map">${adsbFull ? EXIT_SVG : FULL_SVG}</button>`);
@@ -9076,7 +9084,7 @@ function clearApp(id: string): void {
   switch (id) {
     case 'ais': state.aisTable = []; state.aisSel = 0; break;
     case 'aprs': state.aprsStations = []; state.aprsSel = ''; aprsLogMs.length = 0; hamSpots.clear(); break;
-    case 'adsb': state.aircraft = []; state.frames = 0; state.adsbSel = ''; break;
+    case 'adsb': state.aircraft = []; state.frames = 0; state.adsbSel = ''; modeAc = []; break;   // FORK: + Mode A/C
     case 'devices': state.r433.heard = []; break;
     case 'btle': bleUi.tracker.clear(); bleUi.sel = ''; break;
     case 'vdl2': case 'acars': acarsUis[id].planes.clear(); acarsUis[id].stats.clear(); acarsUis[id].vdl.clear(); acarsUis[id].sel = ''; break;
@@ -9275,7 +9283,19 @@ function renderSpotCard(s: HamSpot | undefined): void {
   set('FIRST HEARD', `${ageText(now - s.firstMs)} · ${new Date(s.firstMs).toLocaleTimeString()}`);
   set('DECODES', String(s.heard));
 }
-function refreshBtle(): void { qa('[data-btle]').forEach(b => b.classList.toggle('on', Number(b.dataset.btle) === state.btleCh)); }
+function refreshBtle(): void { qa('[data-btle]').forEach(b => b.classList.toggle('on', Number(b.dataset.btle) === state.btleCh)); qa('[data-btleauto]').forEach(b => b.classList.toggle('on', btleAuto)); }   // FORK: + AUTO
+// FORK: AUTO steps the BLE receiver through the three advertising channels, 1.5 s each (an advertiser sends on all three
+// in turn, so every one is heard on one of them); it stops when a channel is picked or the app is left
+let btleAuto = false, btleAutoTimer = 0;
+function setBtleAuto(on: boolean): void {
+  btleAuto = on; if (btleAutoTimer) { clearInterval(btleAutoTimer); btleAutoTimer = 0; }
+  if (on) btleAutoTimer = window.setInterval(() => {
+    if (state.app !== 'btle') { setBtleAuto(false); return; }
+    state.btleCh = state.btleCh >= 39 ? 37 : state.btleCh + 1;
+    worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle();
+  }, 1500);
+  refreshBtle();
+}
 /** The map over the whole window with the selected aircraft and the list beside it (Esc or ⛶ again leaves). */
 let adsbFull = false;
 function setAdsbFull(on: boolean): void {
@@ -9318,7 +9338,10 @@ function acRowFill(row: HTMLElement, a: Aircraft): void {
   row.classList.toggle('nopos', a.lat === undefined);
 }
 function refreshAdsb(): void {
-  const c = q('#adsb-count'); if (c) c.textContent = `✈ ${state.frames} FRAMES · ${state.aircraft.length} AIRCRAFT`;
+  const c = q('#adsb-count'); if (c) c.textContent = `✈ ${state.frames} FRAMES · ${state.aircraft.length} AIRCRAFT${modeAc.length ? ` · ${modeAc.length} MODE A/C` : ''}`;   // FORK: + Mode A/C
+  // FORK: Mode A/C codes no Mode-S aircraft accounts for, each read as a squawk and (where it is one) a Mode C altitude
+  { const box = q('#adsb-modeac'), un = modeAc.filter(t => !t.icao), tied = modeAc.length - un.length;
+    if (box) { box.hidden = !modeAc.length; box.textContent = modeAc.length ? `MODE A/C · ${un.length ? un.slice(0, 12).map(t => `${t.squawk}${t.alt !== undefined ? ` (or ${t.alt.toLocaleString()} ft)` : ''} ×${t.count}`).join(' · ') : 'none on their own'}${tied ? ` · ${tied} matched to Mode-S aircraft` : ''}` : ''; } }
   qa('[data-adsbview]').forEach(b => b.classList.toggle('on', b.dataset.adsbview === state.adsbView));
   const el = q('#adsb-list'), mapEl = q('#adsb-map'); if (!el || !mapEl) return;
   el.hidden = !adsbFull && state.adsbView !== 'list'; mapEl.hidden = !adsbFull && state.adsbView !== 'map';
@@ -9494,7 +9517,7 @@ function renderAcCard(a: Aircraft | undefined): void {
         ${side ? `<div class="accard-side">${side}</div>` : ''}
       </div>
       <div class="accard-grid">
-        ${['ALTITUDE', 'GROUND SPEED', 'TRACK', 'CLIMB', 'POSITION', 'FROM YOU', 'HEARD', 'FIRST HEARD'].map(k => `<div><span class="k">${k}</span><span class="v" data-f="${k}">—</span></div>`).join('')}
+        ${['ALTITUDE', 'GROUND SPEED', 'TRACK', 'CLIMB', 'POSITION', 'FROM YOU', 'HEARD', 'FIRST HEARD', 'SQUAWK', 'SELECTED ALT', 'AIR DATA' /* FORK: + Mode-S rows */].map(k => `<div><span class="k">${k}</span><span class="v" data-f="${k}">—</span></div>`).join('')}
       </div>`;
     qa<HTMLButtonElement>('[data-acclose]', card).forEach(b => b.onclick = () => { state.adsbSel = ''; refreshAdsb(); });
     qa<HTMLButtonElement>('[data-acfly]', card).forEach(b => b.onclick = () => {
@@ -9508,7 +9531,13 @@ function renderAcCard(a: Aircraft | undefined): void {
   set('GROUND SPEED', a.gs !== undefined ? `${a.gs} kt` : '—');
   set('TRACK', a.track !== undefined ? `${a.track}°` : '—');
   set('CLIMB', a.vr !== undefined ? `${a.vr > 0 ? '+' : ''}${a.vr} ft/min` : '—');
-  set('POSITION', a.lat !== undefined && a.lon !== undefined ? `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}` : 'no position yet');
+  set('POSITION', a.lat !== undefined && a.lon !== undefined ? `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}` : a.modeSOnly ? 'Mode-S only: no ADS-B, no position' : 'no position yet');   // FORK: + Mode-S only
+  // FORK: the other downlink formats (dsp/modes.ts): squawk (the emergency codes named), Comm-B selected altitude, air data
+  { const sq = a.squawk, em: Record<string, string> = { '7500': 'HIJACK', '7600': 'RADIO FAILURE', '7700': 'EMERGENCY' };
+    set('SQUAWK', sq ? `${sq}${em[sq] ? ` · ${em[sq]}` : ''}${a.alert ? ' · changed' : ''}${a.spi ? ' · IDENT' : ''}${a.ground ? ' · on the ground' : ''}` : a.ground ? 'on the ground' : '—');
+    set('SELECTED ALT', a.selAlt !== undefined ? `${a.selAlt.toLocaleString()} ft${a.qnh !== undefined ? ` · QNH ${a.qnh} hPa` : ''}` : a.qnh !== undefined ? `QNH ${a.qnh} hPa` : '—');
+    const air = [a.hdg !== undefined ? `HDG ${Math.round(a.hdg)}°` : '', a.ias !== undefined ? `IAS ${a.ias} kt` : '', a.tas !== undefined ? `TAS ${a.tas} kt` : '', a.mach !== undefined ? `M${a.mach.toFixed(2)}` : '', a.roll !== undefined ? `roll ${a.roll}°` : ''].filter(Boolean);
+    set('AIR DATA', air.length ? air.join(' · ') : '—'); }
   if (state.home && a.lat !== undefined && a.lon !== undefined) { const d = distanceBearing(state.home.lat, state.home.lon, a.lat, a.lon); set('FROM YOU', `${d.km.toFixed(d.km < 10 ? 1 : 0)} km · ${(d.km * 0.539957).toFixed(0)} nmi · ${Math.round(d.deg)}°`); }
   else set('FROM YOU', state.home ? '—' : 'allow location to see');
   set('HEARD', ageText(now - a.seenMs));
@@ -9608,6 +9637,7 @@ function ensureWorker(): Worker {
       case 'atscState': atscSave(m.state); break;
       case 'fmTap': (window as unknown as { mmFmTap: unknown }).mmFmTap = { rate: m.rate, samples: m.samples }; log(`fm tap: ${(m.samples as Float32Array).length} samples @ ${m.rate}`); break;
       case 'aircraft': state.aircraft = m.list; state.frames = m.frames; refreshAdsb(); break;
+      case 'modeac': modeAc = m.tracks as AcTrack[]; refreshAdsb(); break;   // FORK: Mode A/C replies (dsp/modeac.ts)
       case 'huntPage': onHuntPage(m); break;
       case 'huntState': onHuntState(m); break;
       case 'tune': tune(m.hz as number); break;

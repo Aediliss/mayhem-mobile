@@ -10,8 +10,10 @@
  * Twin ports: core/apps/BleDevices.kt and core/apps/BleDevices.swift (same names, same constants).
  */
 import { fmtDist } from './units.js';
+import { parseExtHeader, type ExtHeader } from './dsp/ble-ext.js';   // FORK: BLE 5 extended advertising
+import { DULT_UUID, ownerState, type OwnerState } from './ble-dult.js';   // FORK: a tracker's own word on its owner
 
-const PDU_TYPES = ['ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND'];
+const PDU_TYPES = ['ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'ADV_EXT_IND'];   // FORK: + ADV_EXT_IND
 
 /** One service-data AD structure: its 16-bit UUID and the bytes after it. */
 export interface BleSvcData { uuid: number; data: number[] }
@@ -31,6 +33,8 @@ export interface BleAdv {
   appearance: number;
   /** The whole PDU in hex, header first. */
   raw: string;
+  /** FORK: the PHY it was heard on, and an extended advertisement's header (dsp/ble-ext.ts). */
+  phy?: string; ext?: ExtHeader;
 }
 
 const hex2 = (v: number) => v.toString(16).toUpperCase().padStart(2, '0');
@@ -41,7 +45,8 @@ const hex4 = (v: number) => v.toString(16).toUpperCase().padStart(4, '0');
  * bytes 2..7 the advertiser's address (least significant byte first), then the AD structures for the PDU types that
  * carry them. Returns null for a PDU too short to hold an address.
  */
-export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number): BleAdv | null {
+export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number, phy?: string): BleAdv | null {   // FORK: + phy
+  if ((pdu[0] & 0x0F) === 7) return parseExtAdv(pdu, db, ch, phy);   // FORK: extended advertising
   if (pdu.length < 8) return null;
   const p = Array.from(pdu, v => v & 0xFF);
   const type = p[0] & 0x0F;
@@ -50,10 +55,28 @@ export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number): BleAdv
   const a: BleAdv = {
     pduType: PDU_TYPES[type] ?? `PDU${type}`, mac: [7, 6, 5, 4, 3, 2].map(i => hex2(p[i])).join(':'), random: (p[0] & 0x40) !== 0,
     db, ch, name: '', flags: -1, mfr: -1, mfrData: [], uuids16: [], svc: [], txPower: null, appearance: -1,
-    raw: p.slice(0, end).map(hex2).join(''),
+    raw: p.slice(0, end).map(hex2).join(''), phy,   // FORK: + phy
   };
   if (type !== 0 && type !== 2 && type !== 4 && type !== 6) return a;
-  let q = 8;
+  readAd(a, p, 8, end);   // FORK: the AD loop moved into readAd (shared with extended advertising)
+  return a;
+}
+
+/**
+ * FORK: an ADV_EXT_IND as a device record: its address from AdvA, or for an anonymous one its advertising set
+ * ("anon set 3"), its AD structures when the header carries any.
+ */
+function parseExtAdv(pdu: ArrayLike<number>, db: number, ch: number, phy?: string): BleAdv | null {
+  const h = parseExtHeader(pdu); if (!h) return null;
+  const p = Array.from(pdu, v => v & 0xFF), end = 2 + Math.min(p[1], p.length - 2);
+  const a: BleAdv = { pduType: 'ADV_EXT_IND', mac: h.advA ?? `ANON SET ${h.adi?.sid ?? '?'}`, random: h.advARandom ?? true, db, ch, name: '', flags: -1, mfr: -1, mfrData: [], uuids16: [], svc: [],
+    txPower: h.txPower ?? null, appearance: -1, raw: p.slice(0, end).map(hex2).join(''), phy, ext: h };
+  readAd(a, h.adData, 0, h.adData.length);
+  return a;
+}
+
+/** The AD structures in p[q, end) into a. */
+function readAd(a: BleAdv, p: number[], q: number, end: number): void {   // FORK: was inline in parseAdv
   while (q < end) {
     const l = p[q];
     if (l === 0 || q + 1 + l > end) break;
@@ -69,7 +92,6 @@ export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number): BleAdv
     }
     q += 1 + l;
   }
-  return a;
 }
 
 /** Bluetooth SIG company identifiers seen most often in the wild. */
@@ -94,15 +116,15 @@ const SERVICE_MAKERS: [number, string][] = [
 ];
 
 export type BleKind = 'airtag' | 'findmy' | 'tile' | 'smarttag' | 'findhub' | 'phone' | 'computer' | 'earbuds' | 'audio'
-  | 'watch' | 'ibeacon' | 'eddystone' | 'hid' | 'tv' | 'device';
+  | 'watch' | 'ibeacon' | 'eddystone' | 'hid' | 'tv' | 'device' | 'dult';   // FORK: + dult
 /** What each kind is called on a card. */
 export const KIND_LABEL: Record<BleKind, string> = {
   airtag: 'AirTag / Find My', findmy: 'Find My', tile: 'Tile', smarttag: 'SmartTag', findhub: 'Find Hub tag', phone: 'Phone',
   computer: 'Computer', earbuds: 'Earbuds', audio: 'Speaker', watch: 'Watch', ibeacon: 'iBeacon', eddystone: 'Eddystone',
-  hid: 'Keyboard / mouse', tv: 'TV / AirPlay', device: 'Device',
+  hid: 'Keyboard / mouse', tv: 'TV / AirPlay', device: 'Device', dult: 'Tracker (DULT)',   // FORK: + dult
 };
 /** The kinds that exist to be carried and found: the ones a tracker alert is raised for. */
-export const TRACKER_KINDS: BleKind[] = ['airtag', 'findmy', 'tile', 'smarttag', 'findhub'];
+export const TRACKER_KINDS: BleKind[] = ['airtag', 'findmy', 'tile', 'smarttag', 'findhub', 'dult'];   // FORK: + dult
 
 export interface BleClass { maker: string; kind: BleKind; tracker: boolean; /** One line on what gave it away. */ why: string; extra: { name: string; value: string }[] }
 
@@ -189,6 +211,7 @@ export function classify(a: BleAdv): BleClass {
     if (s.uuid === 0xFE2C) return make(appearanceKind(a.appearance) ?? 'earbuds', 'Google Fast Pair');
   }
   const all16 = [...a.uuids16, ...a.svc.map(s => s.uuid)];
+  if (all16.includes(DULT_UUID)) return make('dult', 'DULT unwanted-tracking service');   // FORK: a tracker speaking the IETF DULT format
   if (all16.some(u => u === 0xFEED || u === 0xFEEC || u === 0xFD84)) return make('tile', 'Tile service');
   if (all16.includes(0xFD5A)) return make('smarttag', 'Samsung SmartTag');
   const ak = appearanceKind(a.appearance);
@@ -218,6 +241,8 @@ export interface BleDevice {
   movedM: number;
   /** Why it is flagged ('' when it is not). */
   alert: string;
+  /** FORK: what the tracker last said of its owner (ble-dult.ts): near, separated, or nothing. */
+  owner?: OwnerState;
 }
 
 /** Great-circle distance in meters. */
@@ -229,9 +254,11 @@ export function distM(a: { lat: number; lon: number }, b: { lat: number; lon: nu
 /** The tracker alert for a device as of now ('' when none). */
 export function trackerAlert(d: BleDevice): string {
   if (!d.tracker) return '';
+  if (d.owner === 'near owner') return '';   // FORK: it says its owner is with it: not following you (ble-dult.ts)
+  const sep = d.owner === 'separated' ? ' · SEPARATED FROM ITS OWNER' : '';   // FORK
   const mins = Math.floor((d.lastMs - d.firstMs) / 60_000);
-  if (d.movedM >= TRACKER_MOVE_M) return `${KIND_LABEL[d.kind].toUpperCase()} MOVING WITH YOU · ${fmtDist(d.movedM / 1000)} · ${mins} min`;
-  if (d.lastMs - d.firstMs >= TRACKER_ALERT_MS) return `${KIND_LABEL[d.kind].toUpperCase()} NEAR YOU FOR ${mins} MIN`;
+  if (d.movedM >= TRACKER_MOVE_M) return `${KIND_LABEL[d.kind].toUpperCase()} MOVING WITH YOU · ${fmtDist(d.movedM / 1000)} · ${mins} min${sep}`;   // FORK: + sep
+  if (d.lastMs - d.firstMs >= TRACKER_ALERT_MS) return `${KIND_LABEL[d.kind].toUpperCase()} NEAR YOU FOR ${mins} MIN${sep}`;   // FORK: + sep
   return '';
 }
 
@@ -259,6 +286,7 @@ export class BleTracker {
       d.lastPos = pos;
       d.movedM = Math.max(d.movedM, distM(d.firstPos, pos));
     }
+    { const o = ownerState(a); if (o.state !== 'not stated' || !d.owner) d.owner = o.state; }   // FORK: what it says of its owner
     d.fields = advFields(a, c, d);
     d.alert = trackerAlert(d);
     return d;
@@ -278,7 +306,9 @@ function advFields(a: BleAdv, c: BleClass, d: BleDevice): { name: string; value:
   if (d.name) f.push({ name: 'Name', value: d.name });
   f.push({ name: 'Maker', value: d.maker || 'unknown' });
   f.push({ name: 'Type', value: `${KIND_LABEL[d.kind]} · ${d.why}` });
-  f.push({ name: 'Last PDU', value: `${a.pduType} · channel ${a.ch}` });
+  f.push({ name: 'Last PDU', value: `${a.pduType} · channel ${a.ch}${a.phy ? ` · ${a.phy} PHY` : ''}` });   // FORK: + PHY
+  // FORK: extended advertising: the set, where its data goes next and on which PHY
+  if (a.ext) { const e = a.ext; f.push({ name: 'Extended advertising', value: [e.advMode, e.adi ? `set ${e.adi.sid}, data ${e.adi.did}` : '', e.aux ? `data on channel ${e.aux.channel}, ${e.aux.phy} PHY, ${e.aux.offsetUs} µs later` : '', e.sync ? 'periodic advertising' : ''].filter(Boolean).join(' · ') }); }
   f.push({ name: 'Signal', value: `${Math.round(a.db)} dB` });
   if (a.flags >= 0) f.push({ name: 'Flags', value: `0x${hex2(a.flags)}${a.flags & 0x04 ? ' · BLE only' : ''}${a.flags & 0x02 ? ' · discoverable' : ''}` });
   if (a.txPower !== null) f.push({ name: 'TX power', value: `${a.txPower} dBm` });
@@ -287,6 +317,8 @@ function advFields(a: BleAdv, c: BleClass, d: BleDevice): { name: string; value:
   if (a.uuids16.length) f.push({ name: 'Services', value: a.uuids16.map(u => `0x${hex4(u)}`).join(' ') });
   for (const s of a.svc) f.push({ name: `Service data 0x${hex4(s.uuid)}`, value: s.data.map(hex2).join(' ') || '—' });
   f.push(...c.extra);
+  // FORK: a tracker's own word on its owner (ble-dult.ts)
+  if (d.tracker) { const o = ownerState(a); f.push({ name: 'Owner', value: o.state === 'near owner' ? `with its owner (${o.how}): not following you` : o.state === 'separated' ? `separated from its owner (${o.how})${o.network !== undefined ? ` · network 0x${hex2(o.network)}` : ''}` : d.owner && d.owner !== 'not stated' ? `${d.owner} (last said)` : 'not stated: judged by time and distance' }); }
   f.push({ name: 'Packets', value: String(d.count) });
   return f;
 }

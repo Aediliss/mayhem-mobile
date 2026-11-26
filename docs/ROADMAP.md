@@ -33,17 +33,18 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [x] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
 | [x] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
-| [ ] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
+| [x] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
 
 ## Phase 2 — Quick wins and corrections
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | Satellites: NOAA 15/18/19 decommissioned (grey out, keep) | NOAA OSPO notices | facts |
-| [ ] | ★ | Full Mode-S in `dsp/adsb.ts`: DF0/4/5/11/16/20/21, Comm-B BDS 1,0/2,0/4,0/5,0/6,0, AP recovery vs known ICAOs, 1–2 bit CRC fix (DF11/17/18), "Mode-S only" aircraft | ICAO Annex 10 Vol IV, Doc 9871; pyModeS; readsb; dump1090-fa | pyModeS GPL-3.0 ✔ · readsb GPL-3.0 ✔ · dump1090-fa GPL-2.0-or-later ✔ · antirez dump1090 BSD-3 ✔ |
-| [ ] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
-| [ ] | | BLE: auto-rotate 37/38/39, extended adv headers, coded PHY if feasible, PHY per packet | Bluetooth Core 5.x Vol 6; ubertooth/libbtbb | ubertooth/libbtbb GPL-2.0-or-later ✔ (headers) |
-| [ ] | | BLE tracker-following alert (AirTag/Find My/Tile/SmartTag/Find Hub) over time + GPS distance | Apple/Google DULT draft (IETF), AirGuard research | spec; check any code |
+| [x] | ★ | Satellites: NOAA 15/18/19 decommissioned (grey out, keep) | NOAA OSPO notices | facts |
+| [x] | ★ | Full Mode-S in `dsp/adsb.ts`: DF0/4/5/11/16/20/21, Comm-B BDS 1,0/2,0/4,0/5,0/6,0, AP recovery vs known ICAOs, 1–2 bit CRC fix (DF11/17/18), "Mode-S only" aircraft | ICAO Annex 10 Vol IV, Doc 9871; pyModeS; readsb; dump1090-fa | pyModeS GPL-3.0 ✔ · readsb GPL-3.0 ✔ · dump1090-fa GPL-2.0-or-later ✔ · antirez dump1090 BSD-3 ✔ |
+| [x] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
+| [x] | | BLE: auto-rotate 37/38/39, extended adv headers, PHY per packet (coded PHY: own row below) | Bluetooth Core 5.x Vol 6 | spec only |
+| [ ] | | BLE LE Coded PHY receiver (125/500 kbit/s: FEC, pattern mapping, coded access address) | Bluetooth Core 5.x Vol 6 Part B 3.3 | spec |
+| [x] | | BLE tracker-following alert (AirTag/Find My/Tile/SmartTag/Find Hub) over time + GPS distance | IETF draft-ietf-dult-accessory-protocol-01 (Apple, Google) | spec only (IETF Trust, BCP 78); no code used |
 
 ## Phase 3 — Drones
 
@@ -84,9 +85,9 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | MPT1327 — in Dispatch via the plug-in hook | SDRTrunk `module/decode/mpt1327`, `edac/CRCFleetsync` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · MPT1327 spec PDF not reachable (Ofcom 403) |
 | [x] | | DMR Tier III: Connect Plus, Hytera XPT (control blocks; see notes for what is left) | SDRTrunk `module/decode/dmr/message/data/csbk/motorola/ConnectPlus*`, `.../hytera/Hytera*` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · DSD-FME not used (its BCH routine is non-commercial only, see EDACS) |
 | [x] | | DMR short LC (CACH): Connect Plus network/site, Hytera XPT free repeater | ETSI TS 102 361-1 (BPTC(68,36), CRC-8); SDRTrunk `lc/shorty`, `bptc/BPTC_68_36` | SDRTrunk GPL-3.0-or-later ✔ |
-| [ ] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
+| [x] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
 | [x] | | Two-tone sequential receive named: Motorola Quick Call II (reeds, cap code, call kind, group call), GE Type 99 | Midian Electronics tone signaling charts (tables, timings); PGHscanner/qsl.net k3fs QC-II table (cross-check) | facts (frequencies, timings) only; no code copied |
-| [ ] | | GE Star (digital ANI) | none found: no published description | — (skipped until a spec turns up) |
+| [ ] | | GE Star (digital ANI) — **blocked** | the only frame description found is Matthew Kaufman's STAR Encoder/Decoder Library (github.com/atmatthewat/star-encode-decode) | **GPL-2.0-only ✘** ("version 2 of the GNU General Public License", no "or later"; README offers commercial terms on request) · no published spec |
 | [x] | | Alias import (RadioReference CSV / OP25 tags / SDRTrunk XML) → names in Dispatch | file formats only (RadioReference CSV export, OP25 tag TSV, SDRTrunk playlist XML) | no code used; formats implemented from their layout |
 
 ## Phase 7 — Ham radio digital (extends Ham Radio → DIGITAL)
@@ -390,3 +391,136 @@ for "or later" first.
   Connect Plus recording in Dispatch shows "TG 4321 · FD Main" on the call card and "FD Main" on its tile.
   Hardware: none needed; with any system Dispatch hears, import its RadioReference talkgroup CSV (Database → the
   system → talkgroups → download), scoped to its protocol, and the talkgroups should read by name.
+- **Phase 6 · Hytera XPT channel grant** (`parseXptGrant` in `dsp/fleet/csbk-vendor.ts`, tests in
+  `test/dmr-vendor.test.ts`): the full LC with opcode 9 under Hytera's feature set (repeater 4 bits, talkgroup, caller),
+  checked by the LC's Reed-Solomon(12,9), which upstream's `parseLc` dropped (it reads opcodes 0 and 3 only). Logged
+  always; on a carrier already in a DMR system it marks the system HYTERA XPT, lists a grant with the repeater number as
+  its logical channel, and lets Dispatch learn that repeater's carrier from the voice header that follows there (as for
+  DMR logical channels). The grant does not carry a time slot: it is listed on the slot it was heard on and matched to
+  a voice header on either. Upstream touch points (FORK, `fleet.ts`): an import, one line after `parseLc` in
+  `dmrBurst`, and `xptGrant` in a FORK block.
+  Tests prove: fields; a corrupted LC fails its check; a plain Hytera group voice LC is not taken for a grant;
+  Dispatch's real engine, with repeater A sending an XPT site state and grants to repeater 2 and repeater 2 carrying
+  TG 601's voice headers, maps repeater 2 to its carrier and lists TG 601 from 1201 in the HYTERA XPT system.
+  Not confirmed on air: the time slot of the call a grant sends to (taken from the burst it came in); an XPT repeater
+  whose carrier sent no CSBK has no system yet, so its grants are only logged.
+  Hardware: as for Hytera XPT above; after a few calls the system's logical channels should list repeater numbers with
+  their frequencies.
+- **Phase 6 · GE Star: blocked on license** (searched 2026-11-26). What is public: vendor sheets (Midian CAD-400 /
+  CAD-MF, Cimarron CIM-1000 / CIM-2200, C Plus I) give the physical layer only: PSK at 400 bit/s on a 1600 Hz (±1.5 %)
+  carrier, unit IDs of 11 to 14 bits (to 16383), about 320 ms per ANI. No sync word, field layout or check is published.
+  The only source with the frame is Matthew Kaufman's STAR library, licensed GPL-2.0-only, which rule 4 excludes (and
+  writing a decoder from it would be a port, not an implementation from a spec). Not implemented. Ways forward: the
+  author offers other license terms (matthew@eeph.com); or a published spec / a redistributable recording with known IDs
+  to work the layout out from.
+- **Phase 1 · Analyzer protocol library** (`src/dsp/analyzer/library.ts`, `test/analyzer-library.test.ts`): upstream
+  shared protocols only inside a session file (binary, with every captured burst). Now the PROTOCOLS panel has EXPORT
+  PROTOCOLS: a small JSON file (format `mad-mobile.analyzer-protocols`, version 1) of the saved protocols alone; IMPORT
+  reads it back (also a bare array, or any JSON with a `protocols` array). Imported files are untrusted: every protocol is
+  checked field by field (sync bits, modulation, coding, symbol time, up to 64 fields with known kinds and ordered
+  bounds, the checksum's kind and numbers) and rebuilt from checked values only; malformed ones are skipped and counted.
+  Merge: an identical protocol is skipped, a taken name gets "(2)". Upstream touch points (FORK, `analyzer-ui.ts`): the
+  import, `.json` on the file input, one line in the IMPORT handler, the EXPORT PROTOCOLS button and its case, and
+  `exportLibrary` / `importLibrary` in a FORK block.
+  Tests prove: round trip; bare-array and session-JSON forms; eleven kinds of malformed entry skipped; extra keys
+  (`__proto__`, handlers) dropped without polluting objects; merge counts and renaming; an imported protocol recognizes
+  a frame with its sync word and not one of another modulation. Browser check (Chromium): IMPORT in the Analyzer saves
+  two protocols to IndexedDB, reports one unreadable, an HTML-laden name stays text, no page errors.
+  Hardware: none needed. Save a protocol from a remote in the Analyzer, EXPORT PROTOCOLS, clear the browser's data (or
+  use another browser), IMPORT the file: the remote's next press should be recognized by name.
+- **Phase 2 · NOAA 15/18/19 retired** (`sat.ts`, `main.ts`, `test/sat-retired.test.ts`): upstream already called them
+  retired in their notes. They are still in orbit, so CelesTrak still gives their TLEs and the app listed passes as for
+  a working satellite. Now `SatDef.retired` holds NOAA OSPO's decommissioning dates (NOAA-18 6 Jun 2025, NOAA-19 13 Aug
+  2025, NOAA-15 19 Aug 2025); their tiles are dimmed and read RETIRED (the date on hover), and choosing one says
+  "Decommissioned … · no longer transmitting · tuned so you can confirm the silence" with no pass list. They stay in the
+  list and still tune 137.62 / 137.9125 / 137.10 MHz. Upstream touch points (FORK): `sat.ts` (the field, `retiredText`,
+  the three dates), `main.ts` (import, tile, the info panel's early return). Tests prove the dates and that Meteor and
+  the amateur satellites are not marked. Browser check (Chromium): the NOAA 19 tile is dimmed with RETIRED, the panel
+  shows the message and no passes, Meteor M2-3 is unchanged, no page errors.
+- **Phase 2 · full Mode-S** (`src/dsp/modes.ts`, `test/modes.test.ts`): upstream read DF17/18 with an exact CRC only.
+  Now every downlink format, short (56-bit) frames included: DF17/18 with one-bit repair, two-bit repair for an aircraft
+  already heard; DF11 all-call with the interrogator code (II / SI) in its parity, one-bit repair when that code is 0
+  and the address is known; DF0/4/5/16/20/21 by address / parity (the syndrome is the address), taken only for an
+  aircraft heard in the last minute. Fields: altitude (25 ft, and the Gillham 100 ft code), squawk, flight status
+  (alert, SPI, on the ground), and the DF20/21 Comm-B register inferred among BDS 1,0 / 2,0 / 4,0 / 5,0 / 6,0 from fixed
+  bits, status bits and ranges, named only when exactly one fits (pyModeS's approach). An aircraft never heard on ADS-B
+  is marked Mode-S only; with no ADS-B, BDS 5,0's track and ground speed stand in. The CRC (generator 0x1FFF409), the
+  syndrome tables and the Gillham code are built here. Flights' aircraft card gains SQUAWK (7500 / 7600 / 7700 named,
+  changed, IDENT, on the ground), SELECTED ALT (with QNH) and AIR DATA (heading, IAS, TAS, Mach, roll), and says
+  "Mode-S only" where a position would be. Raw frames of every format go to the export bus (Beast takes 7 and 14 bytes).
+  Upstream touch points (FORK, `adsb.ts`): the import, the `Aircraft` fields, the frame loop (short frames, the checks),
+  the log line's per-DF counts, `es` on ADS-B, the merge of the new fields, `modeSApply` in a FORK block,
+  `CRC_TABLE` exported (its `checksum()` replaced by modes.ts); `main.ts`: the card's three rows and its position text.
+  Tests prove: the derived syndromes equal upstream's per-bit table; a public DF17 frame (KLM1023, 4840D6) is clean;
+  every one-bit error (bits 5-111) repaired back to the frame; a two-bit error repaired only for a known address; DF11
+  with interrogator codes 0-127 and rejected otherwise; address / parity gated on a known address; 25 ft altitude; every
+  Gillham 100 ft step from -1000 to 62 700 ft decoded by exactly one code; squawks; each Comm-B register and an empty one;
+  end to end through upstream's decoder on 2 Msps pulse-position IQ (callsign, DF4 altitude, DF5 7700, DF20 BDS 4,0,
+  a Mode-S only aircraft from DF11 + DF5); noise makes no aircraft. Browser check (Chromium): a recording in Flights
+  shows both aircraft and the card rows (7700 · EMERGENCY, 36 000 ft · QNH 1013.2, HDG 90° · IAS 250 kt · M0.60,
+  "Mode-S only" for the other), no page errors.
+  Not done: Comm-B registers beyond the five (BDS 1,7 capability, 3,0 ACAS, 4,4/4,5 meteo); BDS 5,0 vs 6,0 ambiguity is
+  left unnamed rather than settled against ADS-B as pyModeS can.
+  Hardware: Flights at 1090 MHz with an RTL-SDR or HackRF (2 Msps), near an airport with Mode-S radar coverage: the log's
+  "by DF" counts should show 4, 5, 11, 20 and 21 as well as 17; aircraft cards should gain squawks, and under en-route
+  radar (EHS airspace, e.g. most of Europe) selected altitude and air data.
+- **Phase 2 · Mode A/C replies** (`src/dsp/modeac.ts`, `test/modeac.test.ts`): written from ICAO Annex 10 Vol IV (pulse
+  positions; dump1090-fa's mode_ac.c, GPL-2.0-or-later, was the reference named here and not needed). On the same 2 Msps
+  magnitudes Flights already has: F1, 13 slots on a 1.45 µs grid and F2 at 20.3 µs, each slot read at its own time (the
+  larger of the two samples around it), set when over half the framing pulses; F1 and F2 at least 12 dB over the mean
+  and within 6 dB of each other, the X slot empty, nothing just before F1, SPI read. Spans read as Mode-S are skipped.
+  A code becomes a track after three replies within 10 s and drops after a minute of silence. Each code is read both
+  ways (squawk; Mode C Gillham altitude when D1 is clear) and tied to a Mode-S aircraft reporting that squawk or an
+  altitude within 200 ft. Flights' header counts MODE A/C and a caption under the list shows the codes no Mode-S
+  aircraft accounts for ("1200 (or … ft) ×12") and how many were matched. Upstream touch points (FORK): `adsb.ts` (import,
+  detector and tracks, the Mode-S spans, the scan after the frame loop, the `modeac` message in `publish` and `clear`),
+  `main.ts` (the message, the header count, the caption element and its text, CLEAR).
+  Tests prove: squawk reading; every 100 ft step -1000..62 700 ft is exactly one Mode C code, D1 set is no altitude;
+  32 replies of 8 codes at offsets of 0, ¼, ½ and ¾ sample with noise all decoded, SPI included; X set rejected; 0.1 s
+  of noise gives nothing; tracks need three replies, associate by squawk and by altitude, expire; end to end through
+  the ADS-B decoder among Mode-S frames (7700 tied to the aircraft squawking it, 1200 on its own). Browser check
+  (Chromium): a recording with both shows "2 MODE A/C", both matched (7700 → KLM1023, 1200 → the Mode-S only aircraft).
+  Not confirmed on air: real replies' pulse shapes at 2 Msps (0.45 µs pulses are under one sample; a receiver's filter
+  spreads them, which the "larger of two samples" read allows for); garbling from overlapping replies is not resolved.
+  Hardware: Flights at 1090 MHz, 2 Msps, within reach of an SSR radar (most airports): MODE A/C should appear in the
+  header; general-aviation squawks such as 1200 / 7000 / 2000 with no Mode-S aircraft should be listed on their own.
+- **Phase 2 · BLE: AUTO, extended advertising, PHY** (`src/dsp/ble-ext.ts`, `test/ble-ext.test.ts`): written from
+  Bluetooth Core 5.x Vol 6 (no code used). AUTO steps the receiver through channels 37 → 38 → 39, 1.5 s each, until a
+  channel is picked or the app is left. The receiver reads BLE 5's full 8-bit length and accepts ADV_EXT_IND (type 7,
+  1-255 bytes; legacy PDUs stay 6-37), its buffer grown to 260 bytes. The Common Extended Advertising header is read:
+  AdvMode, AdvA, TargetA, CTEInfo, ADI (set and data IDs), AuxPtr (secondary channel, clock accuracy, offset in µs, the
+  PHY the data goes on), SyncInfo, TX power, then any AD data. The packet log gives it a line; a device card keys it by
+  AdvA (or "ANON SET n") and shows an Extended advertising row; every packet carries the PHY it was heard on (1M on the
+  primary channels) into the card and the export bus. Upstream touch points (FORK): `btle.ts` (import, PDU names,
+  buffer, length rule, the ADV_EXT_IND report, `phy` on `ble`), `ble.ts` (import, PDU names, `BleAdv.phy/ext`,
+  `parseAdv`'s `phy` and type 7, the AD loop moved into `readAd`, the card rows), `main.ts` (AUTO chip on both control
+  rows, `setBtleAuto`, `phy` passed), `export/event.ts` (`phy` in `ble.adv`).
+  Tests prove: every header field (2M and Coded AuxPtr, 30 and 300 µs units, anonymous); a header claiming too much is
+  refused; ADV_EXT_IND through the GFSK receiver, and one of 83 bytes (past the old 48); the device record (AdvA,
+  anonymous set, AD name, PHY); legacy PDUs unchanged and over-long legacy ones still refused. Browser check (Chromium):
+  AUTO steps 38 → 39 → 37 → 38, picking 39 stops it, no page errors.
+  Not done: the auxiliary packets (AUX_ADV_IND on data channels 0-36, often on 2M) are not followed; LE Coded PHY (own
+  row).
+  Hardware: Bluetooth app with a HackRF (2 Msps), AUTO on, near phones and BLE 5 devices (recent phones, Find My / Find
+  Hub trackers, smart watches): ADV_EXT_IND lines should appear with their set and aux channel, and device cards gain an
+  Extended advertising row.
+- **Phase 2 · tracker alert: owner state** (`src/ble-dult.ts`, `test/ble-dult.test.ts`): upstream already alerted on a
+  tracker heard for 20 minutes or after you moved 500 m with it, for every tracker kind, so a friend's AirTag travelling
+  with its owner raised the same alarm as one following you. The IETF DULT draft (draft-ietf-dult-accessory-protocol-01)
+  has the accessory say whether it is with its owner. Now each tracker's own word is read: DULT service data 0xFCB2
+  (Network ID, then the near-owner bit, LSB); Find My's payload length (the long, full-key payload when away from its
+  owner); Find Hub's frame 0x41 (unwanted-tracking protection on). A tracker that says it is near its owner never alerts;
+  one that says it is separated alerts with "· SEPARATED FROM ITS OWNER"; one that says nothing (Tile, SmartTag) is judged
+  by time and distance as before. DULT-only accessories are a new tracker kind, and every tracker card gains an Owner
+  row. A separated DULT accessory keeps one address for 24 hours (15 minutes near its owner), so the per-address record
+  holds for a whole encounter. Upstream touch points (FORK, `ble.ts`): the import, the `dult` kind (union, label,
+  tracker kinds, classify), `BleDevice.owner`, the state taken in `add`, `trackerAlert`'s two rules, the Owner row.
+  Tests prove: each state reading; with its owner (Find My short, DULT bit 1) no alert after 40 min and 2 km; separated
+  Find My after 25 min and separated DULT after 1 km alert with the suffix; Tile alerts at 25 min and not at 10; the DULT
+  kind, owner and card row.
+  Not done: the draft's platform detection guidance is still a TODO in it, so the time / distance thresholds stay
+  upstream's (20 min, 500 m); trackers that rotate addresses near their owner are not linked across addresses (not
+  needed: those do not alert).
+  Hardware: Bluetooth app (AUTO on) while carrying, or travelling near, an AirTag: with its owner's phone nearby its card
+  should read "with its owner … not following you" and stay quiet; one left separated from its owner for a while
+  should read "separated" and alert after 20 minutes or 500 m.

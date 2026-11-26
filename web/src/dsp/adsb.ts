@@ -1,11 +1,19 @@
 /** ADS-B / Mode-S decoder from raw IQ at 2 Msps (dump1090 lineage; port of core/AdsbDecoder.kt + AdsbStore). */
 import type { Emit, IqProcessor } from './core.js';
+import { ModeS, type ModeSFrame } from './modes.js';   // FORK: every downlink format (modes.ts)
+import { ModeAcDetector, ModeAcTracks } from './modeac.js';   // FORK: Mode A/C replies (modeac.ts)
 
-export interface Aircraft { icao: string; flight?: string; lat?: number; lon?: number; alt?: number; gs?: number; track?: number; vr?: number; seenMs: number; firstMs: number; }
+export interface Aircraft { icao: string; flight?: string; lat?: number; lon?: number; alt?: number; gs?: number; track?: number; vr?: number; seenMs: number; firstMs: number;
+  // FORK: from the other downlink formats (modes.ts): squawk, on the ground, alert / SPI, Comm-B (selected altitude and
+  // QNH, roll, true airspeed, heading, IAS, Mach, baro and inertial rate), and whether ADS-B was heard at all
+  squawk?: string; ground?: boolean; alert?: boolean; spi?: boolean; selAlt?: number; qnh?: number; roll?: number; tas?: number; hdg?: number; ias?: number; mach?: number; baroRate?: number;
+  es?: boolean; modeSOnly?: boolean; dlVersion?: number;
+}
 
 const PREAMBLE = 8, LONG_BITS = 112, SHORT_BITS = 56, FULL_LEN = PREAMBLE + LONG_BITS;
 const AIS_CHARS = '?ABCDEFGHIJKLMNOPQRSTUVWXYZ????? ???????????????0123456789??????';
-const CRC_TABLE = [
+/** FORK: exported: the tests check modes.ts's syndromes against it (the check itself moved to modes.ts). */
+export const CRC_TABLE = [
   0x3935ea, 0x1c9af5, 0xf1b77e, 0x78dbbf, 0xc397db, 0x9e31e9, 0xb0e2f0, 0x587178, 0x2c38bc, 0x161c5e, 0x0b0e2f, 0xfa7d13, 0x82c48d, 0xbe9842, 0x5f4c21, 0xd05c14,
   0x682e0a, 0x341705, 0xe5f186, 0x72f8c3, 0xc68665, 0x9cb936, 0x4e5c9b, 0xd8d449, 0x939020, 0x49c810, 0x24e408, 0x127204, 0x093902, 0x049c81, 0xfdb444, 0x7eda22,
   0x3f6d11, 0xe04c8c, 0x702646, 0x381323, 0xe3f395, 0x8e03ce, 0x4701e7, 0xdc7af7, 0x91c77f, 0xb719bb, 0xa476d9, 0xadc168, 0x56e0b4, 0x2b705a, 0x15b82d, 0xf52612,
@@ -29,6 +37,10 @@ export class AdsbDecoder implements IqProcessor {
   private readonly icaoFrames = new Map<string, number>();
   private readonly planes = new Map<string, Aircraft>();
   private frames = 0;
+  /** FORK: the Mode-S checks (address / parity needs the addresses heard), and frames by format for the log. */
+  readonly modeS = new ModeS(); private readonly byDf = new Map<number, number>();
+  /** FORK: Mode A/C replies (modeac.ts) among the samples, and the codes heard as tracks. */
+  private readonly acDet = new ModeAcDetector(2_000_000); readonly acTracks = new ModeAcTracks(); private acReplies = 0;
   private dbg = { pre: 0, df: 0, ok: 0, fail: 0, last: 0 };
   private lastPublish = 0;
   /** Receiver position for single-frame CPR (set from the phone's geolocation). */
@@ -40,7 +52,7 @@ export class AdsbDecoder implements IqProcessor {
 
   reset(): void { this.carryLen = 0; this.cpr.clear(); this.icaoFrames.clear(); }
   /** CLEAR on the screen: forget every aircraft and the frame count, and say so, or the next frame re-sends them. */
-  clear(): void { this.planes.clear(); this.cpr.clear(); this.frames = 0; this.emit({ type: 'aircraft', list: [], frames: 0 }); }
+  clear(): void { this.planes.clear(); this.cpr.clear(); this.frames = 0; this.emit({ type: 'aircraft', list: [], frames: 0 }); this.acTracks.tracks.clear(); this.acReplies = 0; this.emit({ type: 'modeac', tracks: [], replies: 0 }); }   // FORK: + Mode A/C
 
   onIq(iq: Int8Array): void {
     const nSamp = iq.length >> 1;
@@ -59,6 +71,7 @@ export class AdsbDecoder implements IqProcessor {
     const bits = new Int32Array(LONG_BITS);
     let j = 0;
     const limit = mlen - FULL_LEN * 2;
+    const read: [number, number][] = [];   // FORK: spans read as Mode-S, which Mode A/C leaves alone
     while (j < limit) {
       if (!(m[j] > m[j + 1] && m[j + 1] < m[j + 2] && m[j + 2] > m[j + 3] && m[j + 3] < m[j] && m[j + 4] < m[j] && m[j + 5] < m[j] && m[j + 6] < m[j] &&
         m[j + 7] > m[j + 8] && m[j + 8] < m[j + 9] && m[j + 9] > m[j + 6])) { j++; continue; }
@@ -80,22 +93,31 @@ export class AdsbDecoder implements IqProcessor {
         msg[k / 8] = (bits[k] << 7) | (bits[k + 1] << 6) | (bits[k + 2] << 5) | (bits[k + 3] << 4) | (bits[k + 4] << 3) | (bits[k + 5] << 2) | (bits[k + 6] << 1) | bits[k + 7];
       }
       const df = msg[0] >> 3;
-      if (errors > 0 || (df !== 17 && df !== 18)) { j++; continue; }
-      this.dbg.df++;
-      if (this.checksum(msg, LONG_BITS) !== 0) { this.dbg.fail++; j++; continue; }
-      this.dbg.ok++;
+      // FORK: every downlink format (modes.ts): short frames too, CRC repair, interrogator codes, address / parity
+      const nb = df >= 16 ? LONG_BITS : SHORT_BITS;
+      if (errors > 0 || bits.subarray(0, nb).some(x => x === 2)) { j++; continue; }
+      if (df === 17 || df === 18) this.dbg.df++;
+      const fr = this.modeS.frame(msg, nowMs);
+      if (!fr) { if (df === 17 || df === 18) this.dbg.fail++; j++; continue; }
+      this.byDf.set(fr.df, (this.byDf.get(fr.df) ?? 0) + 1);
       this.frames++;
-      this.emit({ type: 'modes', hex: Array.from(msg, b => b.toString(16).padStart(2, '0')).join('') });   // FORK: raw frame for the export bus (Beast)
-      this.decode(msg, batch, nowMs);
-      j += (LONG_BITS + PREAMBLE) * 2;
+      this.emit({ type: 'modes', hex: Array.from(fr.bytes, b => b.toString(16).padStart(2, '0')).join('') });   // FORK: raw frame for the export bus (Beast)
+      if (fr.df === 17 || fr.df === 18) { this.dbg.ok++; this.decode(Int32Array.from(fr.bytes), batch, nowMs); }
+      else this.modeSApply(fr, batch, nowMs);
+      read.push([j, j + (nb + PREAMBLE) * 2]);   // FORK: Mode A/C skips it
+      j += (nb + PREAMBLE) * 2;   // FORK: a short frame is 56 bits
     }
+    // FORK: Mode A/C replies over the same samples (the last FULL_LEN * 2 come round again next time, as for Mode-S)
+    if (limit > 0) { let sum = 0; for (let i = 0; i < mlen; i += 7) sum += m[i]; const floor = (sum / Math.ceil(mlen / 7)) || 1;
+      for (const r of this.acDet.scan(m, 0, limit, floor, read)) { this.acTracks.add(r, nowMs); this.acReplies++; } }
     const keep = Math.min(FULL_LEN * 2, mlen);
     this.carry.set(m.subarray(mlen - keep));
     this.carryLen = keep;
     if (batch.size > 0) this.merge(batch, nowMs);
     if (nowMs - this.dbg.last > 1000) {
       this.dbg.last = nowMs;
-      this.emit({ type: 'log', line: `ADSB decode: preambles=${this.dbg.pre} df17/18=${this.dbg.df} crcOK=${this.dbg.ok} crcFAIL=${this.dbg.fail} · frames=${this.frames} aircraft=${this.planes.size}` });
+      this.emit({ type: 'log', line: `ADSB decode: preambles=${this.dbg.pre} df17/18=${this.dbg.df} crcOK=${this.dbg.ok} crcFAIL=${this.dbg.fail} · frames=${this.frames} aircraft=${this.planes.size}${this.byDf.size ? ` · by DF ${[...this.byDf].sort((a, b) => a[0] - b[0]).map(([d, n]) => `${d}:${n}`).join(' ')}` : ''}` });   // FORK: + frames by DF
+      this.byDf.clear();
       this.dbg.pre = this.dbg.df = this.dbg.ok = this.dbg.fail = 0;
       this.publish(nowMs, true);
     }
@@ -109,6 +131,7 @@ export class AdsbDecoder implements IqProcessor {
     if (seen < 2) return;   // a lone CRC-passing noise frame must not create a phantom aircraft
     let a = batch.get(icao);
     if (!a) { a = { icao, seenMs: now, firstMs: now }; batch.set(icao, a); }
+    a.es = true;   // FORK: ADS-B heard from it
     const tc = msg[4] >> 3;
     if (tc >= 1 && tc <= 4) {
       const cs = [msg[5] >> 2, ((msg[5] & 3) << 4) | (msg[6] >> 4), ((msg[6] & 15) << 2) | (msg[7] >> 6), msg[7] & 63,
@@ -149,6 +172,9 @@ export class AdsbDecoder implements IqProcessor {
       if (a.gs !== undefined) cur.gs = a.gs;
       if (a.track !== undefined) cur.track = a.track;
       if (a.vr !== undefined) cur.vr = a.vr;
+      // FORK: the other downlink formats' fields (modes.ts)
+      for (const k of ['squawk', 'ground', 'alert', 'spi', 'selAlt', 'qnh', 'roll', 'tas', 'hdg', 'ias', 'mach', 'baroRate', 'dlVersion', 'es'] as const) if (a[k] !== undefined) (cur as unknown as Record<string, unknown>)[k] = a[k];
+      cur.modeSOnly = !cur.es;
       cur.seenMs = now;
       this.planes.set(icao, cur);
     }
@@ -161,7 +187,36 @@ export class AdsbDecoder implements IqProcessor {
     for (const [k, v] of this.planes) if (now - v.seenMs > 60_000) this.planes.delete(k);
     const list = [...this.planes.values()].sort((a, b) => a.firstMs - b.firstMs);
     this.emit({ type: 'aircraft', list, frames: this.frames });
+    if (this.acReplies || this.acTracks.tracks.size) this.emit({ type: 'modeac', tracks: this.acTracks.associate(list, now), replies: this.acReplies });   // FORK: Mode A/C
   }
+
+  // FORK: ---- the other downlink formats (modes.ts) -----------------------------------------------------------
+  /** A checked DF0/4/5/11/16/20/21 frame onto its aircraft. DF11 alone makes an aircraft only on its second frame. */
+  private modeSApply(f: ModeSFrame, batch: Map<string, Aircraft>, now: number): void {
+    if (f.df === 11) { const seen = (this.icaoFrames.get(f.icao) ?? 0) + 1; this.icaoFrames.set(f.icao, seen); if (seen < 2 && !this.planes.has(f.icao)) return; }
+    let a = batch.get(f.icao);
+    if (!a) { a = { icao: f.icao, seenMs: now, firstMs: now }; batch.set(f.icao, a); }
+    if (f.alt !== undefined) a.alt = f.alt;
+    if (f.squawk !== undefined) a.squawk = f.squawk;
+    if (f.ground !== undefined) a.ground = f.ground;
+    if (f.alert !== undefined) a.alert = f.alert;
+    if (f.spi !== undefined) a.spi = f.spi;
+    const c = f.commB;
+    if (c?.callsign) a.flight = c.callsign;
+    if (c?.version !== undefined) a.dlVersion = c.version;
+    if (c?.selAlt !== undefined) a.selAlt = c.selAlt;
+    if (c?.qnh !== undefined) a.qnh = c.qnh;
+    if (c?.roll !== undefined) a.roll = c.roll;
+    if (c?.tas !== undefined) a.tas = c.tas;
+    if (c?.hdg !== undefined) a.hdg = c.hdg;
+    if (c?.ias !== undefined) a.ias = c.ias;
+    if (c?.mach !== undefined) a.mach = c.mach;
+    if (c?.baroRate !== undefined) a.baroRate = c.baroRate;
+    // with no ADS-B, Comm-B's track and ground speed stand in (BDS 5,0)
+    if (c?.trueTrack !== undefined && !this.planes.get(f.icao)?.es) a.track = Math.round(c.trueTrack);
+    if (c?.gs !== undefined && !this.planes.get(f.icao)?.es) a.gs = c.gs;
+  }
+  // FORK: end of the other downlink formats
 
   // ---- CPR ----
   private cprUpdate(icao: string, odd: boolean, rawLat: number, rawLon: number): [number, number] | null {
@@ -224,13 +279,5 @@ export class AdsbDecoder implements IqProcessor {
     return [lat, lon];
   }
 
-  private checksum(msg: Int32Array, bits: number): number {
-    let crc = 0;
-    const offset = bits === LONG_BITS ? 0 : LONG_BITS - SHORT_BITS;
-    for (let jbit = 0; jbit < bits - 24; jbit++) {
-      if (msg[jbit >> 3] & (1 << (7 - (jbit & 7)))) crc ^= CRC_TABLE[jbit + offset];
-    }
-    const rem = (msg[bits / 8 - 3] << 16) | (msg[bits / 8 - 2] << 8) | msg[bits / 8 - 1];
-    return (crc ^ rem) & 0xFFFFFF;
-  }
+  // FORK: the CRC check moved to modes.ts (syndrome(), with repair and address / parity); upstream's checksum() was here
 }

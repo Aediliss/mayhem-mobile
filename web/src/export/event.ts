@@ -54,7 +54,7 @@ export class EventAdapter {
       case 'modes': return [{ ...base(), kind: 'adsb.frame', hex: String(m.hex) }];
       case 'aisRaw': return [{ ...base(), kind: 'ais.frame', hex: hexOf(m.bytes as number[]), bits: m.bits as number }];
       case 'ax25': return [{ ...base(), kind: 'aprs.frame', hex: hexOf(m.bytes as number[]) }];
-      case 'ble': return [{ ...base(), kind: 'ble.adv', hex: hexOf(m.pdu as number[]), data: { db: m.db, ch: m.ch } }];
+      case 'ble': return [{ ...base(), kind: 'ble.adv', hex: hexOf(m.pdu as number[]), data: { db: m.db, ch: m.ch, ...(m.phy ? { phy: m.phy } : {}) } }];
       case 'r433': {
         const data = m.data as Row | undefined;
         return data ? [{ ...base(), kind: 'device', data: { ...data } }] : [];

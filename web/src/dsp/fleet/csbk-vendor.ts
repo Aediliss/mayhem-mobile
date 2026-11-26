@@ -10,6 +10,7 @@
 import { hex } from './codes.js';
 import { h, type Field } from './tsbk.js';
 import { sysCode, type Csbk } from './csbk.js';
+import { rs129Ok } from './lc.js';
 
 /**
  * Connect Plus logical slot number → repeater (LCN) and time slot (0/1). SDRTrunk takes the LSN as the field less one
@@ -94,4 +95,14 @@ export function parseVendorCsbk(b: ArrayLike<number>, c: Csbk): Csbk | null {
     default: c.name = `HYTERA CSBK ${h(c.op, 2)}`; payload();
   }
   return c;
+}
+
+/**
+ * Hytera XPT channel grant, a full link control (FLCO 9 under feature set 0x68, in a voice LC header or terminator):
+ * the repeater a call goes to, its talkgroup and caller (SDRTrunk lc/full/hytera/HyteraXptChannelGrant: CHANNEL bits
+ * 16-19, TARGET 24-47, SOURCE 48-71). Checked by the LC's Reed-Solomon(12,9) like any full LC. Null for anything else.
+ */
+export function parseXptGrant(b: ArrayLike<number>, dt: number): { repeater: number; tg: number; src: number; ok: boolean } | null {
+  if ((b[0] & 0x3f) !== 9 || b[1] !== 0x68) return null;
+  return { repeater: b[2] >> 4, tg: (b[3] << 16) | (b[4] << 8) | b[5], src: (b[6] << 16) | (b[7] << 8) | b[8], ok: rs129Ok(b, dt) };
 }
