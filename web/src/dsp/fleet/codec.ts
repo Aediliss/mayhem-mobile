@@ -6,7 +6,7 @@
  *  - 'tetra': the TETRA ACELP codec, 137-bit frames (after the speech channel decoding), 30 ms each.
  *  - 'fm': analog FM voice (Motorola Type II voice channels), demodulated on the channel itself: no codec.
  */
-export type CodecId = 'imbe' | 'ambe2' | 'tetra' | 'fm';
+export type CodecId = 'imbe' | 'ambe2' | 'tetra' | 'fm' | 'provoice';   // FORK: 'provoice' (EDACS digital) has no decoder: listed, never voiced
 export interface VoiceCodec {
   readonly id: CodecId;
   /** One frame of bits (one per byte, as sent) to 8 kHz audio (160 samples, 240 for TETRA), or null for a frame it drops. */

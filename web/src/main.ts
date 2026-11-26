@@ -28,6 +28,7 @@ import { AudioRadio, type AudioSource } from './audioradio.js';   // FORK: audio
 import { VoiceRecorder } from './voice/recorder.js';   // FORK: voice recording (Phase 1)
 import { bindVoiceSettings, voiceSettingsHtml } from './voice/ui.js';   // FORK
 import type { CallMeta } from './voice/segmenter.js';   // FORK
+import { bindTrunkSettings, loadPlans, trunkSettingsHtml } from './trunk-ui.js';   // FORK: EDACS / MPT1327 / LTR plans
 import { ExportBus, loadConfig } from './export/bus.js';   // FORK: decode export bus
 import { bindExportSettings, exportSettingsHtml } from './export/ui.js';   // FORK
 import type { WsCtor } from './export/sinks.js';   // FORK
@@ -2128,6 +2129,9 @@ function attach(s: Scope): Scope {
 
 /** Center of the waterfall span: the tuned frequency, except in HAM where the LO stays put and the channel moves. */
 const spanCenter = () => state.app === 'ham' ? state.hamLo : tunesInSpan() ? state.viewLo : state.freq;
+/** FORK: the centre the worker's samples really have. A recording that cannot follow a tune outside itself plays as
+ *  recorded, so decoders that name absolute frequencies (Dispatch, Sondes …) must be told the recording's centre. */
+const workerCentre = () => (radio instanceof FileRadio && radio.targetFreqHz ? radio.targetFreqHz : spanCenter());
 /** What the worker's classifier last saw in the span (center, −6 / −20 dB widths, class). */
 interface SeenSignal { hz: number; db: number; snr: number; bw: number; cls: string; conf: number; val: number }
 let lastSignals: SeenSignal[] = [];
@@ -5263,7 +5267,8 @@ function dispatchLockFor(sysKey: string, siteLabel = ''): DispatchLock | null {
   const hz = site?.ccHz[0] ?? x.sites.find(y => y.ccHz.length)?.ccHz[0] ?? 0;
   return { sys: x.key, site: siteLabel, label: `${fleetSysTitle(x)}${siteLabel ? ` · SITE ${siteLabel}` : ''}`, hz };
 }
-const fleetSysTitle = (sys: FleetSystem) => sys.proto === 'SMARTNET' ? `TYPE II SYS ${sys.sysId.toString(16).toUpperCase().padStart(4, '0')}` : sys.proto === 'NXDN' ? (sys.trunk === 'CONVENTIONAL' ? `NXDN RAN ${sys.sysId}` : sys.trunk === 'TYPE-D' ? `TYPE-D SITE ${sys.sysId}` : `${sys.model} SYS ${sys.sysId}`) : sys.proto === 'TETRA' ? `MCC ${sys.wacn} · MNC ${sys.sysId}` : sys.proto === 'P25' ? `WACN ${sys.wacn.toString(16).toUpperCase().padStart(5, '0')} · SYS ${sys.sysId.toString(16).toUpperCase().padStart(3, '0')}` : sys.net >= 0 ? `${sys.model} NET ${sys.net}` : sys.trunk === 'CAPACITY PLUS' ? `CAP+ CC ${sys.cc}` : `CC ${sys.cc}${sys.fid > 0 ? ` · FID ${sys.fid.toString(16).toUpperCase().padStart(2, '0')}` : ''}`;
+const fleetSysTitle = (sys: FleetSystem) => sys.proto === 'EDACS' || sys.proto === 'MPT1327' || sys.proto === 'LTR' ? sys.label : sys.proto === 'SMARTNET' ?   // FORK: + plug-ins
+  `TYPE II SYS ${sys.sysId.toString(16).toUpperCase().padStart(4, '0')}` : sys.proto === 'NXDN' ? (sys.trunk === 'CONVENTIONAL' ? `NXDN RAN ${sys.sysId}` : sys.trunk === 'TYPE-D' ? `TYPE-D SITE ${sys.sysId}` : `${sys.model} SYS ${sys.sysId}`) : sys.proto === 'TETRA' ? `MCC ${sys.wacn} · MNC ${sys.sysId}` : sys.proto === 'P25' ? `WACN ${sys.wacn.toString(16).toUpperCase().padStart(5, '0')} · SYS ${sys.sysId.toString(16).toUpperCase().padStart(3, '0')}` : sys.net >= 0 ? `${sys.model} NET ${sys.net}` : sys.trunk === 'CAPACITY PLUS' ? `CAP+ CC ${sys.cc}` : `CC ${sys.cc}${sys.fid > 0 ? ` · FID ${sys.fid.toString(16).toUpperCase().padStart(2, '0')}` : ''}`;
 /** Talkgroup preferences are kept on the device (the key names keep the app's internal id). */
 function loadDispatchPrefs(): TgPrefs {
   try { const v = JSON.parse(localStorage.getItem('mm.fleet.tgprefs') ?? 'null'); if (v && Array.isArray(v.mute) && Array.isArray(v.prio)) return { mute: v.mute, hold: typeof v.hold === 'string' ? v.hold : '', prio: v.prio }; } catch { /* storage blocked */ }
@@ -5578,7 +5583,7 @@ function fleetIdenRows(idens: FleetIden[]): string {
 function fleetSiteHtml(sys: FleetSystem, site: FleetSite, now: number): string {
   const age = now - site.lastMs, live = age < 10_000, s = fleetUi.snap;
   const cars = site.carriers.map(k => s?.carriers.find(c => c.key === k)).filter((c): c is FleetCarrier => !!c);
-  const ccs = cars.map(c => `<span class="fl-cc ${c.role}" data-flsel="car:${c.key}">${fleetMhz(c.hz)}<small>${c.role === 'rest' ? 'REST' : c.role === 'control' ? (sys.proto === 'P25' || sys.proto === 'TETRA' || sys.proto === 'SMARTNET' ? 'CONTROL' : 'REPEATER') : c.role.toUpperCase()}${c.lcn ? ` · LCN ${c.lcn}` : ''}</small></span>`).join('');
+  const ccs = cars.map(c => `<span class="fl-cc ${c.role}" data-flsel="car:${c.key}">${fleetMhz(c.hz)}<small>${c.role === 'rest' ? 'REST' : c.role === 'control' ? (sys.proto === 'P25' || sys.proto === 'TETRA' || sys.proto === 'SMARTNET' || sys.proto === 'EDACS' || sys.proto === 'MPT1327' ? 'CONTROL' : 'REPEATER') : c.role.toUpperCase()}${c.lcn ? ` · LCN ${c.lcn}` : ''}</small></span>`).join('');
   const lvl = Math.max(0, Math.min(1, site.levelDb / 50));
   let body = '';
   if (sys.proto === 'SMARTNET') {
@@ -5656,6 +5661,7 @@ function dispatchAudioNote(c: FleetCall, codecs: string[]): string {
   if (c.audioMs > 0) return '';
   if (c.decoded >= 10 && c.badFrames > 0.5 * c.decoded) return 'weak signal';
   if (c.sec === 'unknown' && c.voiceMs) return 'no voice decoded yet';
+  if (c.codec === 'provoice') return 'ProVoice digital voice: identified, not voiced';   // FORK: EDACS digital calls are never decoded
   if (!codecs.includes(c.codec)) return c.codec === 'imbe' ? 'no audio yet, the P25 full-rate vocoder is not built' : c.codec === 'tetra' ? 'no audio yet, the TETRA codec is not built' : `no audio yet, the half-rate vocoder for ${c.proto === 'DMR' ? 'DMR' : 'Phase 2'} is not built`;
   return c.voiceMs ? '' : 'voice channel not heard';
 }
@@ -5684,7 +5690,8 @@ function dispatchOnAirCard(c: FleetCall, s: FleetSnap, now: number): string {
   const lvl = Math.max(0, Math.min(1, c.levelDb / 40)), segs = 16, lit = Math.round(lvl * segs);
   const meter = Array.from({ length: segs }, (_, i) => `<i class="${i < lit ? (i >= segs - 3 ? 'hi' : 'on') : ''}"></i>`).join('');
   const note = dispatchAudioNote(c, s.codecs), key = dispatchKey(c), sel = c.group ? `tg:${esc(key)}` : `unit:${esc(c.sys)}/${c.tg}`;
-  const lpName = c.proto === 'NXDN' || c.proto === 'SMARTNET' ? 'CH' : 'LPCN', lp = c.lpcn >= 0 ? ` · ${lpName} ${c.lpcn}` : '';
+  const lpName = c.proto === 'EDACS' || c.proto === 'MPT1327' || c.proto === 'LTR' ? 'LCN' : c.proto === 'NXDN' || c.proto === 'SMARTNET' ? 'CH' : 'LPCN',   // FORK: plug-ins count LCNs
+    lp = c.lpcn >= 0 ? ` · ${lpName} ${c.lpcn}` : '';
   const ch = c.hz > 0 ? `${fleetMhz(c.hz)} MHz${c.tdma ? ` · TDMA S${c.slot + 1}` : c.proto === 'DMR' || c.proto === 'TETRA' ? ` · TS${c.slot + 1}` : ''}${lp}` : c.lpcn >= 0 ? `${lpName} ${c.lpcn}${c.proto === 'DMR' ? ` · TS${c.slot + 1}` : ''} · ${c.proto === 'SMARTNET' ? 'channel plan not proved' : 'learning its frequency'}` : 'channel not resolved';
   // the card slides in once, when the call first shows; the dot blinks with the redraws (twice a second)
   const first = fleetUi.airSeen.get(c.key) ?? now; if (!fleetUi.airSeen.has(c.key)) { fleetUi.airSeen.set(c.key, now); if (fleetUi.airSeen.size > 400) fleetUi.airSeen.delete(fleetUi.airSeen.keys().next().value as string); }
@@ -5920,7 +5927,7 @@ function fleetSysType(x: FleetSystem, s: FleetSnap): string {
   if (x.proto === 'DMR') return x.trunk === 'CAPACITY PLUS' ? 'DMR CAPACITY PLUS' : x.trunk === 'TIER III' ? 'DMR TIER III' : 'DMR';
   if (x.proto === 'NXDN') return x.trunk ? `NXDN ${x.trunk}` : 'NXDN';
   if (x.proto === 'SMARTNET') return 'MOTOROLA TYPE II';
-  return x.proto;
+  return x.proto;   // FORK: EDACS / MPT1327 / LTR name themselves
 }
 function refreshFleet(force = false): void {
   if (state.app !== 'fleet') return;
@@ -8792,7 +8799,7 @@ function renderSettings(view: HTMLElement): void {
   const over = settingsOver;
   const radioLine = radio ? (radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';   // FORK: a recording names itself
   const appRows = thisAppRows(over);
-  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['voice', 'VOICE'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT, VOICE;
+  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['voice', 'VOICE'], ['trunk', 'TRUNKING'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT, VOICE, TRUNKING;
   view.innerHTML = `
     <section class="controls settings-page">
     <input id="set-search" class="txin set-search" placeholder="Search settings" autocomplete="off" spellcheck="false">
@@ -8825,7 +8832,7 @@ function renderSettings(view: HTMLElement): void {
       <div class="kv"><span>macOS</span><span>nothing to install — just close any other SDR program that has the HackRF open</span></div>
       <div class="kv"><span>Linux</span><span>the udev rule from the hackrf package (53-hackrf.rules) grants access; replug after adding it</span></div>
       <div class="kv"><span>Keyboard</span><span>digits: wheel, click top/bottom, type · ← → tune · ↑ ↓ step size · M mode · X mute · S squelch · B bookmark · Space scan · A amp · G AGC · [ ] LNA · − = VGA · L log · Esc closes Settings, then goes home · mouse wheel over the waterfall tunes, Ctrl+wheel changes the step</span></div></div></section>
-    ${exportSettingsHtml(exportBus, { mqtt: true })}${voiceSettingsHtml(voiceRec)}${'' /* FORK: Settings → EXPORT, VOICE RECORDING */}
+    ${exportSettingsHtml(exportBus, { mqtt: true })}${voiceSettingsHtml(voiceRec)}${trunkSettingsHtml()}${'' /* FORK: Settings → EXPORT, VOICE RECORDING, TRUNKING PLANS */}
     <section class="sset" id="sec-log"><div class="sset-h">LOG</div>${srow('Log', 'Everything the radio and the decoders reported, to read, save or share', '<button id="set-log" class="tog">OPEN</button>')}</section>
     <section class="sset" id="sec-about"><div class="sset-h">ABOUT</div>
     <div class="panel about">
@@ -8847,6 +8854,7 @@ function renderSettings(view: HTMLElement): void {
     <div class="sset-sub">CREDITS · drag to steer</div>
     <div class="panel credits" id="credits"><div class="credits-roll" id="credits-roll">${(() => { const inner = CREDITS.map(([h, t]) => h ? `<h4>${esc(t)}</h4>` : `<p>${esc(t)}</p>`).join(''); return `<div class="credits-copy">${inner}</div><div class="credits-copy" aria-hidden="true">${inner}</div>`; })()}</div></div>
     </section></section>`;
+  bindTrunkSettings(view, plans => worker?.postMessage({ type: 'fleet', cmd: 'plans', plans }));   // FORK: TRUNKING PLANS
   { const vsec = q('#sec-voice', view), vrefresh = bindVoiceSettings(view, voiceRec); voiceRec.onSaved = () => { if (vsec?.isConnected) void vrefresh(); }; }   // FORK: VOICE RECORDING controls
   { const sec = q('#sec-export', view), refresh = bindExportSettings(view, exportBus, log); const t = setInterval(() => { if (!sec?.isConnected) clearInterval(t); else refresh(); }, 1000); }   // FORK: EXPORT controls (timer dies with its section)
   qa<HTMLInputElement>('[data-st]', view).forEach(i => i.oninput = () => { const k = i.dataset.st as keyof Station; const v = k === 'call' || k === 'grid' ? i.value.toUpperCase() : i.value; if (k === 'call' || k === 'grid') i.value = v; state.ham.station[k] = v; saveStation(); });
@@ -9016,7 +9024,7 @@ function refreshReadout(): void {
   scope?.setLabels(centredLabels(spanCenter(), state.rate));
   refreshSpanBar();
   document.body.classList.toggle('offspan', channelOff());
-  if (lastCenterSent !== spanCenter()) { lastCenterSent = spanCenter(); worker?.postMessage({ type: 'config', centreHz: lastCenterSent }); }
+  if (lastCenterSent !== workerCentre()) { lastCenterSent = workerCentre(); worker?.postMessage({ type: 'config', centreHz: lastCenterSent }); }   // FORK: workerCentre
   qa('[data-preset]').forEach(b => b.classList.toggle('on', Number(b.dataset.preset) === state.freq));
   highlightBands();
   refreshFav();
@@ -9534,6 +9542,7 @@ function ensureWorker(): Worker {
   if (worker) return worker;
   worker = new Worker('./build/dsp-worker.js', { type: 'module' });
   exportBus.attach(worker, () => ({ app: state.app ?? 'home', centerHz: spanCenter(), freqHz: state.freq }));   // FORK: decode export bus
+  worker.postMessage({ type: 'fleet', cmd: 'plans', plans: loadPlans() });   // FORK: trunking channel plans
   (window as unknown as { mmFeed: (m: unknown) => void }).mmFeed = (m) => worker!.onmessage!({ data: m } as MessageEvent);   // support hook: inject a worker message
   (window as unknown as { mmWorker: (m: unknown) => void }).mmWorker = (m) => worker!.postMessage(m);                             // support hook: send the worker a message
   worker.onmessage = (e: MessageEvent) => {
@@ -9723,7 +9732,7 @@ function ensureWorker(): Worker {
       case 'captureFile': { const f = m.file as File; const url = URL.createObjectURL(f); const a = document.createElement('a'); a.href = url; a.download = m.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60_000); if (m.sidecar) { const b = new Blob([m.sidecar], { type: 'text/plain' }); const u2 = URL.createObjectURL(b); const a2 = document.createElement('a'); a2.href = u2; a2.download = (m.name as string).replace(/\.c8$/, '.txt'); setTimeout(() => { a2.click(); setTimeout(() => URL.revokeObjectURL(u2), 60_000); }, 500); } break; }
     }
   };
-  worker.postMessage({ type: 'config', rate: state.rate, mode: state.mode, squelch: state.squelch, specBins: scope?.cols, centreHz: spanCenter() });
+  worker.postMessage({ type: 'config', rate: state.rate, mode: state.mode, squelch: state.squelch, specBins: scope?.cols, centreHz: workerCentre() });   // FORK: workerCentre
   lastCenterSent = spanCenter();
   if (audioPort) { worker.postMessage({ type: 'audioPort', port: audioPort }, [audioPort]); audioPort = null; }
   return worker;

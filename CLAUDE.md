@@ -51,6 +51,10 @@ All three of check / build / test must pass before an item is marked done. CI: `
 3. Reference decoders end to end: `dsp/btle.ts` (raw IQ, GFSK, CRC-24) and `dsp/ais.ts`, `dsp/aprs.ts` (own
    channelizer + AFSK + `HdlcFramer`).
 
+Trunking control channels (EDACS, MPT1327, LTR): a `TrunkPlugin` in `src/dsp/fleet/plugins.ts`, registered from its own
+`<name>-plugin.ts` and imported in fleet.ts (see `edacs-plugin.ts`). Its receiver emits generic events; fleet.ts's
+`plugEvents` does the rest. LCN plans come from Settings → TRUNKING PLANS. Digital voice: grant with an undecodable codec.
+
 rtl_433-style OOK/FSK devices: a file in `src/dsp/r433/devices/` that calls `register({...})` from
 `dsp/r433/device.ts` (see `ambient.ts`), imported in `devices/index.ts` (order = priority).
 

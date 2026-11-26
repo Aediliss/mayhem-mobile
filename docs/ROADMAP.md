@@ -79,7 +79,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | EDACS (standard + networked), ProVoice identification only — **decoder done; Dispatch integration pending** | TIA/EIA TSB-69.3; DSD-FME `edacs-fme.c`; edacs-fm; ledacs | DSD-FME ISC ✔ (COPYRIGHT: all but the D-STAR files) · edacs-fm GPL-3.0 ✔ · ledacs Unlicense ✔ · Morelos-Zaragoza BCH code "non-commercial only" ✘ not used |
+| [x] | ★ | EDACS (standard + networked), ProVoice identification only — in Dispatch via the plug-in hook | TIA/EIA TSB-69.3; DSD-FME `edacs-fme.c`; edacs-fm; ledacs | DSD-FME ISC ✔ (COPYRIGHT: all but the D-STAR files) · edacs-fm GPL-3.0 ✔ · ledacs Unlicense ✔ · Morelos-Zaragoza BCH code "non-commercial only" ✘ not used |
 | [ ] | ★ | LTR / LTR Passport | SDRTrunk | GPL-3.0 ✔ |
 | [ ] | ★ | MPT1327 | SDRTrunk; MPT1327 spec | GPL-3.0 ✔ |
 | [ ] | | DMR Tier III: Connect Plus, Hytera XPT mapping | DSD-FME; SDRTrunk | as above |
@@ -242,3 +242,23 @@ for "or later" first.
   of the check (data high, parity low) follows DSD-FME's working decoder. Still to do: wiring into Dispatch (it
   needs a 25 kHz channel for 9600 bd, wider than Dispatch's 24 kHz / 5.5 kHz channels, and a per-system LCN →
   frequency plan, which EDACS does not broadcast). EA (extended addressing) is not implemented.
+- **Phase 6 · plug-in hook + EDACS in Dispatch** (`dsp/fleet/plugins.ts`, `edacs-plugin.ts`, `trunk-ui.ts`,
+  `test/edacs.dispatch.test.ts`): a small control-channel plug-in interface in Dispatch (agreed 2026-11-26), so EDACS,
+  MPT1327 and LTR live in their own files. Every Dispatch channel runs each plug-in's receiver (EDACS on its own
+  25 kHz / 48 kS/s down-converter); a carrier becomes the protocol's control channel after 3 good frames; events
+  become systems, sites, calls, units and log rows through Dispatch's own paths; analog calls are followed and voiced
+  by its FM voice path. ProVoice calls are granted with a codec nothing decodes (`provoice`): listed ("identified,
+  not voiced"), never followed or voiced. Settings → TRUNKING PLANS: one site per line, frequencies in LCN order; a
+  plan is used only once the site's control channel is heard where the plan puts the LCN its Site ID announces.
+  Also fixed: a recording that cannot follow an app's tune now tells the worker its real centre, so decoders that
+  name absolute frequencies (Dispatch) are right while Dispatch scans its own bands.
+  Tests prove (Dispatch's real engine on synthetic IQ, simulated time): the control channel is found and classed;
+  the site is identified; the typed plan is proved; an analog group call lands on LCN 3 = 852.0125 MHz with FM voice,
+  a ProVoice call on LCN 2 with the `provoice` codec; the unit is known. Browser check (Chromium): plan typed in
+  Settings, the recording played in Dispatch → "EDACS · SITE 21", TG 1234 (unit 4242, 852.0125 MHz, LCN 3), TG 777
+  "ProVoice digital voice: identified, not voiced". Limitation: while a recording plays, Dispatch's dial and waterfall
+  labels still show the band it is scanning, not the recording's; the decoded frequencies are right.
+  Hardware: an EDACS site near you (RadioReference lists the frequencies in LCN order): put them in Settings →
+  TRUNKING PLANS, open Dispatch with a HackRF (or H4M in HackRF mode) and an 800 MHz antenna. The control channel
+  should become "EDACS · SITE n", calls should appear with talkgroup, LID and frequency, analog calls should be heard,
+  ProVoice ones listed only.
