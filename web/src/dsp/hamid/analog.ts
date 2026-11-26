@@ -34,12 +34,13 @@
  * No DOM.
  */
 import { CTCSS_TONES, SubAudioDecoder } from '../ham/ctcss.js';
+import { identifyLongTone, identifyTwoTone } from '../twotone.js';   // FORK: two-tone paging named
 
 export interface ToneSeg { hz: number; atS: number; ms: number; amp: number; used: boolean }
 export interface CourtesyTone { tones: { hz: number; ms: number }[]; key: string; atS: number; seen: number }
 export interface CwId { callsign: string; suffix: string; text: string; wpm: number; pitchHz: number; confidence: number; atS: number }
 export interface Selcall { system: string; digits: string; atS: number }
-export interface TwoTone { aHz: number; bHz: number; aMs: number; bMs: number; atS: number }
+export interface TwoTone { aHz: number; bHz: number; aMs: number; bMs: number; atS: number; id?: string }   // FORK: + id (dsp/twotone.ts); aHz 0 for a one-tone group call
 export interface MdcPacket { op: number; arg: number; unit: string; emergency: boolean; label: string; extra: number[]; atS: number }
 export interface DataBurst { baud: number; ms: number; atS: number }
 /** FleetSync: fleet 100-349 and unit 1000-4999 as the radios show them, -1 for "all"; [cmd] and [sub] raw. */
@@ -710,8 +711,10 @@ export class AnalogSignaling {
       const a = segs[i], b = segs[i + 1];
       if (a.used || b.used || a.ms < 350 || b.ms < 600 || b.atS - (a.atS + a.ms / 1000) > 0.25 || Math.abs(a.hz - b.hz) < 20) continue;
       if (a.hz < 280 || a.hz > 3000 || b.hz < 280 || b.hz > 3000) continue;
-      twoTone.push({ aHz: Math.round(a.hz), bHz: Math.round(b.hz), aMs: a.ms, bMs: b.ms, atS: startS + a.atS }); a.used = b.used = true; i++;
+      twoTone.push({ aHz: Math.round(a.hz), bHz: Math.round(b.hz), aMs: a.ms, bMs: b.ms, atS: startS + a.atS, id: identifyTwoTone(a.hz, b.hz, a.ms, b.ms)?.text }); a.used = b.used = true; i++;   // FORK: + id
     }
+    // FORK: a Quick Call II group call is one tone held about 8 s
+    for (const g of segs) { const id = g.used ? null : identifyLongTone(g.hz, g.ms); if (id) { twoTone.push({ aHz: 0, bHz: Math.round(g.hz), aMs: 0, bMs: g.ms, atS: startS + g.atS, id: id.text }); g.used = true; } }
     // data bursts: MDC-1200 decoded where it is, other bursts by rate
     const mdc: MdcPacket[] = [], fleetsync: FleetSync[] = [], data: DataBurst[] = [];
     for (let t = 0; t < fr.nF;) {
@@ -796,7 +799,7 @@ export function analogSummary(tx: AnalogTx): string[] {
   const out: string[] = [];
   if (tx.cw) out.push(`CW ID ${tx.cw.callsign}${tx.cw.suffix ? '/' + tx.cw.suffix : ''}, ${tx.cw.wpm} WPM`);
   for (const s of tx.selcall) out.push(`${s.system} selcall ${s.digits}`);
-  for (const t of tx.twoTone) out.push(`2-tone page ${t.aHz} and ${t.bHz} Hz`);
+  for (const t of tx.twoTone) out.push(t.aHz ? `2-tone page ${t.aHz} and ${t.bHz} Hz${t.id ? `, ${t.id}` : ''}` : `Long tone ${t.bHz} Hz, ${t.id}`);   // FORK: + the page named (dsp/twotone.ts)
   for (const m of tx.mdc) out.push(`MDC-1200 unit ${m.unit}${m.label ? ' ' + m.label : ` op ${m.op.toString(16).toUpperCase().padStart(2, '0')}`}`);
   for (const f of tx.fleetsync) out.push(`FleetSync ${f.baud === 2400 ? 'II' : 'I'} ${f.fromFleet < 0 ? 'all' : f.fromFleet}-${f.fromUnit < 0 ? 'all' : f.fromUnit} to ${f.toFleet < 0 ? 'all' : f.toFleet}-${f.toUnit < 0 ? 'all' : f.toUnit}`);
   for (const d of tx.data) out.push(`${d.baud} baud data burst`);

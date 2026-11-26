@@ -68,4 +68,5 @@ export const CREDITS: [boolean, string][] = [
   [false, "MPT1327 control channel — field layout, sync words and codeword check after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); the check built from its generator"],
   [false, "LTR Standard and LTR Passport — word layouts and sync after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); both checks built from their generators"],
   [false, "DMR Connect Plus and Hytera XPT control blocks and short LC — field layouts after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); short LC codes built from ETSI TS 102 361-1"],
+  [false, "Two-tone paging tables (Motorola Quick Call II, GE Type 99) and timings from Midian Electronics' tone signaling charts, cross-checked with the PGHscanner tone-out table"],
 ];

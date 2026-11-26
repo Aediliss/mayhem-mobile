@@ -85,7 +85,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | DMR Tier III: Connect Plus, Hytera XPT (control blocks; see notes for what is left) | SDRTrunk `module/decode/dmr/message/data/csbk/motorola/ConnectPlus*`, `.../hytera/Hytera*` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · DSD-FME not used (its BCH routine is non-commercial only, see EDACS) |
 | [x] | | DMR short LC (CACH): Connect Plus network/site, Hytera XPT free repeater | ETSI TS 102 361-1 (BPTC(68,36), CRC-8); SDRTrunk `lc/shorty`, `bptc/BPTC_68_36` | SDRTrunk GPL-3.0-or-later ✔ |
 | [ ] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
-| [ ] | | Two-tone sequential (QC-II) receive, GE Star | upstream `ui_test` (TX) tables | in-repo |
+| [x] | | Two-tone sequential receive named: Motorola Quick Call II (reeds, cap code, call kind, group call), GE Type 99 | Midian Electronics tone signaling charts (tables, timings); PGHscanner/qsl.net k3fs QC-II table (cross-check) | facts (frequencies, timings) only; no code copied |
+| [ ] | | GE Star (digital ANI) | none found: no published description | — (skipped until a spec turns up) |
 | [ ] | | Alias import (RadioReference / OP25 / SDRTrunk CSV/TSV) | OP25 | OP25 (boatbod) GPL-3.0-or-later ✔ (headers) |
 
 ## Phase 7 — Ham radio digital (extends Ham Radio → DIGITAL)
@@ -352,3 +353,24 @@ for "or later" first.
   logical channel makes a short-lived call with no system beside the granted one.
   Hardware: as for Connect Plus / XPT above. A Connect Plus control channel should become CONNECT PLUS NETWORK n with its
   site number; the log should show SHORT LC rows on Connect Plus and XPT repeaters.
+- **Phase 6 · two-tone paging named** (`dsp/twotone.ts`, `test/twotone.test.ts`): upstream's analog reader
+  (`hamid/analog.ts`) already found a page (tone A ≥ 350 ms then tone B ≥ 600 ms) and printed its two frequencies. Now
+  each page is matched (within 1.2 %) against the Motorola Quick Call II reed table (80 tones, groups 1-6, 10, 11) and
+  GE Type 99 (groups A-C), and named the way a dispatch card reads: reed codes (114/127), the 3-digit cap code where
+  Motorola's general encoding plan gives one (groups 1-5), and the call kind from the timing (individual A 1 s + B 3 s,
+  tone only, battery save). A single tone held 6 s or more on a reed is the Quick Call II group call. GE Type 99 vs a
+  Quick Call II page in the range where both tables have tones close together: GE's timing (A 1 s + B 1.5 s) decides.
+  Upstream touch points (FORK, `hamid/analog.ts`): the import, `TwoTone.id`, the id filled where a page is found, the
+  long-tone group call after it, and the summary line. Shown wherever upstream shows analog signaling: Ham Radio's
+  identity panel (any frequency the radio tunes, so a fire / EMS paging channel works) and Ham Plus.
+  Tables: Midian Electronics' chart; its Quick Call II table equals the PGHscanner (qsl.net/k3fs) one except reed 109
+  (313.0 vs 313.8 Hz): both are matched. Tests prove: every cap code of the plan (11 × 100, same-tone pairs aside) comes
+  back from its own tones 0.8 % off; reed codes; call kinds by timing; reed 109 either way; off-table tones give
+  nothing; the group call; GE codes; GE vs QC-II by timing; end to end through upstream's analog reader on synthetic
+  squelched audio: an individual page reads "2-tone page … Motorola QC-II individual call cap code 347 (reeds
+  114/127)", an 8 s tone the group call, a GE page its code, and speech nothing.
+  Not done: GE Star (a digital ANI with no published description found; new row). No browser check (the text is an
+  existing line in an existing panel).
+  Hardware: a fire / EMS dispatch channel that pages by two-tone (often VHF high band 150-160 MHz) with an RTL-SDR or
+  HackRF in Ham Radio, tuned to it in FM. A page should list as "2-tone page A and B Hz, Motorola QC-II individual call
+  cap code nnn (reeds xxx/yyy)"; compare with the department's tone-out list (RadioReference often has it).
