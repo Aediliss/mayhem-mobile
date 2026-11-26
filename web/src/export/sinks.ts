@@ -43,22 +43,27 @@ export class WebhookSink implements Sink {
   private queue: DecodeEvent[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private backoff = 0;
+  private closed = false;
   sent = 0; failed = 0; lastError = '';
   constructor(private readonly url: string, private readonly fetchFn: FetchLike, private readonly intervalMs = 2000, private readonly source = 'Mad Mobile') {}
   handle(ev: DecodeEvent): void {
+    if (this.closed) return;
     this.queue.push(ev);
     if (this.queue.length > 1000) this.queue.splice(0, this.queue.length - 1000);
     if (!this.timer) this.timer = setTimeout(() => void this.flush(), this.intervalMs + this.backoff);
   }
   async flush(): Promise<void> {
     this.timer = null;
-    if (!this.queue.length) return;
+    if (this.closed || !this.queue.length) return;
     const batch = this.queue.splice(0, 200);
     try {
-      const r = await this.fetchFn(this.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: this.source, events: batch }), keepalive: true });
+      // no keepalive: it caps the body at 64 KiB, and this is a periodic flush, not an on-unload beacon
+      const r = await this.fetchFn(this.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: this.source, events: batch }) });
+      if (this.closed) return;                                   // switched off while the request was out
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       this.sent += batch.length; this.backoff = 0; this.lastError = '';
     } catch (e) {
+      if (this.closed) return;
       this.failed++; this.lastError = (e as Error).message || 'network error (CORS?)';
       this.queue.unshift(...batch);
       this.backoff = Math.min(60_000, this.backoff ? this.backoff * 2 : 2000);
@@ -66,7 +71,7 @@ export class WebhookSink implements Sink {
     if (this.queue.length && !this.timer) this.timer = setTimeout(() => void this.flush(), this.intervalMs + this.backoff);
   }
   status(): string { return `${this.sent} sent${this.queue.length ? `, ${this.queue.length} waiting` : ''}${this.lastError ? ` · ${this.lastError}` : ''}`; }
-  close(): void { if (this.timer) clearTimeout(this.timer); this.timer = null; }
+  close(): void { this.closed = true; this.queue = []; if (this.timer) clearTimeout(this.timer); this.timer = null; }
 }
 
 // ---- WebSocket stream in one of the domain formats ----
@@ -77,6 +82,11 @@ export const WS_FORMATS: [WsFormat, string][] = [
   ['tnc2', 'APRS text, TNC2 (APRS)'], ['kiss', 'KISS (APRS AX.25)'], ['rtl433', 'rtl_433 JSON (Devices)'],
 ];
 
+/** AIS channel letter from the tuned frequency: B is 162.025 MHz (channel 88B), A 161.975 MHz (87B) and the default. */
+export function aisChannel(freqHz?: number): 'A' | 'B' {
+  return freqHz !== undefined && Math.abs(freqHz - 162_025_000) < 12_500 ? 'B' : 'A';
+}
+
 /** The bytes or text one event becomes in a format; empty when the format has nothing to say about it. */
 export function formatEvent(fmt: WsFormat, ev: DecodeEvent, sbs?: SbsEncoder): (string | Uint8Array)[] {
   const when = new Date(ev.t);
@@ -84,7 +94,7 @@ export function formatEvent(fmt: WsFormat, ev: DecodeEvent, sbs?: SbsEncoder): (
     case 'jsonl': return [JSON.stringify(ev) + '\n'];
     case 'beast': return ev.kind === 'adsb.frame' && ev.hex ? [beastFrame(unhex(ev.hex))] : [];
     case 'sbs': return ev.kind === 'adsb.aircraft' && ev.data && sbs ? sbs.update(ev.data as unknown as SbsAircraft, when).map(l => l + '\r\n') : [];
-    case 'nmea': return ev.kind === 'ais.frame' && ev.hex ? aivdm(unhex(ev.hex), ev.bits ?? ev.hex.length * 4).map(s => s + '\r\n') : [];
+    case 'nmea': return ev.kind === 'ais.frame' && ev.hex ? aivdm(unhex(ev.hex), ev.bits ?? ev.hex.length * 4, aisChannel(ev.freqHz)).map(s => s + '\r\n') : [];
     case 'tnc2': { const s = ev.kind === 'aprs.frame' && ev.hex ? ax25ToTnc2(unhex(ev.hex)) : null; return s ? [s + '\r\n'] : []; }
     case 'kiss': return ev.kind === 'aprs.frame' && ev.hex ? [kissFrame(unhex(ev.hex))] : [];
     case 'rtl433': return ev.kind === 'device' && ev.data ? [rtl433Json(ev.data, when) + '\n'] : [];

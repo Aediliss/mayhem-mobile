@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { aisArmor, aisUnarmor, aivdm, ax25ToTnc2, beastFrame, hex, kissFrame, nmeaChecksum, rtl433Json, sbsLine, SbsEncoder, unhex } from '../src/export/formats.js';
 import { EventAdapter, type DecodeEvent } from '../src/export/event.js';
 import { ExportBus, DEFAULT_CONFIG, type ExportConfig } from '../src/export/bus.js';
-import { formatEvent, WebhookSink, WsSink, type WsLike } from '../src/export/sinks.js';
+import { aisChannel, formatEvent, WebhookSink, WsSink, type WsLike } from '../src/export/sinks.js';
 import { AisDecoder } from '../src/dsp/ais.js';
 import { AprsDecoder } from '../src/dsp/aprs.js';
 import { ax25Aprs, ax25Bits } from '../src/tx-encoders.js';
@@ -177,4 +177,26 @@ test('end to end: an APRS packet decoded from IQ leaves as TNC2 text and as a KI
   assert.equal(ax25ToTnc2(k.subarray(2, k.length - 1)), `N0CALL-9>APZMHM:${INFO}`);   // no FEND/FESC inside this frame
   assert.ok(bus.log.text().includes('"kind":"aprs.frame"') && bus.log.text().includes('"kind":"aprs.station"'));
   tnc2.close(); kiss.close();
+});
+
+test('NMEA: the sentence names the channel the AIS frame was received on', () => {
+  const ev = (freqHz?: number): DecodeEvent => ({ t: '2026-11-26T10:00:00Z', app: 'ais', kind: 'ais.frame', hex: hex(aisUnarmor('177KQJ5000G?tO`K>RA1wUbN0TKH', 0).bytes), bits: 168, freqHz });
+  assert.equal(aisChannel(162_025_000), 'B'); assert.equal(aisChannel(161_975_000), 'A'); assert.equal(aisChannel(undefined), 'A');
+  assert.match(formatEvent('nmea', ev(162_025_000))[0] as string, /^!AIVDM,1,1,,B,177KQJ5000G\?tO`K>RA1wUbN0TKH,0\*5C\r\n$/);
+  assert.match(formatEvent('nmea', ev(161_975_000))[0] as string, /^!AIVDM,1,1,,A,/);
+  const a = new EventAdapter();
+  assert.equal(a.map({ type: 'aisRaw', bytes: [1], bits: 6 }, { app: 'ais', centerHz: 162.2e6, freqHz: 162_025_000 })[0].freqHz, 162_025_000);
+});
+
+test('webhook: no keepalive (64 KiB cap), and nothing is sent once closed, even by a request already out', async () => {
+  const inits: Record<string, unknown>[] = []; let release!: () => void;
+  const sink = new WebhookSink('https://hook.example/x', (_u, init) => { inits.push(init as Record<string, unknown>); return new Promise(res => { release = () => res({ ok: false, status: 503 }); }); }, 5);
+  sink.handle({ t: 't', app: 'a', kind: 'line', text: '1' });
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(inits.length, 1); assert.equal('keepalive' in inits[0], false);
+  sink.close();                                               // export switched off while the POST is out
+  sink.handle({ t: 't', app: 'a', kind: 'line', text: '2' });
+  release(); await new Promise(r => setTimeout(r, 2200));     // past the backoff a failed batch would have used
+  assert.equal(inits.length, 1);
+  assert.equal(sink.failed, 0);
 });

@@ -8824,7 +8824,7 @@ function renderSettings(view: HTMLElement): void {
     <div class="sset-sub">CREDITS · drag to steer</div>
     <div class="panel credits" id="credits"><div class="credits-roll" id="credits-roll">${(() => { const inner = CREDITS.map(([h, t]) => h ? `<h4>${esc(t)}</h4>` : `<p>${esc(t)}</p>`).join(''); return `<div class="credits-copy">${inner}</div><div class="credits-copy" aria-hidden="true">${inner}</div>`; })()}</div></div>
     </section></section>`;
-  { const refresh = bindExportSettings(view, exportBus, log); const t = setInterval(() => { if (!document.getElementById('sec-export')) clearInterval(t); else refresh(); }, 1000); }   // FORK: EXPORT controls
+  { const sec = q('#sec-export', view), refresh = bindExportSettings(view, exportBus, log); const t = setInterval(() => { if (!sec?.isConnected) clearInterval(t); else refresh(); }, 1000); }   // FORK: EXPORT controls (timer dies with its section)
   qa<HTMLInputElement>('[data-st]', view).forEach(i => i.oninput = () => { const k = i.dataset.st as keyof Station; const v = k === 'call' || k === 'grid' ? i.value.toUpperCase() : i.value; if (k === 'call' || k === 'grid') i.value = v; state.ham.station[k] = v; saveStation(); });
   qa<HTMLButtonElement>('[data-skin]', view).forEach(b => b.onclick = () => { applySkin(SKINS.find(s => s.id === b.dataset.skin)!); refreshSettings(); });
   const tg = q('#tx-toggle'); if (tg) tg.onclick = () => { tx.setEnabled(!tx.enabled); refreshSettings(); };
@@ -9509,7 +9509,7 @@ function esc(s: string): string { return s.replace(/[&<>]/g, c => ({ '&': '&amp;
 function ensureWorker(): Worker {
   if (worker) return worker;
   worker = new Worker('./build/dsp-worker.js', { type: 'module' });
-  exportBus.attach(worker, () => ({ app: state.app ?? 'home', centerHz: spanCenter() }));   // FORK: decode export bus
+  exportBus.attach(worker, () => ({ app: state.app ?? 'home', centerHz: spanCenter(), freqHz: state.freq }));   // FORK: decode export bus
   (window as unknown as { mmFeed: (m: unknown) => void }).mmFeed = (m) => worker!.onmessage!({ data: m } as MessageEvent);   // support hook: inject a worker message
   (window as unknown as { mmWorker: (m: unknown) => void }).mmWorker = (m) => worker!.postMessage(m);                             // support hook: send the worker a message
   worker.onmessage = (e: MessageEvent) => {

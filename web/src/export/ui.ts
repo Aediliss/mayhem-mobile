@@ -5,25 +5,25 @@ import { saveConfig, type ExportBus, type ExportConfig } from './bus.js';
 import { WS_FORMATS } from './sinks.js';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
-const sw = (id: string, on: boolean) => `<button id="${id}" class="sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}"><i></i></button>`;
+const sw = (id: string, on: boolean, label: string) => `<button id="${id}" class="sw ${on ? 'on' : ''}" role="switch" aria-checked="${on}" aria-label="${esc(label)}"><i></i></button>`;
 const row = (label: string, desc: string, control: string) => `<div class="srow" data-keys="${esc((label + ' ' + desc + ' export').toLowerCase())}"><div class="srl"><b>${label}</b>${desc ? `<small>${desc}</small>` : ''}</div><div class="src">${control}</div></div>`;
-const input = (id: string, value: string, ph: string, type = 'text') => `<input id="${id}" class="txin" type="${type}" value="${esc(value)}" placeholder="${esc(ph)}" spellcheck="false" autocomplete="off" style="margin-top:6px">`;
+const input = (id: string, value: string, ph: string, type = 'text', label = ph) => `<input id="${id}" class="txin" type="${type}" value="${esc(value)}" placeholder="${esc(ph)}" aria-label="${esc(label)}" spellcheck="false" autocomplete="off" style="margin-top:6px">`;
 
 export function exportSettingsHtml(bus: ExportBus, opts: { mqtt: boolean } = { mqtt: false }): string {
   const c = bus.cfg;
-  const fmt = WS_FORMATS.map(([id, label]) => `<button class="chip ${c.ws.format === id ? 'on' : ''}" data-exfmt="${id}" title="${esc(label)}">${id.toUpperCase()}</button>`).join('');
+  const fmt = WS_FORMATS.map(([id, label]) => `<button class="chip ${c.ws.format === id ? 'on' : ''}" data-exfmt="${id}" title="${esc(label)}" aria-label="${esc(label)}" aria-pressed="${c.ws.format === id}">${id.toUpperCase()}</button>`).join('');
   return `<section class="sset" id="sec-export"><div class="sset-h">EXPORT</div>
-    ${row('Export decodes', 'Off by default. Sends what the decoders find to the outputs switched on below; nothing leaves this browser unless you set up a network output.', sw('ex-on', c.enabled))}
-    ${row('Decode log', 'Every result as JSON lines, kept in this page (last 20,000) to download.', `${sw('ex-log', c.log)}<button id="ex-dl" class="tog">DOWNLOAD</button><button id="ex-clr" class="tog">CLEAR</button>`)}
-    ${row('Webhook', 'POSTs batches of results as JSON every 2 s. The server must allow this page (CORS) and use https unless it is on localhost.', sw('ex-wh', c.webhook.on))}
-    ${input('ex-wh-url', c.webhook.url, 'https://example.com/hook', 'url')}
-    ${row('WebSocket stream', 'Streams one format to a WebSocket server. For tools that listen on TCP (readsb, OpenCPN, Direwolf) put a bridge such as websockify in front. From the https site only ws://localhost or wss:// work.', sw('ex-ws', c.ws.on))}
-    ${input('ex-ws-url', c.ws.url, 'ws://localhost:30005', 'url')}
+    ${row('Export decodes', 'Off by default. Sends what the decoders find to the outputs switched on below; nothing leaves this browser unless you set up a network output.', sw('ex-on', c.enabled, 'Export decodes'))}
+    ${row('Decode log', 'Every result as JSON lines, kept in this page (last 20,000) to download.', `${sw('ex-log', c.log, 'Decode log')}<button id="ex-dl" class="tog">DOWNLOAD</button><button id="ex-clr" class="tog">CLEAR</button>`)}
+    ${row('Webhook', 'POSTs batches of results as JSON every 2 s. The server must allow this page (CORS) and use https unless it is on localhost.', sw('ex-wh', c.webhook.on, 'Webhook'))}
+    ${input('ex-wh-url', c.webhook.url, 'https://example.com/hook', 'url', 'Webhook URL')}
+    ${row('WebSocket stream', 'Streams one format to a WebSocket server. For tools that listen on TCP (readsb, OpenCPN, Direwolf) put a bridge such as websockify in front. From the https site only ws://localhost or wss:// work.', sw('ex-ws', c.ws.on, 'WebSocket stream'))}
+    ${input('ex-ws-url', c.ws.url, 'ws://localhost:30005', 'url', 'WebSocket URL')}
     <div class="row" style="flex-wrap:wrap;gap:4px;margin-top:6px">${fmt}</div>
-    ${opts.mqtt ? `${row('MQTT', 'Publishes results to an MQTT broker over WebSockets (Mosquitto: listener 9001 + protocol websockets). The password is stored in this browser.', sw('ex-mq', c.mqtt.on))}
-    ${input('ex-mq-url', c.mqtt.url, 'ws://localhost:9001', 'url')}${input('ex-mq-topic', c.mqtt.topic, 'topic prefix: madmobile')}
-    <div class="row" style="gap:6px">${input('ex-mq-user', c.mqtt.user, 'user (optional)')}${input('ex-mq-pass', c.mqtt.pass, 'password (optional)', 'password')}</div>
-    ${row('Home Assistant discovery', 'Announce Devices sensors (temperature, humidity, battery …) so Home Assistant adds them by itself.', sw('ex-ha', c.mqtt.ha))}` : ''}
+    ${opts.mqtt ? `${row('MQTT', 'Publishes results to an MQTT broker over WebSockets (Mosquitto: listener 9001 + protocol websockets). The password is stored in this browser.', sw('ex-mq', c.mqtt.on, 'MQTT'))}
+    ${input('ex-mq-url', c.mqtt.url, 'ws://localhost:9001', 'url', 'MQTT broker URL')}${input('ex-mq-topic', c.mqtt.topic, 'topic prefix: madmobile', 'text', 'MQTT topic prefix')}
+    <div class="row" style="gap:6px">${input('ex-mq-user', c.mqtt.user, 'user (optional)', 'text', 'MQTT user')}${input('ex-mq-pass', c.mqtt.pass, 'password (optional)', 'password', 'MQTT password')}</div>
+    ${row('Home Assistant discovery', 'Announce Devices sensors (temperature, humidity, battery …) so Home Assistant adds them by itself.', sw('ex-ha', c.mqtt.ha, 'Home Assistant discovery'))}` : ''}
     <div id="ex-status" class="caption" style="margin-top:6px;white-space:pre-line"></div>
   </section>`;
 }
@@ -56,7 +56,7 @@ export function bindExportSettings(root: ParentNode, bus: ExportBus, log: (l: st
   text('ex-mq-pass', v => { c.mqtt.pass = v; });
   root.querySelectorAll<HTMLButtonElement>('[data-exfmt]').forEach(b => b.onclick = () => {
     c.ws.format = b.dataset.exfmt as ExportConfig['ws']['format'];
-    root.querySelectorAll<HTMLButtonElement>('[data-exfmt]').forEach(x => x.classList.toggle('on', x === b)); apply();
+    root.querySelectorAll<HTMLButtonElement>('[data-exfmt]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); }); apply();
   });
   const dl = q<HTMLButtonElement>('#ex-dl');
   if (dl) dl.onclick = () => {

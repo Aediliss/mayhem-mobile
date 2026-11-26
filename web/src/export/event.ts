@@ -22,6 +22,8 @@ export interface DecodeEvent {
   kind: string;
   /** The radio's centre frequency when it was heard, Hz. */
   centerHz?: number;
+  /** The channel the app was tuned to (inside the span), Hz: e.g. AIS A 161.975 or B 162.025 MHz. */
+  freqHz?: number;
   text?: string;
   /** Raw frame bytes as hex, and the bit count when it is not whole bytes. */
   hex?: string;
@@ -29,7 +31,7 @@ export interface DecodeEvent {
   data?: Record<string, unknown>;
 }
 
-export interface EventContext { app: string; centerHz: number; now?: Date }
+export interface EventContext { app: string; centerHz: number; freqHz?: number; now?: Date }
 
 type Row = Record<string, unknown>;
 const hexOf = (b: ArrayLike<number>) => Array.from(b, x => (x & 0xff).toString(16).padStart(2, '0')).join('');
@@ -40,7 +42,13 @@ export class EventAdapter {
 
   map(m: Record<string, unknown> | null | undefined, ctx: EventContext): DecodeEvent[] {
     if (!m || typeof m.type !== 'string') return [];
-    const base = () => ({ t: (ctx.now ?? new Date()).toISOString(), app: ctx.app, centerHz: ctx.centerHz || undefined });
+    // only the fields that are known: no "freqHz": undefined keys
+    const base = (): Omit<DecodeEvent, 'kind'> => {
+      const b: Omit<DecodeEvent, 'kind'> = { t: (ctx.now ?? new Date()).toISOString(), app: ctx.app };
+      if (ctx.centerHz) b.centerHz = ctx.centerHz;
+      if (ctx.freqHz) b.freqHz = ctx.freqHz;
+      return b;
+    };
     switch (m.type) {
       case 'packet': return typeof m.line === 'string' ? [{ ...base(), kind: 'line', text: m.line }] : [];
       case 'modes': return [{ ...base(), kind: 'adsb.frame', hex: String(m.hex) }];
