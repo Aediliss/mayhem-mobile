@@ -1365,6 +1365,7 @@ export class FleetProcessor implements IqProcessor {
     return s;
   }
   private dmrApply(c: Carrier, cs: Csbk, slot: number, s: Sys, now: number): void {
+    if (cs.verified && cs.trunk) s.trunk = cs.trunk;   // FORK: Connect Plus / Hytera XPT (csbk-vendor.ts)
     switch (cs.kind) {
       case 'beacon': {
         s.trunk = 'CAPACITY PLUS';
@@ -1391,6 +1392,10 @@ export class FleetProcessor implements IqProcessor {
         if (cs.src) this.touchUnit(s.key, cs.src, c, now, 'grant', cs, '', cs.group ? cs.dst : undefined);
         break;
       }
+      // FORK: vendor blocks (csbk-vendor.ts): a Connect Plus affiliation puts the radio in its talkgroup; a Hytera XPT
+      // preamble names the caller (the call itself is read from its voice header on the repeater it goes to)
+      case 'affil': if (cs.unit) this.touchUnit(s.key, cs.unit, c, now, 'affiliation', cs, '', cs.dst); break;
+      case 'xpt': if (cs.src) this.touchUnit(s.key, cs.src, c, now, 'xpt preamble', cs, '', cs.group ? cs.dst : undefined); break;
       case 'ack': case 'unit': case 'aloha': case 'callann': {
         if (cs.kind === 'aloha' && cs.verified) s.trunk = 'TIER III'; const id = cs.kind === 'callann' ? cs.unit : cs.dst; if (id && id < 0xfffff0 && !allUnits(cs, id)) this.touchUnit(s.key, id, c, now, cs.kind === 'ack' ? 'acknowledged' : cs.name.toLowerCase(), cs, ''); break; }
     }
@@ -1694,7 +1699,7 @@ export class FleetProcessor implements IqProcessor {
       else sites = this.dmrSites(s);
       for (const st of sites) for (const k of st.carriers) for (const u of this.units.values()) if (u.sys === s.key && u.carriers.has(k)) unitSite.set(u.key, st.label);
       const label = plugOf(s.proto) ? s.model : s.proto === 'SMARTNET' ? `MOTOROLA TYPE II · SYSTEM ${h(s.sysId, 4)}` :   // FORK: a plug-in system's label is kept in .model
-        s.proto === 'NXDN' ? (s.trunk === 'CONVENTIONAL' ? `NXDN · CONVENTIONAL · RAN ${s.sysId}` : s.trunk === 'TYPE-D' ? `NXDN · TYPE-D · SITE ${s.sysId}` : `NXDN · ${s.model} SYSTEM ${s.sysId}`) : s.proto === 'TETRA' ? `TETRA · MCC ${s.wacn} · MNC ${s.sysId}` : s.proto === 'P25' ? `WACN ${h(s.wacn, 5)} · SYSTEM ${h(s.sysId, 3)}` : s.net >= 0 ? `${s.model} NETWORK ${s.net}` : s.trunk === 'CAPACITY PLUS' ? `CAPACITY PLUS · COLOR CODE ${s.cc}` : `COLOR CODE ${s.cc}${s.fid > 0 ? ` · FID ${h(s.fid, 2)}` : ''}`;
+        s.proto === 'NXDN' ? (s.trunk === 'CONVENTIONAL' ? `NXDN · CONVENTIONAL · RAN ${s.sysId}` : s.trunk === 'TYPE-D' ? `NXDN · TYPE-D · SITE ${s.sysId}` : `NXDN · ${s.model} SYSTEM ${s.sysId}`) : s.proto === 'TETRA' ? `TETRA · MCC ${s.wacn} · MNC ${s.sysId}` : s.proto === 'P25' ? `WACN ${h(s.wacn, 5)} · SYSTEM ${h(s.sysId, 3)}` : s.net >= 0 ? `${s.model} NETWORK ${s.net}` : s.trunk === 'CAPACITY PLUS' || s.trunk === 'CONNECT PLUS' || s.trunk === 'HYTERA XPT' ? `${s.trunk} · COLOR CODE ${s.cc}` : `COLOR CODE ${s.cc}${s.fid > 0 ? ` · FID ${h(s.fid, 2)}` : ''}`;   // FORK: + Connect Plus / Hytera XPT
       const units = [...this.units.values()].filter(u => u.sys === s.key).length, tgs = [...this.tgs.values()].filter(t => t.sys === s.key).length;
       const lpcns = s.nxdnPlan ? [...s.nxdnPlan.heard].map(([lpcn, hz]) => ({ lpcn, hz, votes: s.nxdnPlan!.votes.get(lpcn)?.get(hz) ?? 0 })).sort((a, b) => a.lpcn - b.lpcn)
         : [...s.lpcnHz].map(([lpcn, hz]) => ({ lpcn, hz, votes: s.lpcnVotes.get(lpcn)?.get(hz) ?? 0 })).sort((a, b) => a.lpcn - b.lpcn);

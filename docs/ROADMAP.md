@@ -82,7 +82,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | EDACS (standard + networked), ProVoice identification only — in Dispatch via the plug-in hook | TIA/EIA TSB-69.3; DSD-FME `edacs-fme.c`; edacs-fm; ledacs | DSD-FME ISC ✔ (COPYRIGHT: all but the D-STAR files) · edacs-fm GPL-3.0 ✔ · ledacs Unlicense ✔ · Morelos-Zaragoza BCH code "non-commercial only" ✘ not used |
 | [x] | ★ | LTR / LTR Passport — in Dispatch via the plug-in hook | SDRTrunk `module/decode/ltrstandard`, `passport`, `edac/CRCLTR`, `CRCPassport` | SDRTrunk GPL-3.0-or-later ✔ (file headers); no public spec |
 | [x] | ★ | MPT1327 — in Dispatch via the plug-in hook | SDRTrunk `module/decode/mpt1327`, `edac/CRCFleetsync` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · MPT1327 spec PDF not reachable (Ofcom 403) |
-| [ ] | | DMR Tier III: Connect Plus, Hytera XPT mapping | DSD-FME; SDRTrunk | as above |
+| [x] | | DMR Tier III: Connect Plus, Hytera XPT (control blocks; see notes for what is left) | SDRTrunk `module/decode/dmr/message/data/csbk/motorola/ConnectPlus*`, `.../hytera/Hytera*` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · DSD-FME not used (its BCH routine is non-commercial only, see EDACS) |
+| [ ] | | DMR short LC (CACH): Connect Plus network/site, Hytera XPT free repeater and XPT channel grant (full LC opcode 9) | SDRTrunk `lc/shorty`, `lc/full/hytera` | SDRTrunk GPL-3.0-or-later ✔ |
 | [ ] | | Two-tone sequential (QC-II) receive, GE Star | upstream `ui_test` (TX) tables | in-repo |
 | [ ] | | Alias import (RadioReference / OP25 / SDRTrunk CSV/TSV) | OP25 | OP25 (boatbod) GPL-3.0-or-later ✔ (headers) |
 
@@ -308,3 +309,26 @@ for "or later" first.
   HackRF. Put the site's repeaters in Settings → TRUNKING PLANS in LCN order (`LTR <name>: <MHz> <MHz> …`, RadioReference
   lists them), open Dispatch. As repeaters key up, each should show as "REPEATER n" under "LTR · <name>", calls should list
   by group with their frequency, and the voice should be heard.
+- **Phase 6 · DMR Tier III vendors** (`dsp/fleet/csbk-vendor.ts`, `test/dmr-vendor.test.ts`): the CSBKs of Motorola
+  Connect Plus (feature set 0x06) and Hytera (0x68) parsed into the kinds Dispatch already acts on, so no new call logic:
+  CON+ VOICE CHANNEL USER is a grant (logical slot → LCN and slot as SDRTrunk reads it: LSN = field - 1, LCN =
+  (LSN-1)/2+1, slot = (LSN-1) mod 2), which lists the call and lets Dispatch learn the granted repeater's carrier from the
+  voice header that follows; TALKGROUP AFFILIATION puts the radio in the group; REGISTRATION, DATA CHANNEL GRANT and
+  TERMINATE touch the unit; NEIGHBOR REPORT lists site numbers. Hytera ALOHA (the ETSI layout) and ANNOUNCEMENT carry the
+  system identity code; the XPT PREAMBLE names caller, group or radio and the free repeater; XPT SITE STATE gives the free
+  repeater and the repeater states. The system is labelled CONNECT PLUS / HYTERA XPT. Upstream touch points (FORK): one
+  line in `csbk.ts` hands those feature sets to the new module and a `trunk` field on `Csbk`; in `fleet.ts` the vendor
+  trunk is taken onto the system, two new kinds handled (affiliation, XPT preamble) and the system label extended.
+  Hytera group/unit voice LCs (FLCO 0/3 under 0x68) were already read upstream.
+  Tests prove: CRC'd blocks of each kind parse to the right fields; other feature sets are left alone; Dispatch's real
+  engine, fed a Connect Plus control channel (4FSK) and a second repeater sending the granted call's voice headers on
+  TS2, classes the control channel, labels the system CONNECT PLUS · COLOR CODE 1 and lists TG 4321 from 1234567 on the
+  repeater's frequency, TS2. Browser check (Chromium): the same from a recording, the affiliation counted as a unit.
+  Not done (new row above): the short LC in the CACH, which carries Connect Plus's network and site (so a Connect Plus
+  system is keyed by its color code for now) and XPT's free repeater; Hytera's full-LC XPT channel grant. Not confirmed
+  on air: SDRTrunk's LSN offset (it says it was found on air); which XPT repeater numbers are which frequencies (calls
+  are still placed by the voice LC heard on each repeater, as upstream did).
+  Hardware: a Connect Plus or Hytera XPT site (business / utility DMR, often UHF 450-470 MHz) with an RTL-SDR or HackRF,
+  Dispatch on the band. A Connect Plus control channel should be labelled CONNECT PLUS · COLOR CODE n, grants should list
+  with talkgroup and source, and after a few calls each LCN should show its repeater's frequency; Hytera XPT repeaters
+  should be labelled HYTERA XPT with preamble callers listed as units.
