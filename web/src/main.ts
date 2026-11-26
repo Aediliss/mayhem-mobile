@@ -22,6 +22,7 @@ import { GEOSCAN_SATS } from './dsp/geoscan.js';
 import type { HeardDevice, R433Data, R433Protocol, R433Report } from './dsp/r433/index.js';
 import type { ZwLink, ZwNode } from './dsp/r433/zwave.js';
 import { CREDITS } from './credits.js';
+import { FORK_NAME, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
 import { syncRows } from './list-rows.js';
 import { r433Measure, r433Value } from './devices-fmt.js';
 import * as U from './units.js';
@@ -253,7 +254,7 @@ function log(line: string): void {
 function logHeader(): string {
   const s = screen;
   return [
-    `Mayhem Mobile (web) ${versionText}`,
+    `${FORK_NAME} (web) ${versionText}`,   // FORK: build identity
     `${navigator.userAgent}`,
     `platform ${navigator.platform || '?'} \u00b7 ${s.width}x${s.height} @${devicePixelRatio}x \u00b7 ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
     `radio ${state.board ? `${state.board}${state.firmware ? ' \u00b7 fw ' + state.firmware : ''}` : 'none attached'}`,
@@ -2031,7 +2032,7 @@ function renderLauncher(view: HTMLElement): void {
       // each group's name over its tiles: a grid two to a row on a phone, one sideways row when wide (as on iPad)
       return `<div class="lgrp"><div class="gcat" style="color:${tint(c)}">${c.toUpperCase()}</div><div class="lgrp-in">` + apps.map(a => `<button class="tile" data-app="${a.id}" style="--tint:${tint(a.cat)}"><span class="wm">${glyph(a.id, tintHex(a.cat), 84)}</span><div class="tile-top"><span class="badge">${glyph(a.id, tintHex(a.cat), 26)}</span><span class="cat">${a.cat.toUpperCase()}</span></div><div class="tile-title">${a.title}</div><div class="tile-blurb" data-blurb="${a.blurb}">${a.blurb}</div></button>`).join('') + '</div></div>';
     }).join('')}</div>
-    <div class="foot"><span id="version">${versionText}</span> · <a id="release-link" href="${releaseUrl}">release</a> · <a href="https://github.com/RocketGod-git/mayhem-mobile">source</a> · GPL-3.0 · a port of <a href="https://github.com/portapack-mayhem/mayhem-firmware">PortaPack Mayhem</a><br>made by <a href="https://rocketgod.dev">RocketGod</a> · The Pirates' Plunder · <a href="https://discord.gg/thepirates">discord.gg/thepirates</a></div></section>`;
+    <div class="foot"><span id="version">${versionText}</span> · <a id="release-link" href="${releaseUrl}">release</a> · ${'' /* FORK: fork source + upstream credit */}<a href="${FORK_REPO}">source</a> · GPL-3.0 · ${esc(FORK_NAME)}, from <a href="${UPSTREAM_REPO}">Mayhem Mobile</a> · a port of <a href="https://github.com/portapack-mayhem/mayhem-firmware">PortaPack Mayhem</a><br>made by <a href="https://rocketgod.dev">RocketGod</a> · The Pirates' Plunder · <a href="https://discord.gg/thepirates">discord.gg/thepirates</a></div></section>`;
   scope = attach(tunableScope('launch-scope', 70, 90));
   scope.setLabels(centredLabels(state.freq, state.rate));
   qa<HTMLButtonElement>('[data-app]', view).forEach(b => b.onclick = () => openPicked(b.dataset.app as AppId));
@@ -8793,7 +8794,9 @@ function renderSettings(view: HTMLElement): void {
       <div class="kv"><span>Mayhem Mobile</span><span>${versionText} — one build, two shells: this web app in any Chrome/Edge browser, and the Android app on Google Play</span></div>
       <div class="kv"><span>Device</span><span>${state.board ? (radio?.kind === 'rtlsdr' ? state.board : `${state.board} · fw ${state.firmware}`) : 'no radio attached'}</span></div>
       <div class="kv"><span>What it is</span><span>PortaPack Mayhem's receivers ported to run in the browser from raw HackRF IQ over WebUSB</span></div>
-      <div class="kv"><span>Source</span><span><a href="https://github.com/RocketGod-git/mayhem-mobile">github.com/RocketGod-git/mayhem-mobile</a></span></div>
+      ${'' /* FORK: this build, its source and its upstream */}<div class="kv"><span>This build</span><span>${esc(FORK_NAME)} · ${versionText} · web only</span></div>
+      <div class="kv"><span>Source</span><span><a href="${FORK_REPO}">${FORK_REPO_LABEL}</a></span></div>
+      <div class="kv"><span>Based on</span><span>Mayhem Mobile by RocketGod · <a href="${UPSTREAM_REPO}">${UPSTREAM_REPO_LABEL}</a> · GPL-3.0</span></div>
       <div class="kv"><span>Upstream</span><span><a href="https://github.com/portapack-mayhem/mayhem-firmware">portapack-mayhem/mayhem-firmware</a></span></div>
       <div class="kv"><span>License</span><span>GPL-3.0 (Mayhem-derived)</span></div>
     </div>
@@ -10050,7 +10053,7 @@ function initFullscreen(): void {
 }
 
 // ---- boot -----------------------------------------------------------------------------------------------------
-let versionText = 'dev build', releaseUrl = 'https://github.com/RocketGod-git/mayhem-mobile/releases/tag/latest';
+let versionText = 'dev build', releaseUrl = `${FORK_REPO}/commits/main`;   // FORK: the fork's history, not upstream's release
 
 // ---- the phone shell: the Android app's bars ---------------------------------------------------------------------
 /** The app bar's order, the native apps' default: by what they do (receive, analyze, transmit, tools), as Home lists them. */
@@ -10497,7 +10500,7 @@ function init(): void {
     navigator.usb.addEventListener('disconnect', (e) => { log(`USB detached: ${e.device.productName ?? ''}`); if (e.device === radioDev) radio?.stop(); });
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => undefined);
-  log('Mayhem Mobile web ready');
+  log(`${FORK_NAME} web ready`);   // FORK: build identity
 }
 
 init();

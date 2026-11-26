@@ -1,6 +1,6 @@
 {
-  "name": "Mayhem Mobile",
-  "short_name": "Mayhem",
+  "name": "Mayhem Mobile (fork)",
+  "short_name": "Mayhem fork",
   "description": "PortaPack Mayhem's receivers in your browser, driving a HackRF over WebUSB.",
   "start_url": "./",
   "scope": "./",
