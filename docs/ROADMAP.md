@@ -55,7 +55,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [ ] | | Remote ID over Wi-Fi beacon / NAN (2.4 GHz ch 6, 5.8 GHz) | ASTM F3411; IEEE 802.11 | needs an 802.11 receiver (Phase 9 Wi-Fi row) |
 | [x] | ★ | DJI DroneID (OcuSync 2.4 GHz OFDM): detect, demod, serial + drone/pilot/home GPS | proto17/dji_droneid; 3GPP TS 36.211 / 36.212 | dji_droneid MIT ✔ (file LICENSE) · turbofec GPL-3.0-or-later ✔ (one table row checked) · DroneSecurity not used |
 | [ ] | | DJI DroneID at 5.8 GHz, and the newer encrypted DroneID (detect only) | channel survey | needs recordings |
-| [ ] | | FPV analog video detect at 5.8 GHz (raceband/A/B/E/F), NTSC/PAL frames if bandwidth allows | channel tables (public) | facts |
+| [x] | | FPV analog video detect at 5.8 GHz (raceband/A/B/E/F), NTSC/PAL frames if bandwidth allows | channel tables (public) | facts |
 | [ ] | | Digital FPV + control-link fingerprinting: DJI O3/O4, Walksnail, HDZero, ELRS, Crossfire | ExpressLRS source | check (ELRS is GPL-3.0 per memory — verify) |
 
 ## Phase 4 — Aviation
@@ -577,3 +577,24 @@ for "or later" first.
   Hardware: Drones with a HackRF and a 2.4 GHz antenna near a DJI drone that sends DroneID in the clear (Mini 2,
   Mavic Air 2 / 2S and others of that age): bursts should be counted within seconds; with AUTO on, frames should decode
   and the card and map show the drone, its pilot and its home point. Check the drone's position against the pilot app.
+- **Phase 3 · analog FPV video** (`src/dsp/fpv.ts`, `test/fpv.test.ts`): a new FPV app (HackRF, 5.8 GHz, 20 MS/s). The
+  48 channels of bands A, B, E, F / IRC, R raceband and L lowband (published tables). On a channel: the FM
+  discriminator, smoothed over 0.2 µs (video is under 5 MHz); video is told by its line rate, the discriminator
+  correlating with itself 16 lines later (NTSC 63.556 µs and PAL 64 µs lines are 7 µs apart over 16, so the standards
+  are told apart) well above lags that are no whole line, and with itself one line later (which a tone whose period
+  happens to fit does not); the sync polarity from the averaged line's 4.7 µs extreme; the picture cut at each sync's
+  leading edge and sampled across the 52.6 µs active line, black at blanking, white at the brightest. The processor
+  looks at 20 ms of the channel about every 250 ms (dropping 50 ms after a retune) and sends the picture when watching.
+  The app: SCAN steps through all 48 channels (350 ms each) and turns the ones with video gold with their standard; a
+  tap watches one, in black and white on a canvas, with the standard, how clearly, the FM swing and the power.
+  Upstream touch points (FORK): `main.ts` (AppId, APPS, open, render, worker messages, EMPTY, CLEAR, the import, the FPV
+  view in a FORK block), `radio.ts` (APP_NEEDS), `dsp.worker.ts` (import, processor, makeProcessor, `fpvTune`).
+  Tests prove: the channel table; NTSC and PAL found and named in either polarity, 300 kHz off centre, at 30, 15 and
+  10 dB; the picture's eight bars rising black to white; noise, a 7 kHz FM tone and DJI DroneID OFDM are not video; the
+  processor's looks carry the channel and pictures come only when watching. Browser check (Chromium): a PAL recording
+  on R1 shows "PAL video · 98 %", R1 gold, and the bars on the canvas (23 … 255), no page errors.
+  Not done: colour (the chroma subcarrier is ignored: black and white only); one field per look, not a moving picture;
+  digital FPV is the next row.
+  Hardware: FPV with a HackRF and a 5.8 GHz antenna near a powered analog FPV transmitter (a quad's VTX, or a goggle
+  test pattern): SCAN should turn its channel gold with NTSC or PAL; tap it for the picture. Compare the channel with the
+  VTX's band and channel setting.

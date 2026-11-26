@@ -4,6 +4,7 @@
  * IqProcessor (raw IQ + the NFM discriminator tap for the FM-borne packet modes).
  */
 import { DroneIdProcessor } from './dsp/droneid.js';   // FORK: DJI DroneID
+import { FpvProcessor } from './dsp/fpv.js';   // FORK: analog FPV video
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -125,6 +126,7 @@ function loraPoolFor(r: number): WorkerPool | null {
 }
 const btle = new BtleDecoder(emit);
 const droneid = new DroneIdProcessor(emit);   // FORK: DJI DroneID (dsp/droneid.ts)
+const fpv = new FpvProcessor(emit);   // FORK: analog FPV video (dsp/fpv.ts)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -438,6 +440,7 @@ self.onmessage = (e: MessageEvent) => {
       }
       break;
     case 'btleChannel': btle.channel = m.ch as number; break;
+    case 'fpvTune': fpv.tune(m.ch as string, !!m.watch); break;   // FORK: analog FPV video
     case 'trainsBand': trains.band = m.band === 'PTC' ? 'PTC' : 'EOT'; break;
     case 'trainsClear': trains.clear(); break;
     case 'cell':
@@ -521,6 +524,7 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'lora': lora.setCenter(centreHz); lora.flush(); return lora;
     case 'btle': return btle;
     case 'droneid': return droneid;   // FORK: DJI DroneID
+    case 'fpv': return fpv;   // FORK: analog FPV video
     case 'tpms': return tpms;
     case 'acars': return acars;
     case 'vdl2': vdl2.centerHz = centreHz; return vdl2;

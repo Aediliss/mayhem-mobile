@@ -46,6 +46,7 @@ import { Tx, type SigMode } from './tx.js';
 import * as Apps from './tx-apps.js';
 import type { Aircraft } from './dsp/adsb.js';
 import type { DroneIdFrame } from './dsp/droneid.js';   // FORK: DJI DroneID
+import { FPV_CHANNELS, type FpvLook } from './dsp/fpv.js';   // FORK: analog FPV video
 import type { AcTrack } from './dsp/modeac.js';   // FORK: Mode A/C
 /** FORK: Mode A/C codes heard as tracks (the worker's latest list). */
 let modeAc: AcTrack[] = [];
@@ -109,7 +110,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'vdl2' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'vdl2' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -135,6 +136,7 @@ const APPS: AppDef[] = [
   { id: 'ert', title: 'Utility Meters', blurb: 'ERT · Gridstream · 802.15.4g', cat: 'Receive' },
   { id: 'btle', title: 'Bluetooth', blurb: 'BLE advertising · 2.4 GHz', cat: 'Receive' },
   { id: 'droneid', title: 'Drones', blurb: 'DJI DroneID · 2.4 GHz', cat: 'Receive' },   // FORK: DJI DroneID
+  { id: 'fpv', title: 'FPV', blurb: 'Analog FPV video · 5.8 GHz', cat: 'Receive' },   // FORK: analog FPV video
   { id: 'sat', title: 'Satellites', blurb: 'track and decode', cat: 'Receive' },
   { id: 'sondes', title: 'Weather Balloons', blurb: 'radiosondes · 400–406 MHz', cat: 'Receive' },
   { id: 'atsc', title: 'TV', blurb: 'ATSC · guide · pictures', cat: 'Receive' },
@@ -1066,6 +1068,7 @@ function open(app: AppId | null): void {
     case 'sondes': sondesOpen(); break;
     case 'btle': configure('NONE', btleChannelFreq(state.btleCh), 2e6, 32, 40, true, 'btle'); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); break;
     case 'droneid': configure('NONE', droneUi.freq, 15.36e6, 32, 40, true, 'droneid'); break;   // FORK: DJI DroneID at 15.36 MS/s
+    case 'fpv': configure('NONE', fpvUi.hz, 20e6, 24, 30, true, 'fpv'); worker?.postMessage({ type: 'fpvTune', ch: fpvUi.ch, watch: true }); break;   // FORK: analog FPV video at 20 MS/s
     // The span is centred on 130.8 MHz: every US ACARS channel (130.025-131.550) is inside it and decoded at once,
     // none of them on the radio's DC spike; 131.550 is the one heard.
     case 'vdl2': configure('AM', 136_975_000, 2e6, 32, 32, false, 'vdl2'); state.viewLo = VDL2_SPAN_HZ; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); break;
@@ -1788,6 +1791,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   hd: ['hd', 'No HD stations yet', ['AUTO finds the stations across the FM band, then visits the strong ones from the bottom up until each fills in', 'Most big FM stations in the US are hybrid: name, songs, logos and album art come in within a minute or two', 'Each program (HD1 to HD8) plays its digital audio; HD1 plays the analog FM until its digital is ready']],
   vdl2: ['vdl2', 'Waiting for VDL2 messages', ['Every VDL2 channel from 136.10 to 136.975 MHz is decoded at once; 136.975 is the common one', 'Aircraft talk to ground stations every few minutes, more near an airport; an antenna that sees the sky hears them 200 miles out']],
   acars: ['acars', 'Waiting for ACARS messages', ['Aircraft send them every few minutes; 131.550 is the busiest US channel', 'Near an airport, or with an antenna that sees the sky, you hear aircraft up to 200 miles out']],
+  fpv: ['fpv', 'No FPV video found yet', ['SCAN steps through the 48 channels of bands A, B, E, F, R and L; channels with video turn gold', 'Tap a channel to watch it: the picture is drawn from the sync pulses, in black and white', 'Needs a HackRF at 20 MS/s and a 5.8 GHz antenna; an RTL-SDR cannot reach 5.8 GHz']],   // FORK: analog FPV video
   droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   btle: ['btle', 'Waiting for BLE advertisements', ['Phones, earbuds and watches advertise several times a second: start on CH 37', 'BLE is low power: hold the radio within a few meters of a device']],
   lora: ['lora', 'No nodes yet', ['Meshtastic nodes beacon about every 15 minutes: leave it running', 'AREA picks where you are; a wider SPAN (20 MHz on a HackRF) holds more of its channels']],
@@ -2036,6 +2040,7 @@ function render(app: AppId | null): void {
     case 'atsc': renderAtsc(view); break;
     case 'btle': renderBle(view); break;
     case 'droneid': renderDroneId(view); break;   // FORK: DJI DroneID
+    case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
     case 'acars': renderAcars(view, 'acars'); break;
     case 'subghz': renderPacket(view, app); break;
@@ -4088,6 +4093,55 @@ function refreshDrone(): void {
   if (mapEl && geo) { const was = mapEl.hidden; mapEl.hidden = !items.length; if (items.length) { geo.update(items, droneUi.sel); geo.setLines(lines); if (was) geo.invalidate(); } }
 }
 // FORK: end of Drones
+
+// FORK: ------------------------------------------------------------------------------- FPV (analog video, dsp/fpv.ts)
+type FpvSeen = FpvLook & { powerDb: number };
+const fpvUi = { ch: 'R1', hz: FPV_CHANNELS.find(c => c.name === 'R1')!.hz, scan: false, timer: 0, seen: new Map<string, FpvSeen & { ms: number }>() };
+function renderFpv(view: HTMLElement): void {
+  const why = radio ? blockedBecause(APP_NEEDS.fpv, radio.limits) : '';
+  view.innerHTML = `
+    <section class="${visCls('fpv')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. A HackRF covers 5.8 GHz at 20 MS/s.</div>` : ''}
+      <div class="row"><button class="chip" id="fpv-scan" title="step through every channel">SCAN</button><span id="fpv-now" class="caption"></span></div>
+      <div id="fpv-grid" class="row" style="flex-wrap:wrap;gap:4px;margin-top:6px"></div>
+      <div class="panel" style="margin-top:6px"><canvas id="fpv-pic" width="320" height="240" style="width:100%;image-rendering:pixelated;background:#000"></canvas></div>
+      <div class="note about">Analog FPV video, receive only: the composite video an analog FPV transmitter sends as wideband FM on the 5.8 GHz channel grid (bands A, B, E, F / IRC, R raceband, L lowband). SCAN looks at each channel in turn and marks the ones carrying video (by their line rate: NTSC or PAL) with their strength; tap one to watch it, drawn in black and white from its sync pulses. Digital FPV (DJI, Walksnail, HDZero) is not video to this and is not shown. Needs a HackRF at 20 MS/s.</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 60, spectrumHeight: 70 }));
+  $('fpv-scan').onclick = () => setFpvScan(!fpvUi.scan);
+  $('fpv-grid').onclick = e => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-fpv]'); if (b) { setFpvScan(false); fpvGo(b.dataset.fpv!, true); } };
+  refreshFpv();
+}
+function fpvGo(name: string, watch: boolean): void {
+  const c = FPV_CHANNELS.find(x => x.name === name); if (!c) return;
+  fpvUi.ch = name; fpvUi.hz = c.hz; tune(c.hz); worker?.postMessage({ type: 'fpvTune', ch: name, watch }); refreshFpv();
+}
+function setFpvScan(on: boolean): void {
+  fpvUi.scan = on; if (fpvUi.timer) { clearInterval(fpvUi.timer); fpvUi.timer = 0; }
+  if (on) fpvUi.timer = window.setInterval(() => {
+    if (state.app !== 'fpv') { setFpvScan(false); return; }
+    const i = FPV_CHANNELS.findIndex(c => c.name === fpvUi.ch); fpvGo(FPV_CHANNELS[(i + 1) % FPV_CHANNELS.length].name, false);
+  }, 350);
+  refreshFpv();
+}
+function onFpvLook(m: FpvSeen & { ch: string }): void { if (!m.ch) return; fpvUi.seen.set(m.ch, { ...m, ms: Date.now() }); if (state.app === 'fpv') refreshFpv(); }
+function onFpvField(m: { ch: string; width: number; lines: number; pixels: Uint8ClampedArray; standard: string }): void {
+  if (state.app !== 'fpv' || m.ch !== fpvUi.ch) return;
+  const cv = q<HTMLCanvasElement>('#fpv-pic'); if (!cv) return;
+  cv.width = m.width; cv.height = m.lines;
+  const img = new ImageData(m.width, m.lines);
+  for (let i = 0; i < m.pixels.length; i++) { const v = m.pixels[i]; img.data[4 * i] = v; img.data[4 * i + 1] = v; img.data[4 * i + 2] = v; img.data[4 * i + 3] = 255; }
+  cv.getContext('2d')?.putImageData(img, 0, 0);
+}
+function refreshFpv(): void {
+  if (state.app !== 'fpv') return;
+  q('#fpv-scan')?.classList.toggle('on', fpvUi.scan);
+  const cur = fpvUi.seen.get(fpvUi.ch), now = q('#fpv-now');
+  if (now) now.textContent = `${fpvUi.ch} · ${(fpvUi.hz / 1e6).toFixed(0)} MHz · ${cur ? cur.standard ? `${cur.standard} video · ${Math.round(cur.score * 100)}% · ${(cur.deviationHz / 1e6).toFixed(1)} MHz swing` : 'no video' : 'listening'}${cur ? ` · ${cur.powerDb} dB` : ''}`;
+  const grid = q('#fpv-grid');
+  if (grid) grid.innerHTML = FPV_CHANNELS.map(c => { const s = fpvUi.seen.get(c.name), vid = !!s?.standard; return `<button class="chip ${c.name === fpvUi.ch ? 'on' : ''} ${vid ? 'gold' : ''}" data-fpv="${c.name}" title="${(c.hz / 1e6).toFixed(0)} MHz${s ? ` · ${s.standard ?? 'no video'} · ${s.powerDb} dB` : ''}">${c.name}${vid ? ` ${s!.standard}` : ''}</button>`; }).join('');
+}
+// FORK: end of FPV
 
 function renderBle(view: HTMLElement): void {
   const why = radio ? blockedBecause(APP_NEEDS.btle, radio.limits) : '';
@@ -9300,6 +9354,7 @@ function redraw(id: string): void {
  *  copy matters: vessels, stations, aircraft and devices are re-sent whole with every packet, so clearing only
  *  this side brought the entire list straight back with the next one. */
 function clearApp(id: string): void {
+  if (id === 'fpv') { fpvUi.seen.clear(); refreshFpv(); }   // FORK: analog FPV video
   if (id === 'droneid') { droneUi.drones.clear(); droneUi.bursts = 0; droneUi.decoded = 0; droneUi.sel = ''; refreshDrone(); }   // FORK: DJI DroneID
   logs[id] = []; counts[id] = 0;
   switch (id) {
@@ -9826,6 +9881,8 @@ function ensureWorker(): Worker {
       case 'ble': onBleAdv(m as { pdu: number[]; db: number; ch: number }); break;
       case 'droneid': onDroneId(m as unknown as { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }); break;   // FORK: DJI DroneID
       case 'droneidStats': droneUi.bursts = m.bursts as number; droneUi.decoded = m.decoded as number; refreshDrone(); break;   // FORK
+      case 'fpvLook': onFpvLook(m as unknown as FpvSeen & { ch: string }); break;   // FORK: analog FPV video
+      case 'fpvField': onFpvField(m as unknown as { ch: string; width: number; lines: number; pixels: Uint8ClampedArray; standard: string }); break;   // FORK
       case 'rds': lastRds = m as typeof lastRds; drawRds(); break;
       case 'hd': lastHd = m as typeof lastHd; console.log('[hd]', JSON.stringify(m)); drawHd(); break;
       case 'same': onSameAlert(m); break;
