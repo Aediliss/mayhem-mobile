@@ -37,9 +37,9 @@ export function bindExportSettings(root: ParentNode, bus: ExportBus, log: (l: st
     const b = q<HTMLButtonElement>(`#${id}`); if (!b) return;
     b.onclick = () => { set(!get()); b.classList.toggle('on', get()); b.setAttribute('aria-checked', String(get())); apply(); };
   };
-  const text = (id: string, set: (v: string) => void, check?: (v: string) => string) => {
+  const text = (id: string, set: (v: string) => void, check?: (v: string) => string, verbatim = false) => {
     const i = q<HTMLInputElement>(`#${id}`); if (!i) return;
-    i.onchange = () => { const v = i.value.trim(), bad = check?.(v) ?? ''; if (bad) { log(`export: ${bad}`); i.style.borderColor = 'var(--danger)'; return; } i.style.borderColor = ''; set(v); apply(); };
+    i.onchange = () => { const v = verbatim ? i.value : i.value.trim(), bad = check?.(v) ?? ''; if (bad) { log(`export: ${bad}`); i.style.borderColor = 'var(--danger)'; return; } i.style.borderColor = ''; set(v); apply(); };
   };
   const scheme = (allowed: string[]) => (v: string) => (!v || allowed.some(s => v.startsWith(s)) ? '' : `${v} must start with ${allowed.join(' or ')}`);
   toggle('ex-on', () => c.enabled, v => { c.enabled = v; });
@@ -52,8 +52,9 @@ export function bindExportSettings(root: ParentNode, bus: ExportBus, log: (l: st
   text('ex-ws-url', v => { c.ws.url = v; }, scheme(['wss://', 'ws://']));
   text('ex-mq-url', v => { c.mqtt.url = v; }, scheme(['wss://', 'ws://']));
   text('ex-mq-topic', v => { c.mqtt.topic = v.replace(/[#+]/g, '').replace(/\/+$/, '') || 'madmobile'; });
-  text('ex-mq-user', v => { c.mqtt.user = v; });
-  text('ex-mq-pass', v => { c.mqtt.pass = v; });
+  // credentials verbatim: leading and trailing spaces are valid characters in a user name or password
+  text('ex-mq-user', v => { c.mqtt.user = v; }, undefined, true);
+  text('ex-mq-pass', v => { c.mqtt.pass = v; }, undefined, true);
   root.querySelectorAll<HTMLButtonElement>('[data-exfmt]').forEach(b => b.onclick = () => {
     c.ws.format = b.dataset.exfmt as ExportConfig['ws']['format'];
     root.querySelectorAll<HTMLButtonElement>('[data-exfmt]').forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b)); }); apply();

@@ -167,9 +167,10 @@ export class MqttSink implements Sink {
     this.send(publishPacket(eventTopic(this.prefix, ev), JSON.stringify(ev)));
     if (ev.kind === 'device' && ev.data) {
       const uid = deviceUid(ev.data);
-      if (this.o.ha && !this.announced.has(uid)) {
-        this.announced.add(uid);
-        for (const [t, cfg] of haDiscovery(ev.data, this.prefix)) this.send(publishPacket(t, cfg, true));
+      // per discovery topic, not per device: some sensors (Acurite 5-in-1) send different fields in alternate reports
+      if (this.o.ha) for (const [t, cfg] of haDiscovery(ev.data, this.prefix)) {
+        if (this.announced.has(t)) continue;
+        this.announced.add(t); this.send(publishPacket(t, cfg, true));
       }
       this.send(publishPacket(`${this.prefix}/devices/${uid}`, JSON.stringify({ time: ev.t, ...ev.data })));
     }

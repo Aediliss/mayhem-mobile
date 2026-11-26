@@ -107,3 +107,14 @@ test('topics: events under events/, never colliding with device states', async (
   assert.equal(eventTopic('madmobile', ev('line', 'Ham Map!')), 'madmobile/events/line/ham_map');
   assert.equal(eventTopic('home/sdr', ev('device', 'devices')), 'home/sdr/events/device');
 });
+
+test('Home Assistant: fields first seen in a later report are announced too (Acurite 5-in-1 alternates)', () => {
+  const s = new MqttSink(OPTS, Broker as never), b = Broker.last; b.open(); b.reply(0x20, 0x02, 0x00, 0x00);
+  const dev = { model: 'Acurite-5n1', id: 7, channel: 'A' };
+  s.handle({ t: 't', app: 'devices', kind: 'device', data: { ...dev, wind_avg_km_h: 12, rain_in: 0.2 } });
+  s.handle({ t: 't', app: 'devices', kind: 'device', data: { ...dev, temperature_F: 50, humidity: 80 } });
+  s.handle({ t: 't', app: 'devices', kind: 'device', data: { ...dev, wind_avg_km_h: 14, rain_in: 0.2 } });
+  const cfg = b.publishes().filter(([t]) => t.startsWith('homeassistant/')).map(([t]) => t.split('/')[2].replace('madmobile_acurite_5n1_a_7_', ''));
+  assert.deepEqual(cfg, ['wind_avg_km_h', 'rain_in', 'temperature_f', 'humidity']);   // each once, including the later ones
+  s.close();
+});
