@@ -41,7 +41,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 |---|---|---|---|---|
 | [x] | ★ | Satellites: NOAA 15/18/19 decommissioned (grey out, keep) | NOAA OSPO notices | facts |
 | [x] | ★ | Full Mode-S in `dsp/adsb.ts`: DF0/4/5/11/16/20/21, Comm-B BDS 1,0/2,0/4,0/5,0/6,0, AP recovery vs known ICAOs, 1–2 bit CRC fix (DF11/17/18), "Mode-S only" aircraft | ICAO Annex 10 Vol IV, Doc 9871; pyModeS; readsb; dump1090-fa | pyModeS GPL-3.0 ✔ · readsb GPL-3.0 ✔ · dump1090-fa GPL-2.0-or-later ✔ · antirez dump1090 BSD-3 ✔ |
-| [ ] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
+| [x] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
 | [ ] | | BLE: auto-rotate 37/38/39, extended adv headers, coded PHY if feasible, PHY per packet | Bluetooth Core 5.x Vol 6; ubertooth/libbtbb | ubertooth/libbtbb GPL-2.0-or-later ✔ (headers) |
 | [ ] | | BLE tracker-following alert (AirTag/Find My/Tile/SmartTag/Find Hub) over time + GPS distance | Apple/Google DULT draft (IETF), AirGuard research | spec; check any code |
 
@@ -463,3 +463,23 @@ for "or later" first.
   Hardware: Flights at 1090 MHz with an RTL-SDR or HackRF (2 Msps), near an airport with Mode-S radar coverage: the log's
   "by DF" counts should show 4, 5, 11, 20 and 21 as well as 17; aircraft cards should gain squawks, and under en-route
   radar (EHS airspace, e.g. most of Europe) selected altitude and air data.
+- **Phase 2 · Mode A/C replies** (`src/dsp/modeac.ts`, `test/modeac.test.ts`): written from ICAO Annex 10 Vol IV (pulse
+  positions; dump1090-fa's mode_ac.c, GPL-2.0-or-later, was the reference named here and not needed). On the same 2 Msps
+  magnitudes Flights already has: F1, 13 slots on a 1.45 µs grid and F2 at 20.3 µs, each slot read at its own time (the
+  larger of the two samples around it), set when over half the framing pulses; F1 and F2 at least 12 dB over the mean
+  and within 6 dB of each other, the X slot empty, nothing just before F1, SPI read. Spans read as Mode-S are skipped.
+  A code becomes a track after three replies within 10 s and drops after a minute of silence. Each code is read both
+  ways (squawk; Mode C Gillham altitude when D1 is clear) and tied to a Mode-S aircraft reporting that squawk or an
+  altitude within 200 ft. Flights' header counts MODE A/C and a caption under the list shows the codes no Mode-S
+  aircraft accounts for ("1200 (or … ft) ×12") and how many were matched. Upstream touch points (FORK): `adsb.ts` (import,
+  detector and tracks, the Mode-S spans, the scan after the frame loop, the `modeac` message in `publish` and `clear`),
+  `main.ts` (the message, the header count, the caption element and its text, CLEAR).
+  Tests prove: squawk reading; every 100 ft step -1000..62 700 ft is exactly one Mode C code, D1 set is no altitude;
+  32 replies of 8 codes at offsets of 0, ¼, ½ and ¾ sample with noise all decoded, SPI included; X set rejected; 0.1 s
+  of noise gives nothing; tracks need three replies, associate by squawk and by altitude, expire; end to end through
+  the ADS-B decoder among Mode-S frames (7700 tied to the aircraft squawking it, 1200 on its own). Browser check
+  (Chromium): a recording with both shows "2 MODE A/C", both matched (7700 → KLM1023, 1200 → the Mode-S only aircraft).
+  Not confirmed on air: real replies' pulse shapes at 2 Msps (0.45 µs pulses are under one sample; a receiver's filter
+  spreads them, which the "larger of two samples" read allows for); garbling from overlapping replies is not resolved.
+  Hardware: Flights at 1090 MHz, 2 Msps, within reach of an SSR radar (most airports): MODE A/C should appear in the
+  header; general-aviation squawks such as 1200 / 7000 / 2000 with no Mode-S aircraft should be listed on their own.

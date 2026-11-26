@@ -1,6 +1,7 @@
 /** ADS-B / Mode-S decoder from raw IQ at 2 Msps (dump1090 lineage; port of core/AdsbDecoder.kt + AdsbStore). */
 import type { Emit, IqProcessor } from './core.js';
 import { ModeS, type ModeSFrame } from './modes.js';   // FORK: every downlink format (modes.ts)
+import { ModeAcDetector, ModeAcTracks } from './modeac.js';   // FORK: Mode A/C replies (modeac.ts)
 
 export interface Aircraft { icao: string; flight?: string; lat?: number; lon?: number; alt?: number; gs?: number; track?: number; vr?: number; seenMs: number; firstMs: number;
   // FORK: from the other downlink formats (modes.ts): squawk, on the ground, alert / SPI, Comm-B (selected altitude and
@@ -38,6 +39,8 @@ export class AdsbDecoder implements IqProcessor {
   private frames = 0;
   /** FORK: the Mode-S checks (address / parity needs the addresses heard), and frames by format for the log. */
   readonly modeS = new ModeS(); private readonly byDf = new Map<number, number>();
+  /** FORK: Mode A/C replies (modeac.ts) among the samples, and the codes heard as tracks. */
+  private readonly acDet = new ModeAcDetector(2_000_000); readonly acTracks = new ModeAcTracks(); private acReplies = 0;
   private dbg = { pre: 0, df: 0, ok: 0, fail: 0, last: 0 };
   private lastPublish = 0;
   /** Receiver position for single-frame CPR (set from the phone's geolocation). */
@@ -49,7 +52,7 @@ export class AdsbDecoder implements IqProcessor {
 
   reset(): void { this.carryLen = 0; this.cpr.clear(); this.icaoFrames.clear(); }
   /** CLEAR on the screen: forget every aircraft and the frame count, and say so, or the next frame re-sends them. */
-  clear(): void { this.planes.clear(); this.cpr.clear(); this.frames = 0; this.emit({ type: 'aircraft', list: [], frames: 0 }); }
+  clear(): void { this.planes.clear(); this.cpr.clear(); this.frames = 0; this.emit({ type: 'aircraft', list: [], frames: 0 }); this.acTracks.tracks.clear(); this.acReplies = 0; this.emit({ type: 'modeac', tracks: [], replies: 0 }); }   // FORK: + Mode A/C
 
   onIq(iq: Int8Array): void {
     const nSamp = iq.length >> 1;
@@ -68,6 +71,7 @@ export class AdsbDecoder implements IqProcessor {
     const bits = new Int32Array(LONG_BITS);
     let j = 0;
     const limit = mlen - FULL_LEN * 2;
+    const read: [number, number][] = [];   // FORK: spans read as Mode-S, which Mode A/C leaves alone
     while (j < limit) {
       if (!(m[j] > m[j + 1] && m[j + 1] < m[j + 2] && m[j + 2] > m[j + 3] && m[j + 3] < m[j] && m[j + 4] < m[j] && m[j + 5] < m[j] && m[j + 6] < m[j] &&
         m[j + 7] > m[j + 8] && m[j + 8] < m[j + 9] && m[j + 9] > m[j + 6])) { j++; continue; }
@@ -100,8 +104,12 @@ export class AdsbDecoder implements IqProcessor {
       this.emit({ type: 'modes', hex: Array.from(fr.bytes, b => b.toString(16).padStart(2, '0')).join('') });   // FORK: raw frame for the export bus (Beast)
       if (fr.df === 17 || fr.df === 18) { this.dbg.ok++; this.decode(Int32Array.from(fr.bytes), batch, nowMs); }
       else this.modeSApply(fr, batch, nowMs);
+      read.push([j, j + (nb + PREAMBLE) * 2]);   // FORK: Mode A/C skips it
       j += (nb + PREAMBLE) * 2;   // FORK: a short frame is 56 bits
     }
+    // FORK: Mode A/C replies over the same samples (the last FULL_LEN * 2 come round again next time, as for Mode-S)
+    if (limit > 0) { let sum = 0; for (let i = 0; i < mlen; i += 7) sum += m[i]; const floor = (sum / Math.ceil(mlen / 7)) || 1;
+      for (const r of this.acDet.scan(m, 0, limit, floor, read)) { this.acTracks.add(r, nowMs); this.acReplies++; } }
     const keep = Math.min(FULL_LEN * 2, mlen);
     this.carry.set(m.subarray(mlen - keep));
     this.carryLen = keep;
@@ -179,6 +187,7 @@ export class AdsbDecoder implements IqProcessor {
     for (const [k, v] of this.planes) if (now - v.seenMs > 60_000) this.planes.delete(k);
     const list = [...this.planes.values()].sort((a, b) => a.firstMs - b.firstMs);
     this.emit({ type: 'aircraft', list, frames: this.frames });
+    if (this.acReplies || this.acTracks.tracks.size) this.emit({ type: 'modeac', tracks: this.acTracks.associate(list, now), replies: this.acReplies });   // FORK: Mode A/C
   }
 
   // FORK: ---- the other downlink formats (modes.ts) -----------------------------------------------------------

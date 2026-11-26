@@ -45,6 +45,9 @@ import type { Burst } from './dsp/analyzer/capture.js';
 import { Tx, type SigMode } from './tx.js';
 import * as Apps from './tx-apps.js';
 import type { Aircraft } from './dsp/adsb.js';
+import type { AcTrack } from './dsp/modeac.js';   // FORK: Mode A/C
+/** FORK: Mode A/C codes heard as tracks (the worker's latest list). */
+let modeAc: AcTrack[] = [];
 import type { Vessel } from './dsp/ais.js';
 import type { AprsStation } from './dsp/aprs.js';
 import { aprsSymbolName } from './aprs-info.js';
@@ -8393,6 +8396,7 @@ function renderAdsb(view: HTMLElement): void {
       <div id="adsb-card" class="accard" hidden></div>
       <div id="adsb-map" class="panel map"></div>
       <div id="adsb-list" class="panel list"></div>
+      <div id="adsb-modeac" class="caption" hidden></div><!-- FORK: Mode A/C tracks -->
       </section>`;
   scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
   q('#pause-adsb')?.insertAdjacentHTML('beforebegin', `<button id="adsb-full" class="ib" title="full-screen map" aria-label="full-screen map">${adsbFull ? EXIT_SVG : FULL_SVG}</button>`);
@@ -9078,7 +9082,7 @@ function clearApp(id: string): void {
   switch (id) {
     case 'ais': state.aisTable = []; state.aisSel = 0; break;
     case 'aprs': state.aprsStations = []; state.aprsSel = ''; aprsLogMs.length = 0; hamSpots.clear(); break;
-    case 'adsb': state.aircraft = []; state.frames = 0; state.adsbSel = ''; break;
+    case 'adsb': state.aircraft = []; state.frames = 0; state.adsbSel = ''; modeAc = []; break;   // FORK: + Mode A/C
     case 'devices': state.r433.heard = []; break;
     case 'btle': bleUi.tracker.clear(); bleUi.sel = ''; break;
     case 'vdl2': case 'acars': acarsUis[id].planes.clear(); acarsUis[id].stats.clear(); acarsUis[id].vdl.clear(); acarsUis[id].sel = ''; break;
@@ -9320,7 +9324,10 @@ function acRowFill(row: HTMLElement, a: Aircraft): void {
   row.classList.toggle('nopos', a.lat === undefined);
 }
 function refreshAdsb(): void {
-  const c = q('#adsb-count'); if (c) c.textContent = `✈ ${state.frames} FRAMES · ${state.aircraft.length} AIRCRAFT`;
+  const c = q('#adsb-count'); if (c) c.textContent = `✈ ${state.frames} FRAMES · ${state.aircraft.length} AIRCRAFT${modeAc.length ? ` · ${modeAc.length} MODE A/C` : ''}`;   // FORK: + Mode A/C
+  // FORK: Mode A/C codes no Mode-S aircraft accounts for, each read as a squawk and (where it is one) a Mode C altitude
+  { const box = q('#adsb-modeac'), un = modeAc.filter(t => !t.icao), tied = modeAc.length - un.length;
+    if (box) { box.hidden = !modeAc.length; box.textContent = modeAc.length ? `MODE A/C · ${un.length ? un.slice(0, 12).map(t => `${t.squawk}${t.alt !== undefined ? ` (or ${t.alt.toLocaleString()} ft)` : ''} ×${t.count}`).join(' · ') : 'none on their own'}${tied ? ` · ${tied} matched to Mode-S aircraft` : ''}` : ''; } }
   qa('[data-adsbview]').forEach(b => b.classList.toggle('on', b.dataset.adsbview === state.adsbView));
   const el = q('#adsb-list'), mapEl = q('#adsb-map'); if (!el || !mapEl) return;
   el.hidden = !adsbFull && state.adsbView !== 'list'; mapEl.hidden = !adsbFull && state.adsbView !== 'map';
@@ -9616,6 +9623,7 @@ function ensureWorker(): Worker {
       case 'atscState': atscSave(m.state); break;
       case 'fmTap': (window as unknown as { mmFmTap: unknown }).mmFmTap = { rate: m.rate, samples: m.samples }; log(`fm tap: ${(m.samples as Float32Array).length} samples @ ${m.rate}`); break;
       case 'aircraft': state.aircraft = m.list; state.frames = m.frames; refreshAdsb(); break;
+      case 'modeac': modeAc = m.tracks as AcTrack[]; refreshAdsb(); break;   // FORK: Mode A/C replies (dsp/modeac.ts)
       case 'huntPage': onHuntPage(m); break;
       case 'huntState': onHuntState(m); break;
       case 'tune': tune(m.hz as number); break;
