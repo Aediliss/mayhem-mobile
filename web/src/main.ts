@@ -25,6 +25,9 @@ import { CREDITS } from './credits.js';
 import { FileRadio, speedLabel } from './fileradio.js';   // FORK: play recordings (Phase 1)
 import { openIqSource } from './filesrc/open.js';   // FORK
 import { AudioRadio, type AudioSource } from './audioradio.js';   // FORK: audio in (Phase 1)
+import { VoiceRecorder } from './voice/recorder.js';   // FORK: voice recording (Phase 1)
+import { bindVoiceSettings, voiceSettingsHtml } from './voice/ui.js';   // FORK
+import type { CallMeta } from './voice/segmenter.js';   // FORK
 import { ExportBus, loadConfig } from './export/bus.js';   // FORK: decode export bus
 import { bindExportSettings, exportSettingsHtml } from './export/ui.js';   // FORK
 import type { WsCtor } from './export/sinks.js';   // FORK
@@ -222,6 +225,25 @@ const counts: Record<string, number> = {};
 const diag: string[] = [];
 let logFollow = true;   // stops when the reader scrolls up, resumes at the bottom
 let radio: Radio | null = null;
+// FORK: voice recording (Settings → VOICE RECORDING). What each receiver app says is on the air, for the file's
+// name and tags; null in apps that play no voice worth recording.
+const VOICE_APPS = new Set(['fleet', 'hamplus', 'prowl', 'cb', 'audio', 'ham']);
+function voiceMeta(): CallMeta | null {
+  const app = state.app;
+  if (!app || !VOICE_APPS.has(app)) return null;
+  if (app === 'fleet') {
+    const s = fleetUi.snap, c = s ? nowPlaying(s.calls, s.playing) : null;
+    if (c) return { key: `fleet:${c.key}`, label: `${callWho(c)}${c.src ? ` · unit ${c.src}` : ''}`, app, tg: c.tg, group: c.group, unit: c.src || undefined, system: c.sys, site: c.site || undefined, proto: c.proto, freqHz: c.hz, emergency: c.emergency || undefined };
+    return { key: 'fleet:none', label: 'Dispatch', app };
+  }
+  if (app === 'hamplus') {
+    const s = hpUi.snap, k = s?.playing?.[0], t = k ? s!.tiles.find(x => x.key === k) : undefined;
+    if (t) return { key: `hp:${t.key}`, label: [`${(t.hz / 1e6).toFixed(4)} MHz`, t.label, t.callsign].filter(Boolean).join(' '), app, freqHz: t.hz, tone: t.tone || undefined, callsign: t.callsign || undefined };
+  }
+  const hz = app === 'ham' ? state.ham.freq : state.freq, mode = app === 'ham' ? state.ham.mode : state.mode;
+  return { key: `${app}:${hz}:${mode}`, label: `${(hz / 1e6).toFixed(4)} MHz ${mode}`, app, freqHz: hz, mode };
+}
+const voiceRec = new VoiceRecorder(voiceMeta, () => `${FORK_NAME} ${versionText}`, l => log(l));
 // FORK: the decode export bus (Settings → EXPORT); off until switched on there
 const exportBus = new ExportBus(loadConfig(), { fetch: (u, i) => fetch(u, i), WebSocket: WebSocket as unknown as WsCtor, mqtt: c => new MqttSink(c, WebSocket as unknown as ConstructorParameters<typeof MqttSink>[1]) });
 /** The USB device behind `radio`, so a detach event can tell whether it was the radio that left. */
@@ -8770,7 +8792,7 @@ function renderSettings(view: HTMLElement): void {
   const over = settingsOver;
   const radioLine = radio ? (radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';   // FORK: a recording names itself
   const appRows = thisAppRows(over);
-  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT;
+  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['voice', 'VOICE'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT, VOICE;
   view.innerHTML = `
     <section class="controls settings-page">
     <input id="set-search" class="txin set-search" placeholder="Search settings" autocomplete="off" spellcheck="false">
@@ -8803,7 +8825,7 @@ function renderSettings(view: HTMLElement): void {
       <div class="kv"><span>macOS</span><span>nothing to install — just close any other SDR program that has the HackRF open</span></div>
       <div class="kv"><span>Linux</span><span>the udev rule from the hackrf package (53-hackrf.rules) grants access; replug after adding it</span></div>
       <div class="kv"><span>Keyboard</span><span>digits: wheel, click top/bottom, type · ← → tune · ↑ ↓ step size · M mode · X mute · S squelch · B bookmark · Space scan · A amp · G AGC · [ ] LNA · − = VGA · L log · Esc closes Settings, then goes home · mouse wheel over the waterfall tunes, Ctrl+wheel changes the step</span></div></div></section>
-    ${exportSettingsHtml(exportBus, { mqtt: true })}${'' /* FORK: Settings → EXPORT */}
+    ${exportSettingsHtml(exportBus, { mqtt: true })}${voiceSettingsHtml(voiceRec)}${'' /* FORK: Settings → EXPORT, VOICE RECORDING */}
     <section class="sset" id="sec-log"><div class="sset-h">LOG</div>${srow('Log', 'Everything the radio and the decoders reported, to read, save or share', '<button id="set-log" class="tog">OPEN</button>')}</section>
     <section class="sset" id="sec-about"><div class="sset-h">ABOUT</div>
     <div class="panel about">
@@ -8825,6 +8847,7 @@ function renderSettings(view: HTMLElement): void {
     <div class="sset-sub">CREDITS · drag to steer</div>
     <div class="panel credits" id="credits"><div class="credits-roll" id="credits-roll">${(() => { const inner = CREDITS.map(([h, t]) => h ? `<h4>${esc(t)}</h4>` : `<p>${esc(t)}</p>`).join(''); return `<div class="credits-copy">${inner}</div><div class="credits-copy" aria-hidden="true">${inner}</div>`; })()}</div></div>
     </section></section>`;
+  { const vsec = q('#sec-voice', view), vrefresh = bindVoiceSettings(view, voiceRec); voiceRec.onSaved = () => { if (vsec?.isConnected) void vrefresh(); }; }   // FORK: VOICE RECORDING controls
   { const sec = q('#sec-export', view), refresh = bindExportSettings(view, exportBus, log); const t = setInterval(() => { if (!sec?.isConnected) clearInterval(t); else refresh(); }, 1000); }   // FORK: EXPORT controls (timer dies with its section)
   qa<HTMLInputElement>('[data-st]', view).forEach(i => i.oninput = () => { const k = i.dataset.st as keyof Station; const v = k === 'call' || k === 'grid' ? i.value.toUpperCase() : i.value; if (k === 'call' || k === 'grid') i.value = v; state.ham.station[k] = v; saveStation(); });
   qa<HTMLButtonElement>('[data-skin]', view).forEach(b => b.onclick = () => { applySkin(SKINS.find(s => s.id === b.dataset.skin)!); refreshSettings(); });
@@ -9713,6 +9736,7 @@ async function ensureAudio(): Promise<void> {
     const node = new AudioWorkletNode(audioCtx, 'mayhem-player', { outputChannelCount: [1] });
     muteGain = audioCtx.createGain(); muteGain.gain.value = state.muted ? 0 : 1;
     node.connect(muteGain); muteGain.connect(audioCtx.destination);
+    void voiceRec.attach(audioCtx, node);   // FORK: voice recording taps the speaker audio before MUTE
     const ch = new MessageChannel();
     node.port.postMessage({ port: ch.port1 }, [ch.port1]);
     audioPort = ch.port2;

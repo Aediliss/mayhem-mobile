@@ -32,6 +32,8 @@ All three of check / build / test must pass before an item is marked done. CI: `
   decoder is exported for free as `line` events; for a structured kind, map its worker message in `EventAdapter`.
 - Audio in (`audioradio.ts`, kind `'audio'`): audio → IQ (`audiosrc/audio2iq.ts`) in the mode the app's demodulator
   undoes (`modForMode`), at the app's channel (`state.ham.freq` in Ham Radio, else `state.freq`). AUDIO IN: `#rm-audioin`.
+- Voice recording (`voice/`): taps the player node in `ensureAudio` (before MUTE); `voiceMeta()` in main.ts says
+  what each app has on the air (Dispatch: `nowPlaying`; Repeaters: the playing tile). Files in OPFS `voice/`.
 - Capture: upstream's worker recorder writes `.c8` + `.txt`; `capture-sigmf.ts` adds `.sigmf-meta` and the `.sigmf`
   archive download from the page (`sigmf.ts` builds both).
 - `src/dsp/`: one decoder per file or folder. `src/credits.ts`: the credits roll.

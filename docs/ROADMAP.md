@@ -32,7 +32,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
 | [x] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [x] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
-| [ ] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
+| [x] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
 | [ ] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
 
 ## Phase 2 — Quick wins and corrections
@@ -214,3 +214,18 @@ for "or later" first.
   Ham Map, AUDIO IN → that input, tuned to 144.39 MHz APRS on the handheld: packets should appear. (2) An HF rig's
   USB audio into the line-in, Ham Radio → DIGITAL → FT8 or RTTY with the rig on 14.074 / 14.080 MHz. Use headphones
   or MUTE with a microphone. Audio → IQ runs on the page at up to 2.4 Msps; on a slow phone pick a lower span.
+- **Phase 1 · voice recording** (`web/src/voice/`, `test/voice.test.ts`): Settings → VOICE RECORDING (off by
+  default). The speaker audio of the receiver apps (Dispatch, Repeaters, Prowl, CB, Ham Radio, Audio) is tapped
+  after the decoder and before MUTE, cut into calls (starts on sound with 200 ms pre-roll; ends after 2 s quiet or
+  at once when the talkgroup / unit / channel changes; blips under 0.5 s dropped; split at 10 min) and saved as
+  16-bit mono WAV in the browser's private storage, named `YYYYMMDD_HHMMSS_<label>.wav` and tagged with RIFF INFO:
+  INAM (e.g. "TG 1234 · unit 5678"), ICRD, ISFT, and ICMT holding JSON (app, talkgroup, group, unit, system, site,
+  protocol, frequency, emergency; for Repeaters frequency, tone and callsign; start, end, seconds). Only what the
+  app already plays is recorded, so encrypted calls (never voiced) are never recorded. Settings lists, downloads
+  and deletes them. Tests prove: two transmissions 3 s apart → two calls of the right length; a gap under the hang
+  time stays one call; a talkgroup change splits at once; blips dropped; flush and long-call splitting; WAV format,
+  INFO tags and samples round-trip. Browser check (Chromium): AUDIO IN fed a two-burst WAV into the Audio app →
+  two WAVs in OPFS, ~2.5 s each, tagged with app, frequency and mode, listed in Settings.
+  Hardware: Dispatch on a P25 or DMR system near you (HackRF / H4M in HackRF mode, a 700/800 MHz or UHF antenna)
+  with VOICE RECORDING on: each call should become its own WAV named with its talkgroup and unit; open one in an
+  audio player and check the tags (title, comment).
