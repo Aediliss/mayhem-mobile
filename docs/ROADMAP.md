@@ -79,7 +79,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | EDACS (standard + networked), ProVoice identification only | SDRTrunk; DSD-FME | SDRTrunk GPL-3.0 ✔ · DSD-FME ISC ✔ (README; check per-file) |
+| [ ] | ★ | EDACS (standard + networked), ProVoice identification only — **decoder done; Dispatch integration pending** | TIA/EIA TSB-69.3; DSD-FME `edacs-fme.c`; edacs-fm; ledacs | DSD-FME ISC ✔ (COPYRIGHT: all but the D-STAR files) · edacs-fm GPL-3.0 ✔ · ledacs Unlicense ✔ · Morelos-Zaragoza BCH code "non-commercial only" ✘ not used |
 | [ ] | ★ | LTR / LTR Passport | SDRTrunk | GPL-3.0 ✔ |
 | [ ] | ★ | MPT1327 | SDRTrunk; MPT1327 spec | GPL-3.0 ✔ |
 | [ ] | | DMR Tier III: Connect Plus, Hytera XPT mapping | DSD-FME; SDRTrunk | as above |
@@ -229,3 +229,16 @@ for "or later" first.
   Hardware: Dispatch on a P25 or DMR system near you (HackRF / H4M in HackRF mode, a 700/800 MHz or UHF antenna)
   with VOICE RECORDING on: each call should become its own WAV named with its talkgroup and unit; open one in an
   audio player and check the tags (title, comment).
+- **Phase 6 · EDACS decoder** (`web/src/dsp/fleet/edacs.ts`, `test/edacs.test.ts`): standard and networked control
+  channel, receive only. Sync 0x555557125555, two 40-bit messages × 3 copies (middle inverted), soft-voted, then a
+  BCH(40,28) check built from its definition (GF(64) on x^6+x+1, g = m1·m3). Messages per TSB-69.3: group voice
+  assignment (analog / ProVoice, emergency, message vs transmission trunking), channel updates, individual and
+  interconnect calls, data calls, login, status / ack, system-assigned ID, unkey / drop, adjacent site, site ID,
+  system all-call; LCNs 26+ reported as queued / busy / denied; optional ESK mask. ProVoice is identified, never
+  voiced. Receiver: 9600 bd (wideband) or 4800 bd (narrowband), either polarity. Tests prove: g(x) equals the
+  textbook BCH(63,51) generator (octal 12471) and divides x^63+1; every 1-4 bit error is detected; the vote fixes
+  an error in any one copy and two bad copies fail; every layout parses; frames decode from FSK at 18 dB SNR in
+  both polarities at 9600 and 4800 bd; noise finds nothing. Not yet verified on a real EDACS capture: the bit order
+  of the check (data high, parity low) follows DSD-FME's working decoder. Still to do: wiring into Dispatch (it
+  needs a 25 kHz channel for 9600 bd, wider than Dispatch's 24 kHz / 5.5 kHz channels, and a per-system LCN →
+  frequency plan, which EDACS does not broadcast). EA (extended addressing) is not implemented.

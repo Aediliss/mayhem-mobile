@@ -62,4 +62,7 @@ export const CREDITS: [boolean, string][] = [
   [false, "callook.info · US callsign lookups"],
   [false, "P25, NXDN and dPMR repeater IDs, written from TIA-102 (P25 Phase 1 and 2), the NXDN Forum's TS 1-A and TS 1-E, and ETSI TS 102 490 (dPMR)"],
   [false, "Shopping-cart wheel sounds and images (Gatekeeper, Rocateq) — begaydocrime.com"],
+  // FORK: Mad Mobile additions
+  [true, "MAD MOBILE ADDITIONS"],
+  [false, "EDACS control channel — message layouts after TIA/EIA TSB-69.3, as parsed in DSD-FME's edacs-fme.c by lwvmobile and ilyacodes (ISC), edacs-fm by lwvmobile (GPL-3.0) and ledacs by SP5WWP (Unlicense); BCH(40,28) built from its definition"],
 ];
