@@ -67,6 +67,29 @@ const enc = new TextEncoder();
 
 function octal(n: number, width: number): string { return n.toString(8).padStart(width - 1, '0') + '\0'; }
 
+/** Largest size the 11 octal digits of a ustar size field can hold (8 GiB - 1). */
+const OCTAL_MAX = 8 ** 11 - 1;
+
+/** Size field: octal when it fits, GNU base-256 (high bit set, big-endian) for 8 GiB and up, as GNU tar writes. */
+function writeSize(h: Uint8Array, size: number): void {
+  if (!Number.isSafeInteger(size) || size < 0) throw new Error(`tar: bad size ${size}`);
+  if (size <= OCTAL_MAX) { h.set(enc.encode(octal(size, 12)), 124); return; }
+  let v = size;
+  for (let i = 135; i > 124; i--) { h[i] = v % 256; v = Math.floor(v / 256); }
+  h[124] = 0x80;
+}
+
+/** The size in a header, or -1 when the field is not a well-formed octal or base-256 number. */
+export function readSize(h: Uint8Array): number {
+  if (h[124] & 0x80) {                                       // GNU base-256; a set sign bit (0xff) would be negative
+    if (h[124] !== 0x80) return -1;
+    let v = 0; for (let i = 125; i < 136; i++) v = v * 256 + h[i];
+    return Number.isSafeInteger(v) ? v : -1;
+  }
+  const s = new TextDecoder().decode(h.subarray(124, 136)).replace(/[\0 ]+$/, '').replace(/^ +/, '');
+  return /^[0-7]+$/.test(s) ? parseInt(s, 8) : s === '' ? 0 : -1;
+}
+
 /** One 512-byte ustar header for a regular file. */
 export function tarHeader(name: string, size: number, mtimeSec: number): Uint8Array {
   if (enc.encode(name).length > 100) throw new Error(`tar: name too long: ${name}`);
@@ -74,7 +97,7 @@ export function tarHeader(name: string, size: number, mtimeSec: number): Uint8Ar
   const put = (off: number, s: string) => h.set(enc.encode(s), off);
   put(0, name);
   put(100, octal(0o644, 8)); put(108, octal(0, 8)); put(116, octal(0, 8));
-  put(124, octal(size, 12)); put(136, octal(Math.floor(mtimeSec), 12));
+  writeSize(h, size); put(136, octal(Math.floor(mtimeSec), 12));
   h.fill(0x20, 148, 156);                                   // checksum field counts as spaces while summing
   put(156, '0'); put(257, 'ustar\0'); put(263, '00');
   let sum = 0; for (const b of h) sum += b;
@@ -100,11 +123,14 @@ export interface TarEntry { name: string; offset: number; size: number }
 export async function tarEntries(blob: Blob): Promise<TarEntry[]> {
   const out: TarEntry[] = [];
   let o = 0;
-  while (o + 512 <= blob.size) {
+  for (let n = 0; o + 512 <= blob.size; n++) {
+    if (n >= 10_000) throw new Error('tar: too many entries');
     const h = new Uint8Array(await blob.slice(o, o + 512).arrayBuffer());
     if (h.every(b => b === 0)) break;
     const str = (a: number, b: number) => new TextDecoder().decode(h.subarray(a, b)).replace(/\0.*$/s, '');
-    const size = parseInt(str(124, 136).trim() || '0', 8);
+    // a malformed size must never move the offset backwards or not at all (that would read the same header forever)
+    const size = readSize(h);
+    if (size < 0 || o + 512 + size > blob.size) throw new Error(`tar: entry ${out.length + 1} has a bad size`);
     const prefix = str(345, 500), name = (prefix ? prefix + '/' : '') + str(0, 100);
     const type = String.fromCharCode(h[156] || 48);
     if (type === '0' || type === '\0') out.push({ name, offset: o + 512, size });

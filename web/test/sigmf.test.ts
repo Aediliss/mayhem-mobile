@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sigmfArchive, sigmfFromSidecar, sigmfMeta, tarEntries, type SigmfCaptureInfo } from '../src/sigmf.js';
+import { readSize, sigmfArchive, sigmfFromSidecar, sigmfMeta, tarEntries, tarHeader, type SigmfCaptureInfo } from '../src/sigmf.js';
 import { openIqSource } from '../src/filesrc/open.js';
 import { FileRadio, type WorkerLike } from '../src/fileradio.js';
 import { IqRecorder } from '../src/dsp/capture.js';
@@ -114,4 +114,32 @@ test('Capture -> replay: what the Capture app records plays back and decodes (c8
   const meta = sigmfFromSidecar(new TextDecoder().decode(opfs.get(txt)![0]), c8, 'Mad Mobile')!;
   const b = await playAll([new File([sigmfArchive(c8.replace(/\.c8$/, ''), meta, asFile(c8))], 'x.sigmf')]);
   assert.equal(b.lines.length, 1); assert.ok(b.lines[0].includes(INFO));
+});
+
+// ---- malformed archives must fail, never hang (run under a timeout so a regression shows as a failure) ----
+
+/** An archive whose first header's size field is replaced by `field` (12 bytes), checksum left as it was. */
+async function withSizeField(field: Uint8Array): Promise<Blob> {
+  const b = new Uint8Array(await sigmfArchive('m', sigmfMeta(INFO_CAP), new Blob([new Uint8Array(100)])).arrayBuffer());
+  b.set(field, 124);
+  return new Blob([b]);
+}
+const ascii = (s: string) => { const a = new Uint8Array(12); a.set(new TextEncoder().encode(s)); return a; };
+
+test('malformed tar sizes are rejected, not looped on', { timeout: 5000 }, async () => {
+  for (const [label, field] of [['negative', ascii('-1000')], ['not octal', ascii('99')], ['past the end', ascii('77777777777')], ['base-256 negative', Uint8Array.from([0xff, ...new Array(11).fill(0xff)])]] as const) {
+    await assert.rejects(tarEntries(await withSizeField(field)), /bad size/, label);
+  }
+  await assert.rejects(openIqSource([new File([await withSizeField(ascii('-1000'))], 'evil.sigmf')]), /bad size/);
+});
+
+test('sizes of 8 GiB and more are written GNU base-256 and read back', () => {
+  for (const n of [0, 1300, 8 ** 11 - 1, 8 ** 11, 2 ** 33 + 5, 50 * 2 ** 30]) {
+    const h = tarHeader('x/x.sigmf-data', n, 0);
+    assert.equal(readSize(h), n, String(n));
+    // the checksum still covers the header as written
+    let sum = 0; for (let i = 0; i < 512; i++) sum += i >= 148 && i < 156 ? 32 : h[i];
+    assert.equal(parseInt(new TextDecoder().decode(h.subarray(148, 154)), 8), sum);
+  }
+  assert.equal(tarHeader('x', 8 ** 11, 0)[124], 0x80);
 });
