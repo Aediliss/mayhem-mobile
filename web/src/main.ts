@@ -46,7 +46,8 @@ import { Tx, type SigMode } from './tx.js';
 import * as Apps from './tx-apps.js';
 import type { Aircraft } from './dsp/adsb.js';
 import type { DroneIdFrame } from './dsp/droneid.js';   // FORK: DJI DroneID
-import { FPV_CHANNELS, type FpvLook } from './dsp/fpv.js';   // FORK: analog FPV video
+import { LinkTracker, type LoraBurst } from './dsp/linkprint.js';   // FORK: control-link fingerprints
+import { FPV_CHANNELS, type FpvLook, type OfdmLook } from './dsp/fpv.js';   // FORK: analog FPV video
 import type { AcTrack } from './dsp/modeac.js';   // FORK: Mode A/C
 /** FORK: Mode A/C codes heard as tracks (the worker's latest list). */
 let modeAc: AcTrack[] = [];
@@ -4036,6 +4037,7 @@ function bleDetail(d: BleDevice, now: number): string {
 // FORK: ------------------------------------------------------------------------------- Drones (DJI DroneID)
 /** Where DJI drones have been heard sending DroneID (proto17/dji_droneid); AUTO steps through them. */
 const DRONEID_FREQS = [2_414_500_000, 2_429_500_000, 2_444_500_000, 2_459_500_000];
+const droneLinks = new LinkTracker();   // FORK: LoRa control links heard in the Drones app
 const droneUi = { drones: new Map<string, { f: DroneIdFrame; first: number; last: number; n: number; cfo: number }>(), bursts: 0, decoded: 0, freq: DRONEID_FREQS[2], auto: false, timer: 0, sel: '' };
 function renderDroneId(view: HTMLElement): void {
   const why = radio ? blockedBecause(APP_NEEDS.droneid, radio.limits) : '';
@@ -4044,6 +4046,7 @@ function renderDroneId(view: HTMLElement): void {
     <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. A HackRF covers 2.4 GHz at 15.36 MS/s.</div>` : ''}
       <div class="row">${DRONEID_FREQS.map(f => `<button class="chip" data-dji="${f}">${(f / 1e6).toFixed(1)}</button>`).join('')}<button class="chip" data-djiauto title="step through the channels">AUTO</button></div>
       <div id="dji-stats" class="caption"></div>
+      <div id="dji-links" class="caption"></div>
       <div id="dji-map" class="panel map" hidden></div>
       <div id="dji-cards"></div>
       <div id="dji-log">${logHtml('droneid', 'listening…')}</div>
@@ -4064,6 +4067,8 @@ function setDroneAuto(on: boolean): void {
   }, 1500);
   refreshDrone();
 }
+/** A LoRa packet seen in the Drones app's span: its frequency from the tuned centre, into a link. */
+function onLoraBurst(b: LoraBurst): void { droneLinks.add({ ...b, centerHz: b.centerHz + droneUi.freq }); if (state.app === 'droneid') refreshDrone(); }
 function onDroneId(m: { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }): void {
   const f = m.frame, key = f.serial || 'unknown', now = Date.now(), d = droneUi.drones.get(key);
   if (d) { d.f = f; d.last = now; d.n++; d.cfo = m.cfoHz; } else droneUi.drones.set(key, { f, first: now, last: now, n: 1, cfo: m.cfoHz });
@@ -4073,6 +4078,9 @@ function onDroneId(m: { frame: DroneIdFrame; cfoHz: number; bursts: number; deco
 function refreshDrone(): void {
   if (state.app !== 'droneid') return;
   qa('[data-dji]').forEach(b => b.classList.toggle('on', Number(b.dataset.dji) === droneUi.freq)); qa('[data-djiauto]').forEach(b => b.classList.toggle('on', droneUi.auto));
+  // control links: LoRa links heard three times or more; named ExpressLRS only where its published parameters fit
+  const lk = q('#dji-links'), links = [...droneLinks.links.values()].filter(l => l.sure);
+  if (lk) lk.textContent = links.length ? `CONTROL LINKS · ${links.map(l => `${l.fits ? `consistent with ${l.fits}` : 'hopping LoRa link'} · SF${l.sf} · ${(l.bwHz / 1e3).toFixed(1)} kHz${l.rateHz ? ` · ${l.rateHz} Hz` : ''} · ${l.channels.length} channels · ${l.packets} packets`).join(' / ')}` : '';
   const st = q('#dji-stats'); if (st) st.textContent = `${droneUi.drones.size} DRONE${droneUi.drones.size === 1 ? '' : 'S'} · ${droneUi.decoded} FRAMES DECODED · ${droneUi.bursts} BURSTS SEEN`;
   const now = Date.now(), list = [...droneUi.drones.entries()].sort((a, b) => b[1].last - a[1].last);
   const pos = (lat?: number, lon?: number) => lat !== undefined && lon !== undefined ? `${lat.toFixed(6)}, ${lon.toFixed(6)}` : 'not sent';
@@ -4095,7 +4103,7 @@ function refreshDrone(): void {
 // FORK: end of Drones
 
 // FORK: ------------------------------------------------------------------------------- FPV (analog video, dsp/fpv.ts)
-type FpvSeen = FpvLook & { powerDb: number };
+type FpvSeen = FpvLook & { powerDb: number; digital: OfdmLook | null };
 const fpvUi = { ch: 'R1', hz: FPV_CHANNELS.find(c => c.name === 'R1')!.hz, scan: false, timer: 0, seen: new Map<string, FpvSeen & { ms: number }>() };
 function renderFpv(view: HTMLElement): void {
   const why = radio ? blockedBecause(APP_NEEDS.fpv, radio.limits) : '';
@@ -4137,9 +4145,9 @@ function refreshFpv(): void {
   if (state.app !== 'fpv') return;
   q('#fpv-scan')?.classList.toggle('on', fpvUi.scan);
   const cur = fpvUi.seen.get(fpvUi.ch), now = q('#fpv-now');
-  if (now) now.textContent = `${fpvUi.ch} · ${(fpvUi.hz / 1e6).toFixed(0)} MHz · ${cur ? cur.standard ? `${cur.standard} video · ${Math.round(cur.score * 100)}% · ${(cur.deviationHz / 1e6).toFixed(1)} MHz swing` : 'no video' : 'listening'}${cur ? ` · ${cur.powerDb} dB` : ''}`;
+  if (now) now.textContent = `${fpvUi.ch} · ${(fpvUi.hz / 1e6).toFixed(0)} MHz · ${cur ? cur.standard ? `${cur.standard} video · ${Math.round(cur.score * 100)}% · ${(cur.deviationHz / 1e6).toFixed(1)} MHz swing` : cur.digital ? `digital (OFDM) · ${cur.digital.bwMHz} MHz wide · ${cur.digital.spacingKHz} kHz carriers · ${cur.digital.usefulUs} µs symbols` : 'no video' : 'listening'}${cur ? ` · ${cur.powerDb} dB` : ''}`;
   const grid = q('#fpv-grid');
-  if (grid) grid.innerHTML = FPV_CHANNELS.map(c => { const s = fpvUi.seen.get(c.name), vid = !!s?.standard; return `<button class="chip ${c.name === fpvUi.ch ? 'on' : ''} ${vid ? 'gold' : ''}" data-fpv="${c.name}" title="${(c.hz / 1e6).toFixed(0)} MHz${s ? ` · ${s.standard ?? 'no video'} · ${s.powerDb} dB` : ''}">${c.name}${vid ? ` ${s!.standard}` : ''}</button>`; }).join('');
+  if (grid) grid.innerHTML = FPV_CHANNELS.map(c => { const s = fpvUi.seen.get(c.name), vid = !!s?.standard, dig = !!s?.digital; return `<button class="chip ${c.name === fpvUi.ch ? 'on' : ''} ${vid || dig ? 'gold' : ''}" data-fpv="${c.name}" title="${(c.hz / 1e6).toFixed(0)} MHz${s ? ` · ${s.standard ?? 'no video'} · ${s.powerDb} dB` : ''}">${c.name}${vid ? ` ${s!.standard}` : dig ? ' DIG' : ''}</button>`; }).join('');
 }
 // FORK: end of FPV
 
@@ -9355,7 +9363,7 @@ function redraw(id: string): void {
  *  this side brought the entire list straight back with the next one. */
 function clearApp(id: string): void {
   if (id === 'fpv') { fpvUi.seen.clear(); refreshFpv(); }   // FORK: analog FPV video
-  if (id === 'droneid') { droneUi.drones.clear(); droneUi.bursts = 0; droneUi.decoded = 0; droneUi.sel = ''; refreshDrone(); }   // FORK: DJI DroneID
+  if (id === 'droneid') { droneLinks.links.clear(); droneUi.drones.clear(); droneUi.bursts = 0; droneUi.decoded = 0; droneUi.sel = ''; refreshDrone(); }   // FORK: DJI DroneID
   logs[id] = []; counts[id] = 0;
   switch (id) {
     case 'ais': state.aisTable = []; state.aisSel = 0; break;
@@ -9880,6 +9888,7 @@ function ensureWorker(): Worker {
       case 'hdobj': hdOnObject(m); break;
       case 'ble': onBleAdv(m as { pdu: number[]; db: number; ch: number }); break;
       case 'droneid': onDroneId(m as unknown as { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }); break;   // FORK: DJI DroneID
+      case 'loraBurst': onLoraBurst(m.burst as LoraBurst); break;   // FORK: control-link fingerprints
       case 'droneidStats': droneUi.bursts = m.bursts as number; droneUi.decoded = m.decoded as number; refreshDrone(); break;   // FORK
       case 'fpvLook': onFpvLook(m as unknown as FpvSeen & { ch: string }); break;   // FORK: analog FPV video
       case 'fpvField': onFpvField(m as unknown as { ch: string; width: number; lines: number; pixels: Uint8ClampedArray; standard: string }); break;   // FORK

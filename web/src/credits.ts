@@ -71,4 +71,5 @@ export const CREDITS: [boolean, string][] = [
   [false, "Two-tone paging tables (Motorola Quick Call II, GE Type 99) and timings from Midian Electronics' tone signaling charts, cross-checked with the PGHscanner tone-out table"],
   [false, "Drone Remote ID message layouts (ASTM F3411 / ASD-STAN EN 4709-002) as Open Drone ID's opendroneid-core-c encodes them (Apache-2.0)"],
   [false, "DJI DroneID burst structure and frame layout after proto17/dji_droneid by David Protzman (MIT); LTE turbo code written from 3GPP TS 36.212, one table row checked against turbofec by Tom Tsou (GPL-3.0)"],
+  [false, "ExpressLRS air parameters (LoRa bandwidths, spreading factors, packet rates, hop grids) from the ExpressLRS project (GPL-3.0)"],
 ];

@@ -14,6 +14,7 @@
  */
 
 import type { Emit, IqProcessor } from './core.js';
+import { fftInPlace } from './ham/filters.js';
 
 /** The FPV channel grid, MHz, by band. */
 export const FPV_BANDS: Record<string, number[]> = {
@@ -115,6 +116,33 @@ export function buildField(v: Float32Array, fs: number, look: FpvLook, width = 3
   return { pixels: px, lines, width };
 }
 
+// ---------------------------------------------------------------------------------------------------- digital (OFDM)
+
+export interface OfdmLook { usefulUs: number; spacingKHz: number; bwMHz: number; score: number }
+/**
+ * Digital video is OFDM: each symbol's cyclic prefix repeats its end, so the signal correlates with itself one useful
+ * symbol later. The autocorrelation (by FFT, over 2^16 samples) has its peak there, well above other lags; that gives
+ * the useful symbol time and the carrier spacing (its inverse), and the occupied width comes from the spectrum. Only
+ * the measurements: no published fingerprints tell one digital FPV system from another.
+ */
+export function lookForOfdm(x: Float32Array, fs: number): OfdmLook | null {
+  const L = 1 << 16, n = Math.min(L / 2, x.length / 2), re = new Float32Array(L), im = new Float32Array(L);
+  for (let i = 0; i < n; i++) { re[i] = x[2 * i]; im[i] = x[2 * i + 1]; }
+  fftInPlace(re, im, false);
+  // the averaged spectrum (in 64 pieces) for the occupied width
+  const P = new Float64Array(L); for (let k = 0; k < L; k++) P[k] = re[k] * re[k] + im[k] * im[k];
+  const bands = 256, bp = new Float64Array(bands); for (let k = 0; k < L; k++) bp[Math.floor(((k + L / 2) % L) / (L / bands))] += P[k];
+  const peak = Math.max(...bp); let occ = 0; for (let b = 0; b < bands; b++) if (bp[b] > peak / 10) occ++;
+  for (let k = 0; k < L; k++) { re[k] = P[k]; im[k] = 0; }
+  fftInPlace(re, im, true);
+  const r0 = Math.hypot(re[0], im[0]) || 1;
+  let best = -1, bv = 0, sum = 0, cnt = 0;
+  for (let lag = 64; lag <= 4096 && lag < n; lag++) { const v = Math.hypot(re[lag], im[lag]) / r0; sum += v; cnt++; if (v > bv) { bv = v; best = lag; } }
+  const mean = sum / (cnt || 1);
+  if (best < 0 || bv < 0.04 || bv < 6 * mean) return null;
+  return { usefulUs: Math.round(best / fs * 1e7) / 10, spacingKHz: Math.round(fs / best / 10) / 100, bwMHz: Math.round(occ * fs / bands / 1e5) / 10, score: Math.round(bv * 100) / 100 };
+}
+
 // ---------------------------------------------------------------------------------------------------- test transmitter
 
 /**
@@ -167,7 +195,8 @@ export class FpvProcessor implements IqProcessor {
     let p = 0; for (let i = 0; i < this.buf.length; i++) p += this.buf[i] * this.buf[i];
     const powerDb = Math.round(10 * Math.log10(p / (this.buf.length / 2) + 1e-12) * 10) / 10;
     const v = discriminate(this.buf, fs), look = lookForVideo(v, fs);
-    this.emit({ type: 'fpvLook', ch: this.ch, powerDb, ...look });
+    const digital = look.standard ? null : lookForOfdm(this.buf, fs);   // not analog video: digital (OFDM)?
+    this.emit({ type: 'fpvLook', ch: this.ch, powerDb, ...look, digital });
     if (this.watch && look.standard) {
       const f = buildField(v, fs, look, 320);
       if (f) this.emit({ type: 'fpvField', ch: this.ch, width: f.width, lines: f.lines, pixels: f.pixels, standard: look.standard }, [f.pixels.buffer]);

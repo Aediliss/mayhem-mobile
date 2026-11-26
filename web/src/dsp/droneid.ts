@@ -14,6 +14,7 @@
  */
 import type { Emit, IqProcessor } from './core.js';
 import { fftInPlace } from './ham/filters.js';
+import { LinkPrinter } from './linkprint.js';
 import { crc24a, rateDematch, rateMatch, toBits, toBytes, turboDecode, turboEncode, QPP_PARAMS } from './lte-turbo.js';
 
 export const DRONEID_RATE = 15_360_000;
@@ -252,17 +253,22 @@ export function buildBurst(frame: Uint8Array): Float32Array {
 
 // ---------------------------------------------------------------------------------------------------- worker processor
 
-/** The Drones app's processor: frames to the page as 'droneid', a log line each, and a warning at the wrong rate. */
+/**
+ * The Drones app's processor: frames to the page as 'droneid', a log line each, and a warning at the wrong rate; and the
+ * control-link fingerprinter (linkprint.ts) on the same samples, its LoRa packets to the page as 'loraBurst' (offsets
+ * from the tuned centre, which the page adds).
+ */
 export class DroneIdProcessor implements IqProcessor {
-  private rx = new DroneIdRx(); private warned = false;
+  private rx = new DroneIdRx(); private warned = false; private lp = new LinkPrinter(DRONEID_RATE, 0);
   constructor(private readonly emit: Emit) { this.wire(); }
   private wire(): void {
+    this.lp.onBurst = b => this.emit({ type: 'loraBurst', burst: b });
     this.rx.onFrame = (f, raw, info) => {
       this.emit({ type: 'droneid', frame: f, cfoHz: Math.round(info.cfoHz), bursts: this.rx.bursts, decoded: this.rx.decoded });
       this.emit({ type: 'packet', line: `DroneID ${f.serial || '(no serial)'} seq ${f.seq}${f.lat !== undefined ? ` · ${f.lat.toFixed(5)}, ${f.lon!.toFixed(5)}` : ' · no position'} · height ${f.height} · ${Array.from(raw.subarray(0, 8), b => b.toString(16).padStart(2, '0')).join('')}…` });
     };
   }
-  reset(): void { this.rx = new DroneIdRx(); this.wire(); this.warned = false; }
+  reset(): void { this.rx = new DroneIdRx(); this.lp = new LinkPrinter(DRONEID_RATE, 0); this.wire(); this.warned = false; }
   clear(): void { this.rx = new DroneIdRx(); this.wire(); }
   onIq(iq: Int8Array, rate: number): void {
     if (Math.abs(rate - DRONEID_RATE) > 1000) {
@@ -270,7 +276,7 @@ export class DroneIdProcessor implements IqProcessor {
       return;
     }
     const before = this.rx.bursts;
-    this.rx.push(iq);
+    this.rx.push(iq); this.lp.push(iq);
     if (this.rx.bursts !== before) this.emit({ type: 'droneidStats', bursts: this.rx.bursts, decoded: this.rx.decoded });
   }
 }

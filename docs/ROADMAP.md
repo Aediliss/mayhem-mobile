@@ -56,7 +56,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | DJI DroneID (OcuSync 2.4 GHz OFDM): detect, demod, serial + drone/pilot/home GPS | proto17/dji_droneid; 3GPP TS 36.211 / 36.212 | dji_droneid MIT ✔ (file LICENSE) · turbofec GPL-3.0-or-later ✔ (one table row checked) · DroneSecurity not used |
 | [ ] | | DJI DroneID at 5.8 GHz, and the newer encrypted DroneID (detect only) | channel survey | needs recordings |
 | [x] | | FPV analog video detect at 5.8 GHz (raceband/A/B/E/F), NTSC/PAL frames if bandwidth allows | channel tables (public) | facts |
-| [ ] | | Digital FPV + control-link fingerprinting: DJI O3/O4, Walksnail, HDZero, ELRS, Crossfire | ExpressLRS source | check (ELRS is GPL-3.0 per memory — verify) |
+| [x] | | Digital FPV + control-link fingerprinting: ExpressLRS by its published parameters; digital video measured as OFDM | ExpressLRS `src/src/common.cpp`, `src/lib/FHSS` | ExpressLRS GPL-3.0 ✔ (LICENSE) |
+| [ ] | | Naming digital FPV systems (DJI O3/O4, Walksnail, HDZero) and TBS Crossfire | — | no published air parameters or redistributable recordings: needs measurements |
 
 ## Phase 4 — Aviation
 
@@ -598,3 +599,27 @@ for "or later" first.
   Hardware: FPV with a HackRF and a 5.8 GHz antenna near a powered analog FPV transmitter (a quad's VTX, or a goggle
   test pattern): SCAN should turn its channel gold with NTSC or PAL; tap it for the picture. Compare the channel with the
   VTX's band and channel setting.
+- **Phase 3 · control links and digital video, by how they look** (`src/dsp/linkprint.ts`, `lookForOfdm` in
+  `src/dsp/fpv.ts`, `test/linkprint.test.ts`): nothing is decoded. A short-time spectrum (256 points) finds LoRa packets:
+  one tone sweeping linearly, frame after frame, its width the bandwidth and its least-squares slope per run
+  (bandwidth² / 2^SF) the spreading factor; a burst counts only when 70 % of its steps follow that slope or wrap, so
+  wideband bursts do not pass. Packets of one bandwidth and SF are one link, named after three packets, with its channels
+  and the shortest common gap between packets. A link is called "consistent with ExpressLRS" only where its published
+  air parameters fit (ExpressLRS GPL-3.0, its air-rate and FHSS tables): 812.5 kHz SF5-8 on the 2.4 GHz grid of 80 channels
+  from 2400.4 MHz, or 500 kHz SF5-9 on the FCC915 / EU868 / AU915 grids, the rate from the intervals that SF uses.
+  The Drones app runs it on its 2.4 GHz span and shows CONTROL LINKS. Digital video: when an FPV channel is not analog
+  video, the FFT autocorrelation over 2^16 samples finds OFDM's cyclic-prefix lag (the useful symbol time, so the carrier
+  spacing) and the spectrum its occupied width; the channel turns gold as DIG with those numbers. Upstream touch points
+  (FORK): `main.ts` (the `loraBurst` message, the link tracker and CONTROL LINKS line in the Drones view, CLEAR, the FPV
+  digital text and DIG chips), the Drones processor in `dsp/droneid.ts` runs the fingerprinter.
+  Tests prove: ExpressLRS 2.4 GHz at SF5 / 500 Hz, SF6 / 250 Hz and SF7 / 150 Hz named with their rates; ExpressLRS
+  FCC915 at SF7 / 100 Hz; a LoRa link off every grid found but not named; noise, DroneID OFDM bursts and analog FM video
+  give no LoRa packets; OFDM with DJI's numerology measured as 15 kHz carriers, 66.7 µs symbols, about 9 MHz; noise is
+  not OFDM. Browser check (Chromium): an ExpressLRS-like recording in Drones shows "consistent with ExpressLRS 2.4 GHz ·
+  SF6 · 812.5 kHz · 250 Hz"; an OFDM recording on R1 in FPV shows "digital (OFDM) · 11.9 MHz wide · 19.53 kHz carriers ·
+  51.2 µs symbols" and R1 DIG; no page errors.
+  Not done (new row): naming DJI O3/O4, Walksnail or HDZero, or TBS Crossfire: none publish their air parameters and no
+  redistributable recordings were found, so a name would be a guess. FLRC-mode ExpressLRS is not detected.
+  Hardware: Drones with a HackRF near a powered ExpressLRS 2.4 GHz receiver and its transmitter (bound, sticks live):
+  CONTROL LINKS should name ExpressLRS with the packet rate set in its Lua menu; FPV near a digital FPV system: its
+  channel should show DIG with its width and carrier spacing (worth noting down per system for a future fingerprint).
