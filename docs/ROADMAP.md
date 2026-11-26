@@ -27,7 +27,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | **Test harness**: `web/test/lib/iq.ts` grown into tones, FSK/GFSK, OOK/ASK, PSK, AWGN at a set SNR, `.cu8/.cs8/.cs16` writers | own code | — |
+| [x] | ★ | **Test harness**: `web/test/lib/iq.ts` grown into tones, FSK/GFSK, OOK/ASK, PSK, AWGN at a set SNR, `.cu8/.cs8/.cs16` writers | own code | — |
 | [ ] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
 | [ ] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
 | [ ] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
@@ -132,3 +132,11 @@ for "or later" first.
   FM (±3 kHz) → int8 IQ at 960 ksps → `AprsDecoder`. Proves: a clean packet decodes to the exact text; it still
   decodes with a 2 kHz carrier offset at 10 dB SNR; pure noise decodes nothing; a one-bit corruption is rejected by
   the FCS. Hardware: none needed for this item.
+- **Phase 1 · test harness** (`web/test/lib/iq.ts`, `lib/ble.ts`, `harness.test.ts`, `btle.roundtrip.test.ts`):
+  tone, FSK/GFSK (Gaussian BT), OOK from rtl_433-style pulse lists, M-PSK, AWGN at an SNR measured against the
+  signal's own active power, and `.cs8` / `.cu8` / `.cs16` / WAV-IQ writers. The harness tests itself: tone energy at
+  the right offset (and >40 dB down at its mirror), FSK symbol centres at ±deviation and GFSK never overshooting,
+  OOK edges exact to the sample, QPSK phases exact, measured SNR within 0.2 dB, writer byte layouts. A BLE
+  transmitter written from the Core Spec (whitening, CRC-24) round-trips through the existing `BtleDecoder` on
+  channels 37/38/39, including at 15 dB SNR; wrong-channel whitening, a flipped bit and pure noise decode nothing.
+  Hardware: none needed for this item.
