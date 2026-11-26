@@ -3979,7 +3979,7 @@ function renderPacket(view: HTMLElement, app: AppId): void {
     case 'pager': controls = `<div class="row">${(['flex', 'pocsag', 'both'] as const).map(w => `<button class="chip" data-pager="${w}">${w === 'both' ? 'FLEX + POCSAG' : w.toUpperCase()}</button>`).join('')}</div>` + presetHtml('CHANNEL · MHz', [['929.6125', 929_612_500], ['929.6625', 929_662_500], ['931.9375', 931_937_500], ['466.175', 466_175_000]]) + stepHtml([1e5, 12_500, 2_500]); break;
     case 'acars': controls = presetHtml('CHANNEL · MHz', [['131.550 US', 131_550_000], ['131.525 EU', 131_525_000], ['131.725 EU2', 131_725_000], ['131.450 JP', 131_450_000], ['130.025', 130_025_000]]) + `<div class="note">Registration, flight, label and text from each message, CRC checked.</div>`; break;
     case 'subghz': controls = presetHtml('BAND · MHz', [['433.92', 433_920_000], ['315.00', 315_000_000], ['868.35', 868_350_000], ['915.00', 915_000_000], ['303.875', 303_875_000]]) + `<div class="row">${(['weather', 'remotes', 'cars'] as const).map(f => `<button class="chip" data-ism="${f}">${f === 'weather' ? `WEATHER ${ISM_COUNTS.weather}` : f === 'remotes' ? `REMOTES ${ISM_COUNTS.remotes}` : `CAR KEYS ${ISM_COUNTS.cars}`}</button>`).join('')}</div>`; break;
-    case 'btle': controls = `<div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}</div>`; break;
+    case 'btle': controls = `<div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}<button class="chip" data-btleauto title="step through 37, 38 and 39">AUTO</button>${'' /* FORK: AUTO channel rotation */}</div>`; break;
   }
   // A radio that cannot reach this app's band says so right on the screen, not just in a passing status line.
   const why = radio ? blockedBecause(APP_NEEDS[app], radio.limits) : '';
@@ -3990,7 +3990,8 @@ function renderPacket(view: HTMLElement, app: AppId): void {
   scope = attach(app === 'btle' ? new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }) : tunableScope('scope', 80, 70));
   qa<HTMLButtonElement>('[data-ism]', view).forEach(b => { const f = b.dataset.ism as keyof typeof state.ism; b.classList.toggle('on', state.ism[f]); b.onclick = () => { state.ism[f] = !state.ism[f]; b.classList.toggle('on', state.ism[f]); worker?.postMessage({ type: 'ismFamilies', ...state.ism }); }; });
   qa<HTMLButtonElement>('[data-pager]', view).forEach(b => { b.classList.toggle('on', b.dataset.pager === state.pager); b.onclick = () => { state.pager = b.dataset.pager as typeof state.pager; worker?.postMessage({ type: 'pager', which: state.pager }); qa('[data-pager]').forEach(x => x.classList.toggle('on', x === b)); }; });
-  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });
+  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { setBtleAuto(false); state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });   // FORK: a channel picked stops AUTO
+  qa<HTMLButtonElement>('[data-btleauto]', view).forEach(b => b.onclick = () => setBtleAuto(!btleAuto));   // FORK: AUTO
   refreshList(app); refreshAis(); refreshBtle();
 }
 
@@ -4026,7 +4027,7 @@ function renderBle(view: HTMLElement): void {
   view.innerHTML = `
     <section class="${visCls('btle')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
     <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. Nothing will decode here. A HackRF covers 1 MHz to 6 GHz.</div>` : ''}
-      <div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}</div>
+      <div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}<button class="chip" data-btleauto title="step through 37, 38 and 39">AUTO</button>${'' /* FORK: AUTO channel rotation */}</div>
       <div id="ble-alert" class="ble-warn big" hidden></div>
       <div class="ctlrow">${segHtml(['cards', 'log'].map(v => `<button data-bleview="${v}">${v.toUpperCase()}</button>`))}${pauseClearHtml('btle')}</div>
       <div id="ble-stage" class="mt-stage"><div id="ble-cards" class="mt-cards"></div><div id="ble-detail" class="mt-detail" hidden></div></div>
@@ -4034,7 +4035,8 @@ function renderBle(view: HTMLElement): void {
       <div class="note about">One card per device, by its address: the maker from its manufacturer ID, the type from what it advertises (Find My, Tile, SmartTag, Find Hub, iBeacon, Eddystone, Fast Pair, AirPods, phones, watches). A tracker that stays near you for 20 minutes, or is still there after you move 500 m (with location allowed), is flagged. Phones and tags change their random address every 15 minutes or so, so one phone can show up as several cards over time.</div>
     </section>`;
   scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
-  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });
+  qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { setBtleAuto(false); state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });   // FORK: a channel picked stops AUTO
+  qa<HTMLButtonElement>('[data-btleauto]', view).forEach(b => b.onclick = () => setBtleAuto(!btleAuto));   // FORK: AUTO
   qa<HTMLButtonElement>('[data-bleview]', view).forEach(b => b.onclick = () => { bleUi.view = b.dataset.bleview as typeof bleUi.view; refreshBle(true); });
   $('ble-cards').onclick = (e) => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-ble]'); if (c) { bleUi.sel = bleUi.sel === c.dataset.ble ? '' : c.dataset.ble!; refreshBle(true); } };
   $('ble-detail').onclick = (e) => { if ((e.target as HTMLElement).closest('[data-bdo="close"]')) { bleUi.sel = ''; refreshBle(true); } };
@@ -4052,8 +4054,8 @@ function renderBle(view: HTMLElement): void {
   }, 1000);
   refreshList('btle'); refreshBtle(); refreshBle(true);
 }
-function onBleAdv(m: { pdu: number[]; db: number; ch: number }): void {
-  const a = parseAdv(m.pdu, m.db, m.ch); if (!a) return;
+function onBleAdv(m: { pdu: number[]; db: number; ch: number; phy?: string }): void {   // FORK: + phy
+  const a = parseAdv(m.pdu, m.db, m.ch, m.phy); if (!a) return;   // FORK: + phy
   bleUi.tracker.add(a, Date.now(), bleUi.pos);
   if (state.app === 'btle') refreshBle();
 }
@@ -9281,7 +9283,19 @@ function renderSpotCard(s: HamSpot | undefined): void {
   set('FIRST HEARD', `${ageText(now - s.firstMs)} · ${new Date(s.firstMs).toLocaleTimeString()}`);
   set('DECODES', String(s.heard));
 }
-function refreshBtle(): void { qa('[data-btle]').forEach(b => b.classList.toggle('on', Number(b.dataset.btle) === state.btleCh)); }
+function refreshBtle(): void { qa('[data-btle]').forEach(b => b.classList.toggle('on', Number(b.dataset.btle) === state.btleCh)); qa('[data-btleauto]').forEach(b => b.classList.toggle('on', btleAuto)); }   // FORK: + AUTO
+// FORK: AUTO steps the BLE receiver through the three advertising channels, 1.5 s each (an advertiser sends on all three
+// in turn, so every one is heard on one of them); it stops when a channel is picked or the app is left
+let btleAuto = false, btleAutoTimer = 0;
+function setBtleAuto(on: boolean): void {
+  btleAuto = on; if (btleAutoTimer) { clearInterval(btleAutoTimer); btleAutoTimer = 0; }
+  if (on) btleAutoTimer = window.setInterval(() => {
+    if (state.app !== 'btle') { setBtleAuto(false); return; }
+    state.btleCh = state.btleCh >= 39 ? 37 : state.btleCh + 1;
+    worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle();
+  }, 1500);
+  refreshBtle();
+}
 /** The map over the whole window with the selected aircraft and the list beside it (Esc or ⛶ again leaves). */
 let adsbFull = false;
 function setAdsbFull(on: boolean): void {

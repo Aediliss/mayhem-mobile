@@ -42,7 +42,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | Satellites: NOAA 15/18/19 decommissioned (grey out, keep) | NOAA OSPO notices | facts |
 | [x] | ★ | Full Mode-S in `dsp/adsb.ts`: DF0/4/5/11/16/20/21, Comm-B BDS 1,0/2,0/4,0/5,0/6,0, AP recovery vs known ICAOs, 1–2 bit CRC fix (DF11/17/18), "Mode-S only" aircraft | ICAO Annex 10 Vol IV, Doc 9871; pyModeS; readsb; dump1090-fa | pyModeS GPL-3.0 ✔ · readsb GPL-3.0 ✔ · dump1090-fa GPL-2.0-or-later ✔ · antirez dump1090 BSD-3 ✔ |
 | [x] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
-| [ ] | | BLE: auto-rotate 37/38/39, extended adv headers, coded PHY if feasible, PHY per packet | Bluetooth Core 5.x Vol 6; ubertooth/libbtbb | ubertooth/libbtbb GPL-2.0-or-later ✔ (headers) |
+| [x] | | BLE: auto-rotate 37/38/39, extended adv headers, PHY per packet (coded PHY: own row below) | Bluetooth Core 5.x Vol 6 | spec only |
+| [ ] | | BLE LE Coded PHY receiver (125/500 kbit/s: FEC, pattern mapping, coded access address) | Bluetooth Core 5.x Vol 6 Part B 3.3 | spec |
 | [ ] | | BLE tracker-following alert (AirTag/Find My/Tile/SmartTag/Find Hub) over time + GPS distance | Apple/Google DULT draft (IETF), AirGuard research | spec; check any code |
 
 ## Phase 3 — Drones
@@ -483,3 +484,23 @@ for "or later" first.
   spreads them, which the "larger of two samples" read allows for); garbling from overlapping replies is not resolved.
   Hardware: Flights at 1090 MHz, 2 Msps, within reach of an SSR radar (most airports): MODE A/C should appear in the
   header; general-aviation squawks such as 1200 / 7000 / 2000 with no Mode-S aircraft should be listed on their own.
+- **Phase 2 · BLE: AUTO, extended advertising, PHY** (`src/dsp/ble-ext.ts`, `test/ble-ext.test.ts`): written from
+  Bluetooth Core 5.x Vol 6 (no code used). AUTO steps the receiver through channels 37 → 38 → 39, 1.5 s each, until a
+  channel is picked or the app is left. The receiver reads BLE 5's full 8-bit length and accepts ADV_EXT_IND (type 7,
+  1-255 bytes; legacy PDUs stay 6-37), its buffer grown to 260 bytes. The Common Extended Advertising header is read:
+  AdvMode, AdvA, TargetA, CTEInfo, ADI (set and data IDs), AuxPtr (secondary channel, clock accuracy, offset in µs, the
+  PHY the data goes on), SyncInfo, TX power, then any AD data. The packet log gives it a line; a device card keys it by
+  AdvA (or "ANON SET n") and shows an Extended advertising row; every packet carries the PHY it was heard on (1M on the
+  primary channels) into the card and the export bus. Upstream touch points (FORK): `btle.ts` (import, PDU names,
+  buffer, length rule, the ADV_EXT_IND report, `phy` on `ble`), `ble.ts` (import, PDU names, `BleAdv.phy/ext`,
+  `parseAdv`'s `phy` and type 7, the AD loop moved into `readAd`, the card rows), `main.ts` (AUTO chip on both control
+  rows, `setBtleAuto`, `phy` passed), `export/event.ts` (`phy` in `ble.adv`).
+  Tests prove: every header field (2M and Coded AuxPtr, 30 and 300 µs units, anonymous); a header claiming too much is
+  refused; ADV_EXT_IND through the GFSK receiver, and one of 83 bytes (past the old 48); the device record (AdvA,
+  anonymous set, AD name, PHY); legacy PDUs unchanged and over-long legacy ones still refused. Browser check (Chromium):
+  AUTO steps 38 → 39 → 37 → 38, picking 39 stops it, no page errors.
+  Not done: the auxiliary packets (AUX_ADV_IND on data channels 0-36, often on 2M) are not followed; LE Coded PHY (own
+  row).
+  Hardware: Bluetooth app with a HackRF (2 Msps), AUTO on, near phones and BLE 5 devices (recent phones, Find My / Find
+  Hub trackers, smart watches): ADV_EXT_IND lines should appear with their set and aux channel, and device cards gain an
+  Extended advertising row.

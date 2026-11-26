@@ -1,8 +1,9 @@
 /** BLE advertising receiver (Mayhem proc_btlerx; port of core/apps/BtleDecoder.kt). */
 import type { Emit, IqProcessor } from './core.js';
+import { extLine, parseExtHeader } from './ble-ext.js';   // FORK: BLE 5 extended advertising
 
 const ACCESS_ADDRESS = 0x8E89BED6;
-const PDU_TYPES = ['ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND'];
+const PDU_TYPES = ['ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'ADV_EXT_IND'];   // FORK: + ADV_EXT_IND
 export function btleChannelFreq(ch: number): number { return ch === 37 ? 2_402_000_000 : ch === 38 ? 2_426_000_000 : 2_480_000_000; }
 
 export class BtleDecoder implements IqProcessor {
@@ -14,7 +15,7 @@ export class BtleDecoder implements IqProcessor {
   private regs = new Uint32Array(2);
   private state = 0;
   private sampCount = 0; private acc = 0;
-  private readonly pdu = new Uint8Array(48);
+  private readonly pdu = new Uint8Array(260);   // FORK: an extended advertising PDU can be 255 bytes
   private byteIdx = 0; private bitIdx = 0; private need = 2;
   private lfsr = 0; private crcA = 0; private crcB = 0;
   private pktMaxMag = 0; private bufMaxMag = 0;
@@ -85,8 +86,9 @@ export class BtleDecoder implements IqProcessor {
     if (++this.bitIdx < 8) return;
     this.bitIdx = 0; this.byteIdx++;
     if (this.byteIdx === 2) {
-      const len = this.pdu[1] & 0x3F;
-      if (len < 6 || len > 37) { this.state = 0; return; }
+      // FORK: BLE 5 uses all 8 length bits; legacy PDUs stay 6..37, ADV_EXT_IND (type 7) is 1..255
+      const ext = (this.pdu[0] & 0x0F) === 7, len = ext ? this.pdu[1] : this.pdu[1] & 0x3F;
+      if (ext ? len < 1 : len < 6 || len > 37) { this.state = 0; return; }
       this.need = 2 + len + 3;
     }
     if (this.byteIdx >= this.need) {
@@ -100,6 +102,8 @@ export class BtleDecoder implements IqProcessor {
     const type = p[0] & 0x0F, txAdd = (p[0] & 0x40) !== 0;
     const mac = [7, 6, 5, 4, 3, 2].map(i => p[i].toString(16).padStart(2, '0').toUpperCase()).join(':');
     const db = 20 * Math.log10(this.pktMaxMag / 128 + 1e-6);
+    // FORK: an extended advertising PDU has no address in the fixed place: its header says what it carries
+    if (type === 7) { const h = parseExtHeader(p.subarray(0, 2 + payloadLen)); this.emit({ type: 'packet', line: `${'ADV_EXT_IND'.padEnd(15)} ${h ? extLine(h) : 'header does not fit'} ${db.toFixed(0).padStart(4)}dB · 1M` }); this.emit({ type: 'ble', pdu: Array.from(p.subarray(0, 2 + payloadLen)), db, ch: this.channel, phy: '1M' }); return; }
     let s = `${(PDU_TYPES[type] ?? `PDU${type}`).padEnd(15)} ${mac} ${txAdd ? 'rnd' : 'pub'} ${db.toFixed(0).padStart(4)}dB`;
     let q = 8;
     const end = 2 + payloadLen;
@@ -123,6 +127,6 @@ export class BtleDecoder implements IqProcessor {
     }
     this.emit({ type: 'packet', line: s });
     // the whole PDU too, for the device cards (ble.ts reads it)
-    this.emit({ type: 'ble', pdu: Array.from(p.subarray(0, end)), db, ch: this.channel });
+    this.emit({ type: 'ble', pdu: Array.from(p.subarray(0, end)), db, ch: this.channel, phy: '1M' });   // FORK: + the PHY it came on
   }
 }

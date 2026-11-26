@@ -10,8 +10,9 @@
  * Twin ports: core/apps/BleDevices.kt and core/apps/BleDevices.swift (same names, same constants).
  */
 import { fmtDist } from './units.js';
+import { parseExtHeader, type ExtHeader } from './dsp/ble-ext.js';   // FORK: BLE 5 extended advertising
 
-const PDU_TYPES = ['ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND'];
+const PDU_TYPES = ['ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'ADV_EXT_IND'];   // FORK: + ADV_EXT_IND
 
 /** One service-data AD structure: its 16-bit UUID and the bytes after it. */
 export interface BleSvcData { uuid: number; data: number[] }
@@ -31,6 +32,8 @@ export interface BleAdv {
   appearance: number;
   /** The whole PDU in hex, header first. */
   raw: string;
+  /** FORK: the PHY it was heard on, and an extended advertisement's header (dsp/ble-ext.ts). */
+  phy?: string; ext?: ExtHeader;
 }
 
 const hex2 = (v: number) => v.toString(16).toUpperCase().padStart(2, '0');
@@ -41,7 +44,8 @@ const hex4 = (v: number) => v.toString(16).toUpperCase().padStart(4, '0');
  * bytes 2..7 the advertiser's address (least significant byte first), then the AD structures for the PDU types that
  * carry them. Returns null for a PDU too short to hold an address.
  */
-export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number): BleAdv | null {
+export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number, phy?: string): BleAdv | null {   // FORK: + phy
+  if ((pdu[0] & 0x0F) === 7) return parseExtAdv(pdu, db, ch, phy);   // FORK: extended advertising
   if (pdu.length < 8) return null;
   const p = Array.from(pdu, v => v & 0xFF);
   const type = p[0] & 0x0F;
@@ -50,10 +54,28 @@ export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number): BleAdv
   const a: BleAdv = {
     pduType: PDU_TYPES[type] ?? `PDU${type}`, mac: [7, 6, 5, 4, 3, 2].map(i => hex2(p[i])).join(':'), random: (p[0] & 0x40) !== 0,
     db, ch, name: '', flags: -1, mfr: -1, mfrData: [], uuids16: [], svc: [], txPower: null, appearance: -1,
-    raw: p.slice(0, end).map(hex2).join(''),
+    raw: p.slice(0, end).map(hex2).join(''), phy,   // FORK: + phy
   };
   if (type !== 0 && type !== 2 && type !== 4 && type !== 6) return a;
-  let q = 8;
+  readAd(a, p, 8, end);   // FORK: the AD loop moved into readAd (shared with extended advertising)
+  return a;
+}
+
+/**
+ * FORK: an ADV_EXT_IND as a device record: its address from AdvA, or for an anonymous one its advertising set
+ * ("anon set 3"), its AD structures when the header carries any.
+ */
+function parseExtAdv(pdu: ArrayLike<number>, db: number, ch: number, phy?: string): BleAdv | null {
+  const h = parseExtHeader(pdu); if (!h) return null;
+  const p = Array.from(pdu, v => v & 0xFF), end = 2 + Math.min(p[1], p.length - 2);
+  const a: BleAdv = { pduType: 'ADV_EXT_IND', mac: h.advA ?? `ANON SET ${h.adi?.sid ?? '?'}`, random: h.advARandom ?? true, db, ch, name: '', flags: -1, mfr: -1, mfrData: [], uuids16: [], svc: [],
+    txPower: h.txPower ?? null, appearance: -1, raw: p.slice(0, end).map(hex2).join(''), phy, ext: h };
+  readAd(a, h.adData, 0, h.adData.length);
+  return a;
+}
+
+/** The AD structures in p[q, end) into a. */
+function readAd(a: BleAdv, p: number[], q: number, end: number): void {   // FORK: was inline in parseAdv
   while (q < end) {
     const l = p[q];
     if (l === 0 || q + 1 + l > end) break;
@@ -69,7 +91,6 @@ export function parseAdv(pdu: ArrayLike<number>, db: number, ch: number): BleAdv
     }
     q += 1 + l;
   }
-  return a;
 }
 
 /** Bluetooth SIG company identifiers seen most often in the wild. */
@@ -278,7 +299,9 @@ function advFields(a: BleAdv, c: BleClass, d: BleDevice): { name: string; value:
   if (d.name) f.push({ name: 'Name', value: d.name });
   f.push({ name: 'Maker', value: d.maker || 'unknown' });
   f.push({ name: 'Type', value: `${KIND_LABEL[d.kind]} · ${d.why}` });
-  f.push({ name: 'Last PDU', value: `${a.pduType} · channel ${a.ch}` });
+  f.push({ name: 'Last PDU', value: `${a.pduType} · channel ${a.ch}${a.phy ? ` · ${a.phy} PHY` : ''}` });   // FORK: + PHY
+  // FORK: extended advertising: the set, where its data goes next and on which PHY
+  if (a.ext) { const e = a.ext; f.push({ name: 'Extended advertising', value: [e.advMode, e.adi ? `set ${e.adi.sid}, data ${e.adi.did}` : '', e.aux ? `data on channel ${e.aux.channel}, ${e.aux.phy} PHY, ${e.aux.offsetUs} µs later` : '', e.sync ? 'periodic advertising' : ''].filter(Boolean).join(' · ') }); }
   f.push({ name: 'Signal', value: `${Math.round(a.db)} dB` });
   if (a.flags >= 0) f.push({ name: 'Flags', value: `0x${hex2(a.flags)}${a.flags & 0x04 ? ' · BLE only' : ''}${a.flags & 0x02 ? ' · discoverable' : ''}` });
   if (a.txPower !== null) f.push({ name: 'TX power', value: `${a.txPower} dBm` });
