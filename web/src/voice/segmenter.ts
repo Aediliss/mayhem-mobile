@@ -31,6 +31,8 @@ export class VoiceSegmenter {
     let sq = 0; for (let i = 0; i < block.length; i++) sq += block[i] * block[i];
     const loud = block.length > 0 && 10 * Math.log10(sq / block.length + 1e-12) > this.o.thresholdDb;
     if (this.active && meta.key !== this.meta!.key) { const s = this.close(nowMs - ms, rate); if (s) out.push(s); }   // the call changed
+    // the same call learns more about itself (Dispatch names a talkgroup or unit later): keep the latest it says
+    else if (this.active) this.meta = { ...this.meta!, ...Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined && v !== '')) } as CallMeta;
     if (!this.active && loud) {
       this.active = true; this.meta = { ...meta }; this.quietMs = 0; this.loudMs = 0;
       this.startMs = nowMs - ms - (this.preN / rate) * 1000;
@@ -62,4 +64,31 @@ export class VoiceSegmenter {
     if (loudMs < this.o.minMs) return null;
     return { startMs: this.startMs, endMs: nowMs - (tail / rate) * 1000, rate, samples, meta };
   }
+}
+
+/**
+ * What the app said was on the air, kept for a few seconds, so a block of speaker audio can be matched with the call
+ * it belonged to when it was decoded: the player plays audio some time after the decoder made it.
+ */
+export class MetaHistory {
+  private readonly h: { ms: number; meta: CallMeta | null }[] = [];
+  constructor(private readonly keepMs = 5_000) {}
+  note(ms: number, meta: CallMeta | null): void {
+    const last = this.h[this.h.length - 1];
+    if (!last || last.meta?.key !== meta?.key || last.meta?.label !== meta?.label) this.h.push({ ms, meta: meta ? { ...meta } : null });
+    while (this.h.length > 1 && this.h[1].ms < ms - this.keepMs) this.h.shift();
+  }
+  /** What was on the air at `ms` (the latest note at or before it; the oldest kept when earlier still). */
+  at(ms: number): CallMeta | null {
+    for (let i = this.h.length - 1; i >= 0; i--) if (this.h[i].ms <= ms) return this.h[i].meta;
+    return this.h[0]?.meta ?? null;
+  }
+}
+
+/** A file name no other recording of this session has: the time to the millisecond, then a counter if needed. */
+export function uniqueName(base: string, taken: Set<string>): string {
+  let n = `${base}.wav`;
+  for (let i = 2; taken.has(n); i++) n = `${base}-${i}.wav`;
+  taken.add(n);
+  return n;
 }

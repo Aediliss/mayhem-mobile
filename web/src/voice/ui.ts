@@ -20,7 +20,7 @@ export function bindVoiceSettings(root: ParentNode, rec: VoiceRecorder): () => P
     const list = q('#vr-list'), count = q('#vr-count'); if (!list) return;
     const files = await rec.list();
     if (count) count.textContent = files.length ? `${files.length} call${files.length === 1 ? '' : 's'} · ${(files.reduce((s, f) => s + f.size, 0) / 1e6).toFixed(1)} MB` : 'no calls recorded';
-    list.innerHTML = files.length ? files.map((f, i) => `<div class="li row2 ${i % 2 ? 'alt' : ''}"><span class="tap" data-vrdl="${esc(f.name)}">${esc(f.name)}  ${f.seconds.toFixed(0)} s</span><button class="link" data-vrdel="${esc(f.name)}" aria-label="delete ${esc(f.name)}">✕</button></div>`).join('') : '';
+    list.innerHTML = files.length ? files.map((f, i) => `<div class="li row2 ${i % 2 ? 'alt' : ''}"><button class="link tap" data-vrdl="${esc(f.name)}" aria-label="download ${esc(f.name)}" style="text-align:left">${esc(f.name)}  ${f.seconds.toFixed(0)} s</button><button class="link" data-vrdel="${esc(f.name)}" aria-label="delete ${esc(f.name)}">✕</button></div>`).join('') : '';
     list.querySelectorAll<HTMLElement>('[data-vrdl]').forEach(el => el.onclick = async () => {
       const f = await rec.file(el.dataset.vrdl!), a = document.createElement('a');
       a.href = URL.createObjectURL(f); a.download = f.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60_000);

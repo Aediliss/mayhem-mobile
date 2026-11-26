@@ -4,13 +4,15 @@
  * the browser's private storage, tagged with what the app said the call was: talkgroup, unit, system, frequency …
  * It records only what the app already plays, so encrypted calls (which the apps never voice) are never recorded.
  */
-import { VoiceSegmenter, type CallMeta, type VoiceSegment } from './segmenter.js';
+import { MetaHistory, VoiceSegmenter, uniqueName, type CallMeta, type VoiceSegment } from './segmenter.js';
 import { encodeWav } from './wav.js';
 
 const KEY = 'mm.voice.v1';
 const dir = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('voice', { create: true });
 const p2 = (n: number) => String(n).padStart(2, '0');
-const stamp = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`; };
+const stamp = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`; };
+/** The player waits for a 200 ms cushion (audio-worklet.js) and the audio travels to it: what is heard now was decoded about this long ago. */
+export const PLAYER_DELAY_MS = 250;
 const slug = (s: string) => s.replace(/[^A-Za-z0-9.]+/g, '_').replace(/^_|_$/g, '').slice(0, 60);
 
 export interface VoiceFile { name: string; size: number; seconds: number }
@@ -20,8 +22,13 @@ export class VoiceRecorder {
   saved = 0;
   onSaved: (name: string) => void = () => {};
   private readonly seg = new VoiceSegmenter();
+  private readonly history = new MetaHistory();
+  private readonly names = new Set<string>();
   private rate = 48_000;
   private attached = false;
+  /** The tap: connected only while recording is on, so ordinary listening pays nothing for it. */
+  private tap: { source: AudioNode; node: AudioWorkletNode } | null = null;
+  private connected = false;
 
   constructor(private readonly meta: () => CallMeta | null, private readonly software: () => string, private readonly log: (l: string) => void) {
     try { this.enabled = JSON.parse(localStorage.getItem(KEY) ?? 'false') === true; } catch { /* no storage */ }
@@ -31,6 +38,12 @@ export class VoiceRecorder {
     if (!on) for (const s of this.seg.flush(Date.now(), this.rate)) void this.save(s);
     this.enabled = on;
     try { localStorage.setItem(KEY, JSON.stringify(on)); } catch { /* private window */ }
+    this.connect();
+  }
+  private connect(): void {
+    const t = this.tap; if (!t) return;
+    if (this.enabled && !this.connected) { t.source.connect(t.node); this.connected = true; }
+    else if (!this.enabled && this.connected) { try { t.source.disconnect(t.node); } catch { /* already */ } this.connected = false; }
   }
 
   /** Tap the speaker audio: `source` is the node the app's audio comes out of, before any mute. */
@@ -41,14 +54,17 @@ export class VoiceRecorder {
       await ctx.audioWorklet.addModule('./mic-worklet.js');
       const node = new AudioWorkletNode(ctx, 'mayhem-mic', { numberOfOutputs: 0 });
       node.port.onmessage = e => this.block(e.data as Float32Array);
-      source.connect(node);
+      this.tap = { source, node };
+      this.connect();
     } catch (e) { this.log(`voice recording: could not tap the audio (${(e as Error).message})`); }
   }
 
   /** One block of speaker audio. Exposed for tests. */
   block(a: Float32Array, nowMs = Date.now()): void {
     if (!this.enabled) return;
-    const m = this.meta();
+    // the audio playing now was decoded about PLAYER_DELAY_MS ago: tag it with what was on the air then
+    this.history.note(nowMs, this.meta());
+    const m = this.history.at(nowMs - PLAYER_DELAY_MS);
     const done = m ? this.seg.push(a, this.rate, m, nowMs) : this.seg.flush(nowMs, this.rate);   // left a recording app: close the call
     for (const s of done) void this.save(s);
   }
@@ -60,7 +76,7 @@ export class VoiceRecorder {
       INAM: label, ICRD: new Date(s.startMs).toISOString(), ISFT: this.software(),
       ICMT: JSON.stringify({ ...rest, label, start: new Date(s.startMs).toISOString(), end: new Date(s.endMs).toISOString(), seconds: Math.round(seconds * 10) / 10 }),
     };
-    const name = `${stamp(s.startMs)}_${slug(label) || 'call'}.wav`;
+    const name = uniqueName(`${stamp(s.startMs)}_${slug(label) || 'call'}`, this.names);   // never overwrite an earlier call
     try {
       const w = await (await (await dir()).getFileHandle(name, { create: true })).createWritable();
       await w.write(encodeWav(s.samples, s.rate, info)); await w.close();

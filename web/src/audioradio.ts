@@ -21,6 +21,8 @@ export type AudioSource =
 
 const NO_CAPS: RadioCaps = { stagedGain: false, tunerGain: false, amp: false, biasT: false, biasVolts: 0, tunerAgc: false, rtlAgc: false, ppm: false, directSampling: false, bbFilters: [] };
 const IN_FLIGHT = 3;
+/** Live audio cannot wait: beyond this many buffers at the worker, new live blocks are dropped (and counted). */
+export const LIVE_IN_FLIGHT = 6;
 
 /** One channel of mono audio from any number of channels (averaged). */
 export function mixDown(b: { numberOfChannels: number; length: number; getChannelData(c: number): Float32Array }): Float32Array {
@@ -45,6 +47,10 @@ export class AudioRadio implements Radio {
 
   private conv: AudioToIq | null = null;
   private node: AudioWorkletNode | null = null;
+  private liveSrc: AudioNode | null = null;
+  private liveAcc = new Float32Array(0);
+  /** Live blocks dropped because the worker was behind. */
+  dropped = 0;
   private stopWanted = false;
   private wake: (() => void) | null = null;
   private inFlight = 0;
@@ -84,18 +90,37 @@ export class AudioRadio implements Radio {
     this.ev.onLog(`audio in: ${this.label} · ${this.audioRate} Hz${this.mono ? ` · ${this.durationS.toFixed(1)} s` : ''} · modulated ${mod.toUpperCase()} for this app (follows the app's mode)`);
     if (this.src.kind === 'live') {
       const { ctx, stream } = this.src;
-      await ctx.audioWorklet.addModule('./mic-worklet.js');
-      const node = new AudioWorkletNode(ctx, 'mayhem-mic', { numberOfOutputs: 0 });
-      // live audio arrives in 128-sample blocks; gather ~20 ms so the worker gets buffers, not crumbs
-      let acc = new Float32Array(0);
-      node.port.onmessage = e => {
-        if (this.paused || this.stopWanted) return;
-        const a = e.data as Float32Array, n = new Float32Array(acc.length + a.length); n.set(acc); n.set(a, acc.length); acc = n;
-        if (acc.length >= this.audioRate / 50) { this.inFlight = 0; this.send(acc); acc = new Float32Array(0); }   // live: real time by nature
-      };
-      ctx.createMediaStreamSource(stream).connect(node);
-      this.node = node;
+      try {
+        await ctx.audioWorklet.addModule('./mic-worklet.js');
+        const node = new AudioWorkletNode(ctx, 'mayhem-mic', { numberOfOutputs: 0 });
+        node.port.onmessage = e => this.liveBlock(e.data as Float32Array);
+        this.node = node;
+        this.liveSrc = ctx.createMediaStreamSource(stream);
+        this.liveSrc.connect(node);
+      } catch (e) { this.cleanup(); throw e; }               // never leave a microphone open behind a failed start
     }
+  }
+
+  /**
+   * A block of live audio (128 samples from the worklet). Gathered to ~20 ms so the worker gets buffers, not crumbs. Live
+   * audio cannot slow down: while the worker holds [LIVE_IN_FLIGHT] buffers, new ones are dropped rather than queued.
+   */
+  liveBlock(a: Float32Array): void {
+    if (this.paused || this.stopWanted) return;
+    const n = new Float32Array(this.liveAcc.length + a.length); n.set(this.liveAcc); n.set(a, this.liveAcc.length); this.liveAcc = n;
+    if (this.liveAcc.length < this.audioRate / 50) return;
+    const block = this.liveAcc; this.liveAcc = new Float32Array(0);
+    if (this.inFlight >= LIVE_IN_FLIGHT) { this.dropped++; return; }
+    this.send(block);
+  }
+
+  /** Release everything a live source holds: the graph connection, the worklet's port, the tracks, the worker listener. */
+  private cleanup(): void {
+    try { this.liveSrc?.disconnect(); } catch { /* already */ }
+    this.liveSrc = null;
+    if (this.node) { this.node.port.onmessage = null; this.node.port.close(); try { this.node.disconnect(); } catch { /* none */ } this.node = null; }
+    if (this.src.kind === 'live') for (const t of this.src.stream.getTracks()) t.stop();
+    this.worker.removeEventListener('message', this.onMessage);
   }
 
   async run(): Promise<void> {
@@ -126,9 +151,7 @@ export class AudioRadio implements Radio {
       while (this.inFlight > 0 && !this.stopWanted && performance.now() - drain < 2000) await this.waitFor(100);
     } finally {
       this.running = false;
-      this.node?.disconnect(); this.node = null;
-      if (this.src.kind === 'live') for (const t of this.src.stream.getTracks()) t.stop();
-      this.worker.removeEventListener('message', this.onMessage);
+      this.cleanup();
       this.ev.onStatus(`${this.label} · ${this.mono && this.position >= this.mono.length ? 'end of audio' : 'stopped'}`);
     }
   }
@@ -138,7 +161,7 @@ export class AudioRadio implements Radio {
 
   statusLine(): string {
     const { mod } = modForMode(this.hooks.mode());
-    if (!this.mono) return `${this.label} · live · ${mod.toUpperCase()}${this.paused ? ' · paused' : ''}`;
+    if (!this.mono) return `${this.label} · live · ${mod.toUpperCase()}${this.dropped ? ` · ${this.dropped} blocks dropped (decoders behind)` : ''}${this.paused ? ' · paused' : ''}`;
     const secs = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
     return `${this.label} · ${secs(this.position / this.audioRate)} / ${secs(this.durationS)} · ${mod.toUpperCase()} · ${this.paused ? 'paused' : this.speed === Infinity ? 'MAX' : `${this.speed}×`}`;
   }

@@ -97,3 +97,24 @@ test('SSB end to end: RTTY audio → USB IQ (int8, 960 ksps) → product detecto
   for (let i = 0; i < back.length; i += 480) d.push(back.subarray(i, i + 480), Math.min(480, back.length - i));
   assert.equal(text.trim(), 'CQ DE N0CALL K');
 });
+
+test('live audio in: a worker that falls behind gets at most LIVE_IN_FLIGHT buffers; the rest are dropped and counted', async () => {
+  const { AudioRadio, LIVE_IN_FLIGHT } = await import('../src/audioradio.js');
+  const posted: unknown[] = []; let fns: ((e: MessageEvent) => void)[] = [];
+  const worker = { postMessage: (m: unknown) => { posted.push(m); }, addEventListener: (_t: 'message', f: (e: MessageEvent) => void) => { fns.push(f); }, removeEventListener: (_t: 'message', f: (e: MessageEvent) => void) => { fns = fns.filter(x => x !== f); } };
+  let stopped = 0;
+  const src = { kind: 'live' as const, label: 'test input', ctx: { sampleRate: A } as unknown as AudioContext, stream: { getTracks: () => [{ stop: () => { stopped++; } }] } as unknown as MediaStream };
+  const r = new AudioRadio(src, worker, { onLog: () => {}, onStatus: () => {} }, { mode: () => 'NFM', channelHz: () => 0 });
+  r.targetRateHz = 240_000;
+  (worker.addEventListener as (t: 'message', f: (e: MessageEvent) => void) => void)('message', (r as unknown as { onMessage: (e: MessageEvent) => void }).onMessage);
+  for (let i = 0; i < 20 * 8; i++) r.liveBlock(new Float32Array(128).fill(0.1));   // ~0.43 s of audio, nothing acked
+  assert.equal(posted.length, LIVE_IN_FLIGHT);
+  assert.ok(r.dropped > 0);
+  for (const f of fns) f({ data: { type: 'iqAck' } } as MessageEvent);              // the worker catches up by one
+  for (let i = 0; i < 8; i++) r.liveBlock(new Float32Array(128).fill(0.1));
+  assert.equal(posted.length, LIVE_IN_FLIGHT + 1);
+  assert.match(r.statusLine(), /blocks dropped/);
+  (r as unknown as { cleanup(): void }).cleanup();
+  assert.equal(stopped, 1);                                                           // the microphone is released
+  assert.equal(fns.length, 0);
+});

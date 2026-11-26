@@ -52,3 +52,28 @@ test('WAV: 16-bit mono, INFO tags any tagger reads, samples intact', () => {
   assert.deepEqual(Array.from(r.samples), [0, 16384, -16384, 32767, -32767]);
   assert.equal(new DataView(w.buffer).getUint32(4, true), w.length - 8);       // RIFF size covers the whole file
 });
+
+test('a call learns more about itself: the tags at the end, not the start, go in the file', () => {
+  const seg = new VoiceSegmenter(); const out: VoiceSegment[] = [];
+  const audio = cat(tone(1500), quiet(3000));
+  for (let i = 0; i < audio.length; i += BLOCK) {
+    const t = (i + BLOCK) / R * 1000, meta: CallMeta = t < 700 ? { key: 'c1', label: 'TG ?', tg: undefined } : { key: 'c1', label: 'TG 1234 · unit 77', tg: 1234, unit: 77 };
+    out.push(...seg.push(audio.subarray(i, i + BLOCK), R, meta, t));
+  }
+  assert.equal(out.length, 1);
+  assert.equal(out[0].meta.label, 'TG 1234 · unit 77'); assert.equal(out[0].meta.tg, 1234);
+});
+
+test('metadata is looked up as it was when the audio was made (the player plays it later)', async () => {
+  const { MetaHistory } = await import('../src/voice/segmenter.js');
+  const h = new MetaHistory();
+  h.note(1000, TG1); h.note(1100, TG1); h.note(2000, TG2); h.note(2500, null);
+  assert.equal(h.at(1999)?.key, 'tg1'); assert.equal(h.at(2000)?.key, 'tg2'); assert.equal(h.at(2600), null); assert.equal(h.at(500)?.key, 'tg1');
+});
+
+test('file names never collide within a session', async () => {
+  const { uniqueName } = await import('../src/voice/segmenter.js');
+  const taken = new Set<string>();
+  assert.deepEqual([uniqueName('20261126_101500.123_TG_1', taken), uniqueName('20261126_101500.123_TG_1', taken), uniqueName('20261126_101500.123_TG_1', taken)],
+    ['20261126_101500.123_TG_1.wav', '20261126_101500.123_TG_1-2.wav', '20261126_101500.123_TG_1-3.wav']);
+});
