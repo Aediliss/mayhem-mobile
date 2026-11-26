@@ -33,7 +33,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [x] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
 | [x] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
-| [ ] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
+| [x] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
 
 ## Phase 2 — Quick wins and corrections
 
@@ -412,3 +412,18 @@ for "or later" first.
   writing a decoder from it would be a port, not an implementation from a spec). Not implemented. Ways forward: the
   author offers other license terms (matthew@eeph.com); or a published spec / a redistributable recording with known IDs
   to work the layout out from.
+- **Phase 1 · Analyzer protocol library** (`src/dsp/analyzer/library.ts`, `test/analyzer-library.test.ts`): upstream
+  shared protocols only inside a session file (binary, with every captured burst). Now the PROTOCOLS panel has EXPORT
+  PROTOCOLS: a small JSON file (format `mad-mobile.analyzer-protocols`, version 1) of the saved protocols alone; IMPORT
+  reads it back (also a bare array, or any JSON with a `protocols` array). Imported files are untrusted: every protocol is
+  checked field by field (sync bits, modulation, coding, symbol time, up to 64 fields with known kinds and ordered
+  bounds, the checksum's kind and numbers) and rebuilt from checked values only; malformed ones are skipped and counted.
+  Merge: an identical protocol is skipped, a taken name gets "(2)". Upstream touch points (FORK, `analyzer-ui.ts`): the
+  import, `.json` on the file input, one line in the IMPORT handler, the EXPORT PROTOCOLS button and its case, and
+  `exportLibrary` / `importLibrary` in a FORK block.
+  Tests prove: round trip; bare-array and session-JSON forms; eleven kinds of malformed entry skipped; extra keys
+  (`__proto__`, handlers) dropped without polluting objects; merge counts and renaming; an imported protocol recognizes
+  a frame with its sync word and not one of another modulation. Browser check (Chromium): IMPORT in the Analyzer saves
+  two protocols to IndexedDB, reports one unreadable, an HTML-laden name stays text, no page errors.
+  Hardware: none needed. Save a protocol from a remote in the Analyzer, EXPORT PROTOCOLS, clear the browser's data (or
+  use another browser), IMPORT the file: the remote's next press should be recognized by name.

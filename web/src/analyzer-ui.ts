@@ -15,6 +15,7 @@ import { analyze, carrierOf, noiseOf, bitsToAscii, bitsToHex, pulsesUs, CODINGS,
 import { align, similar, type Alignment } from './dsp/analyzer/align.js';
 import { decodeBundle, encodeBundle, exportName, freqFromName, toCs8, toCu8, toSub } from './dsp/analyzer/files.js';
 import { checkHolds, dataStart, fieldValue, recognize, suggest, FIELD_KINDS, type CheckFound, type Field, type FieldKind, type Protocol } from './dsp/analyzer/fields.js';
+import { libraryJson, mergeProtocols, readLibrary } from './dsp/analyzer/library.js';   // FORK: protocol library export / import
 import { DEFAULT_FILTER, NO_FILTER, hasData, passes, type Burst, type CaptureFilter } from './dsp/analyzer/capture.js';
 import { groupPresses, informative, sameFrame, type Transmission } from './dsp/analyzer/group.js';
 import { store, type StoredBurst } from './analyzer-store.js';
@@ -216,7 +217,7 @@ export class AnalyzerUi {
   /** The Analyzer's own part of the screen, under the waterfall and the band presets main.ts draws. */
   html(): string {
     return `
-      <div class="ctlrow an-ctlrow"><button id="an-full" class="tog">FULL LIST</button><button id="an-cap" class="tog">CAPTURE</button><button id="an-imp" class="tog">IMPORT</button><button id="an-filt" class="tog">FILTER</button><button id="an-star" class="tog">☆ STARRED</button><button id="an-sess" class="tog">EXPORT SESSION</button><input id="an-file" type="file" accept=".cu8,.cs8,.u8,.iq,.raw,.sub,.mmanalyzer" hidden><button class="ib" id="an-clear" title="clear (starred bursts stay; tap twice to clear them too)" aria-label="clear">✕</button></div>
+      <div class="ctlrow an-ctlrow"><button id="an-full" class="tog">FULL LIST</button><button id="an-cap" class="tog">CAPTURE</button><button id="an-imp" class="tog">IMPORT</button><button id="an-filt" class="tog">FILTER</button><button id="an-star" class="tog">☆ STARRED</button><button id="an-sess" class="tog">EXPORT SESSION</button><input id="an-file" type="file" accept=".cu8,.cs8,.u8,.iq,.raw,.sub,.mmanalyzer,.json" hidden>${'' /* FORK: + .json protocol library */}<button class="ib" id="an-clear" title="clear (starred bursts stay; tap twice to clear them too)" aria-label="clear">✕</button></div>
       <div id="an-filter" class="an-filter" hidden></div>
       <div id="an-stats" class="mt-sum"><div>listening&hellip;</div></div>
       <div id="an-list" class="mt-cards an-cards"></div>
@@ -238,6 +239,7 @@ export class AnalyzerUi {
       this.flash(`READING ${f.name}…`);
       const bytes = await f.arrayBuffer();
       if (/\.mmanalyzer$/i.test(f.name)) this.importSession(new Uint8Array(bytes), f.name);
+      else if (/\.json$/i.test(f.name)) this.importLibrary(new TextDecoder().decode(bytes), f.name);   // FORK: protocol library
       else this.host.post({ type: 'analyzer', cmd: 'import', name: f.name, bytes }, [bytes]);
     };
     // the list full screen: the readout and the waterfall step aside for it, and come back
@@ -973,7 +975,7 @@ export class AnalyzerUi {
     const cands = this.group();
     const rows = cands.filter(x => !this.left.has(x.id) || x.id === b.id);
     const head = `<div class="an-head"><b>COMPARE</b><span>${rows.length} of ${cands.length} frame${cands.length === 1 ? '' : 's'} ${this.cmpTx ? 'of this transmission' : `like burst ${b.id}`} · ${b.auto.mod} · ${b.auto.coding} · ${b.auto.symUs.toFixed(0)} µs</span>`
-      + `<button class="chip" data-ando="suggest">SUGGEST</button><button class="chip" data-ando="saveproto" ${this.fields.length ? '' : 'disabled'}>SAVE AS PROTOCOL</button><button class="chip ${this.showProtocols ? 'on' : ''}" data-ando="protocols">PROTOCOLS ${this.protocols.length}</button><button class="chip" data-ando="back">BACK</button><button class="chip" data-ando="close">✕</button></div>`;
+      + `<button class="chip" data-ando="suggest">SUGGEST</button><button class="chip" data-ando="saveproto" ${this.fields.length ? '' : 'disabled'}>SAVE AS PROTOCOL</button><button class="chip ${this.showProtocols ? 'on' : ''}" data-ando="protocols">PROTOCOLS ${this.protocols.length}</button>${this.showProtocols ? `<button class="chip" data-ando="protoexport" ${this.protocols.length ? '' : 'disabled'} title="save the protocols as a JSON file to share; IMPORT reads one back">EXPORT PROTOCOLS</button>` : ''}${'' /* FORK: protocol library */}<button class="chip" data-ando="back">BACK</button><button class="chip" data-ando="close">✕</button></div>`;
     const inout = `<div class="an-sub">FRAMES · TAP TO LEAVE ONE OUT</div><div class="an-inout">${cands.map(x => `<button class="chip ${this.left.has(x.id) && x.id !== b.id ? '' : 'on'}" data-anin="${x.id}">${x.id}${x.name ? ` ${esc(x.name)}` : ''}</button>`).join('')}</div>`;
     const protos = this.showProtocols ? `<div class="an-protos">${this.protocols.length ? this.protocols.map((p, i) => `<div><b>${esc(p.name)}</b><span>${p.mod} · ${p.coding} · sync ${bitsToHex(p.sync)} · ${p.fields.length} fields${p.check ? ` · ${esc(p.check.name.split(' (')[0])}` : ''} · ${this.bursts.filter(x => x.proto?.protocol === p).length} heard</span><button class="chip" data-anprn="${i}">RENAME</button><button class="chip" data-anprd="${i}">DELETE</button></div>`).join('') : '<div class="mt-wait">no saved protocols yet: SUGGEST or drag out fields here, then SAVE AS PROTOCOL</div>'}</div>` : '';
     if (rows.length < 2) return head + `<div class="an-scroll">${protos}${inout}<div class="mt-wait">capture the same button a few more times: frames that read alike are lined up here</div></div>`;
@@ -1040,6 +1042,7 @@ export class AnalyzerUi {
         case 'close': this.close(); break;
         case 'back': this.back(); break;
         case 'protocols': this.showProtocols = !this.showProtocols; this.draw(); break;
+        case 'protoexport': this.exportLibrary(); break;   // FORK: protocol library
         case 'suggest': if (al) { const s = suggest(al); this.fields = s.fields; this.check = s.check; } this.draw(); break;
         case 'nopick': this.colPick = null; this.draw(); break;
         case 'addfield': {
@@ -1106,6 +1109,21 @@ export class AnalyzerUi {
     const d = new Date();
     save(`analyzer_session_${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}_${two(d.getHours())}${two(d.getMinutes())}.mmanalyzer`, encodeBundle(meta, this.bursts.map(b => ({ env: b.env, fm: b.fm, iq: b.iq }))));
   }
+
+  // FORK: the protocol library on its own (dsp/analyzer/library.ts): a JSON file of the saved protocols, no bursts
+  private exportLibrary(): void {
+    if (!this.protocols.length) { this.flash('NO PROTOCOLS TO EXPORT YET'); return; }
+    const d = new Date();
+    save(`analyzer_protocols_${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}.json`, new TextEncoder().encode(libraryJson(this.protocols, 'Mad Mobile Analyzer', d)));
+  }
+  private importLibrary(text: string, name: string): void {
+    const r = readLibrary(text);
+    if (r.error) { this.flash(`${name}: ${r.error.toUpperCase()}`); return; }
+    const m = mergeProtocols(this.protocols, r.protocols);
+    this.saveProtocols(); this.recognizeAll(); this.draw();
+    this.flash(`${m.added} PROTOCOL${m.added === 1 ? '' : 'S'} FROM ${name}${m.same ? ` · ${m.same} ALREADY SAVED` : ''}${m.renamed ? ` · ${m.renamed} RENAMED` : ''}${r.skipped ? ` · ${r.skipped} NOT READABLE` : ''}`);
+  }
+  // FORK: end of protocol library
 
   private importSession(bytes: Uint8Array, name: string): void {
     const s = decodeBundle(bytes);
