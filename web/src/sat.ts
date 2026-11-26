@@ -17,6 +17,15 @@ export interface SatDef {
   /** What this thing is and why you would point at it. */
   what?: string;
   services: SatService[];
+  /** FORK: the day its operator decommissioned it (ISO date): still in orbit, no longer transmitting. */
+  retired?: string;
+}
+
+/** FORK: "Decommissioned 19 Aug 2025" for a retired satellite, else ''. */
+export function retiredText(d: Pick<SatDef, 'retired'>): string {
+  if (!d.retired) return '';
+  const t = new Date(`${d.retired}T00:00:00Z`);
+  return `Decommissioned ${t.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][t.getUTCMonth()]} ${t.getUTCFullYear()}`;
 }
 
 /** The thing people most often mistake for a fault, so it is said the same way wherever it applies. */
@@ -93,15 +102,15 @@ export const SATS: SatDef[] = [
     what: 'GreenCube, an Italian satellite six times higher than the usual cubesat. It is above the horizon for hours rather than minutes and its footprint spans continents, so it is used to pass short messages between countries.',
     services: [{ name: 'GreenCube digipeater', kind: 'digi', down: 435_310_000, up: 435_310_000, note: 'MEO · 1200 bd GMSK · not decoded here yet',
       how: 'A store-and-forward message digipeater rather than a voice repeater. This app tunes it and shows the signal, but does not decode it yet.' }] },
-  { name: 'NOAA 15', norad: 25338,
+  { name: 'NOAA 15', norad: 25338, retired: '2025-08-19',   // FORK: NOAA OSPO, decommissioned 19 Aug 2025
     what: 'An American weather satellite that broadcast a live picture, one line at a time, in a format from the 1960s simple enough to decode with a tape recorder. Switched off in 2025 after 27 years.',
     services: [{ name: 'APT images', kind: 'apt', down: 137_620_000, note: 'retired 2025 · no TLE, tuning still works',
       how: 'No longer transmitting. Kept here so you can check the frequency and confirm the silence.' }] },
-  { name: 'NOAA 18', norad: 28654,
+  { name: 'NOAA 18', norad: 28654, retired: '2025-06-06',   // FORK: NOAA OSPO, decommissioned 6 Jun 2025
     what: 'The middle of the three American analog weather satellites, retired in June 2025. Its picture was a live scan of whatever it was flying over, visible light by day and infrared by night.',
     services: [{ name: 'APT images', kind: 'apt', down: 137_912_500, note: 'retired June 2025 · no TLE, tuning still works',
       how: 'No longer transmitting.' }] },
-  { name: 'NOAA 19', norad: 33591,
+  { name: 'NOAA 19', norad: 33591, retired: '2025-08-13',   // FORK: NOAA OSPO, decommissioned 13 Aug 2025
     what: 'The last of the American analog weather satellites, retired in 2025. Between them these three gave anyone with a scanner a live picture of their own weather for half a century.',
     services: [{ name: 'APT images', kind: 'apt', down: 137_100_000, note: 'retired 2025 · no TLE, tuning still works',
       how: 'No longer transmitting.' }] },

@@ -84,7 +84,7 @@ import { LoraLocal } from './dsp/lora/local.js';
 import { SONDE_BANDS, SONDE_WIDE, SONDE_NARROW, wideCenter as sondeWideCenter, narrowWindows as sondeWindows, type SondeChannelRow } from './dsp/sonde/front.js';
 import type { SondeRow } from './dsp/sonde/track.js';
 import type { HamMode, AgcMode } from './dsp/ham/demod.js';
-import { SATS, Sgp4, look, doppler, passes, fetchTles, type Tle, type Pass, dopplerUp, type SatService } from './sat.js';
+import { SATS, Sgp4, look, doppler, passes, fetchTles, type Tle, type Pass, dopplerUp, type SatService, retiredText } from './sat.js';   // FORK: + retiredText
 import { ISM_COUNTS } from './dsp/ism/counts.js';
 import type { CellSnap, CellRow, SibRec as CellSibRec } from './dsp/cell/cell.js';
 import type { FeedRow as CellFeedRow } from './dsp/cell/feed.js';
@@ -2887,6 +2887,8 @@ function satRefresh(recomputePasses = false): void {
   const how = q('#sat-how');
   if (how) how.textContent = `${svc.up ? 'Two-way, license needed to transmit. ' : 'Receive only. '}${svc.how ?? ''}`.trim();
   const info = q('#sat-now');
+  // FORK: a decommissioned satellite is still in orbit (CelesTrak still has its TLE) but sends nothing: no passes to chase
+  if (cur.def.retired) { if (info) info.innerHTML = `<div class="kv"><span>${cur.def.name}</span><span>${retiredText(cur.def)} · no longer transmitting · tuned so you can confirm the silence</span></div>`; const plr = q('#sat-passes'); if (plr) plr.innerHTML = '<div class="empty">retired · passes not listed</div>'; return; }
   if (!cur.sgp) { if (info) info.innerHTML = `<div class="kv"><span>${cur.def.name}</span><span>${s.tles.size ? 'no orbit data from CelesTrak — retired or renamed; the receiver is tuned anyway' : 'waiting for orbit data…'}</span></div>`; const pl0 = q('#sat-passes'); if (pl0) pl0.innerHTML = '<div class="empty">no TLE, no passes</div>'; return; }
   if (!home) { if (info) info.innerHTML = `<div class="kv"><span>${cur.def.name}</span><span>allow location to get look angles, Doppler and passes</span></div>`; return; }
   const now = Date.now(), l = look(cur.sgp, now, home.lat, home.lon);
@@ -2963,7 +2965,7 @@ function renderSat(view: HTMLElement, tabs: string): void {
       <span id="ham-tone" hidden>—</span>
       <div id="scope" class="panel"></div></section>
     <section class="controls">${tabs}
-      ${hsHtml(`<div class="tiles auto">${SATS.map(x => `<button class="tl" data-sat="${x.norad}"><b>${x.name}</b><small>${x.services.map(v => v.name).join(' · ')}</small></button>`).join('')}</div>`)}
+      ${hsHtml(`<div class="tiles auto">${SATS.map(x => `<button class="tl ${x.retired ? 'dim' : ''}" data-sat="${x.norad}"${x.retired ? ` title="${retiredText(x)}: no longer transmitting"` : ''}><b>${x.name}</b><small>${x.retired ? 'RETIRED' : x.services.map(v => v.name).join(' · ')}</small></button>`).join('')}${'' /* FORK: retired satellites dimmed */}</div>`)}
       <div id="sat-what" class="about"></div>
       <div class="rl offers">WHAT IT OFFERS · tap to set the receiver up for it</div>${hsHtml('<div id="sat-services" class="tiles auto"></div>')}
       <div id="sat-how" class="about"></div>

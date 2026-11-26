@@ -39,7 +39,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | Satellites: NOAA 15/18/19 decommissioned (grey out, keep) | NOAA OSPO notices | facts |
+| [x] | ★ | Satellites: NOAA 15/18/19 decommissioned (grey out, keep) | NOAA OSPO notices | facts |
 | [ ] | ★ | Full Mode-S in `dsp/adsb.ts`: DF0/4/5/11/16/20/21, Comm-B BDS 1,0/2,0/4,0/5,0/6,0, AP recovery vs known ICAOs, 1–2 bit CRC fix (DF11/17/18), "Mode-S only" aircraft | ICAO Annex 10 Vol IV, Doc 9871; pyModeS; readsb; dump1090-fa | pyModeS GPL-3.0 ✔ · readsb GPL-3.0 ✔ · dump1090-fa GPL-2.0-or-later ✔ · antirez dump1090 BSD-3 ✔ |
 | [ ] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
 | [ ] | | BLE: auto-rotate 37/38/39, extended adv headers, coded PHY if feasible, PHY per packet | Bluetooth Core 5.x Vol 6; ubertooth/libbtbb | ubertooth/libbtbb GPL-2.0-or-later ✔ (headers) |
@@ -427,3 +427,12 @@ for "or later" first.
   two protocols to IndexedDB, reports one unreadable, an HTML-laden name stays text, no page errors.
   Hardware: none needed. Save a protocol from a remote in the Analyzer, EXPORT PROTOCOLS, clear the browser's data (or
   use another browser), IMPORT the file: the remote's next press should be recognized by name.
+- **Phase 2 · NOAA 15/18/19 retired** (`sat.ts`, `main.ts`, `test/sat-retired.test.ts`): upstream already called them
+  retired in their notes. They are still in orbit, so CelesTrak still gives their TLEs and the app listed passes as for
+  a working satellite. Now `SatDef.retired` holds NOAA OSPO's decommissioning dates (NOAA-18 6 Jun 2025, NOAA-19 13 Aug
+  2025, NOAA-15 19 Aug 2025); their tiles are dimmed and read RETIRED (the date on hover), and choosing one says
+  "Decommissioned … · no longer transmitting · tuned so you can confirm the silence" with no pass list. They stay in the
+  list and still tune 137.62 / 137.9125 / 137.10 MHz. Upstream touch points (FORK): `sat.ts` (the field, `retiredText`,
+  the three dates), `main.ts` (import, tile, the info panel's early return). Tests prove the dates and that Meteor and
+  the amateur satellites are not marked. Browser check (Chromium): the NOAA 19 tile is dimmed with RETIRED, the panel
+  shows the message and no passes, Meteor M2-3 is unchanged, no page errors.
