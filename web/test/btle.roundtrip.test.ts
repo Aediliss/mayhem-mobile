@@ -40,6 +40,6 @@ test('BLE: wrong whitening channel or a flipped bit fails the CRC', () => {
 test('BLE: noise alone decodes nothing', () => {
   const lines: string[] = [];
   const d = new BtleDecoder(m => { if (m.type === 'packet') lines.push(m.line as string); });
-  d.reset(RATE); feed(d, toInt8(awgn(silence(400_000).map(() => 1), 0, 11), 40), RATE);
+  d.reset(RATE); feed(d, toInt8(awgn(silence(400_000), 0, 11), 40), RATE);
   assert.deepEqual(lines, []);
 });
