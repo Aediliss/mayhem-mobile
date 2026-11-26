@@ -3,9 +3,11 @@
  * (Tomasz Lemiech, MIT: libacars/arinc.c, adsc.c, acars.c): the envelope (ground station address, IMI, aircraft
  * registration, the payload in hex, CRC-16), and ADS-C (ARINC 745) in both directions: the aircraft's reports (basic
  * report with position, altitude and time; flight ID; predicted route; earth and air reference; meteo; airframe ID;
- * projections; acknowledgements) and the ground's contract requests. FANS-1/A CPDLC (AT1, CR1, CC1, DR1) is named
- * here; its message body (ASN.1 PER) is not read yet. No DOM.
+ * projections; acknowledgements) and the ground's contract requests; FANS-1/A CPDLC (AT1, CR1, CC1, DR1) read by
+ * cpdlc/cpdlc.ts. No DOM.
  */
+
+import { cpdlcRead, decodeCpdlc, type CpdlcRead } from './cpdlc/cpdlc.js';
 
 export type Arinc622App = 'adsc' | 'adsc-disconnect' | 'cpdlc' | 'cpdlc-connect' | 'cpdlc-confirm' | 'cpdlc-disconnect';
 const IMIS: [string, Arinc622App][] = [['AT1', 'cpdlc'], ['CR1', 'cpdlc-connect'], ['CC1', 'cpdlc-confirm'], ['DR1', 'cpdlc-disconnect'], ['ADS', 'adsc'], ['DIS', 'adsc-disconnect']];
@@ -17,6 +19,8 @@ export interface Arinc622 {
   bytes: Uint8Array;
   /** ADS-C tags, in order; `err` when one could not be read (the rest is left unread). */
   adsc?: { tags: AdscTag[]; err: boolean };
+  /** CPDLC, read (null when the body does not parse). */
+  cpdlc?: CpdlcRead | null;
 }
 
 /** CRC-16 (0x1021, from 0xFFFF, not reflected) over IMI, registration and payload with its CRC: 0x1D0F when good. */
@@ -55,6 +59,7 @@ export function parseArinc622(label: string, text: string, down: boolean): Arinc
   const bytes = raw.slice(0, n - 2);
   const r: Arinc622 = { app, imi, gsAddr, reg: reg.replace(/^[.\s]+/, ''), crcOk, down, bytes };
   if (app === 'adsc') r.adsc = down ? adscDown(bytes) : adscUp(bytes);
+  if (app.startsWith('cpdlc')) { const v = bytes.length ? decodeCpdlc(bytes, down) : null; r.cpdlc = v ? cpdlcRead(v) : null; }
   if (app === 'adsc-disconnect') r.adsc = { tags: bytes.length ? [{ tag: 255, name: 'Disconnect', reason: bytes[0] }] : [], err: !bytes.length };
   return r;
 }
@@ -151,6 +156,7 @@ const sec = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s 
 export function arinc622Summary(a: Arinc622): { summary: string; pos: { lat: number; lon: number } | null; altFt: number | null; kt: number | null; hdg: number | null } {
   const to = a.down ? `to ${a.gsAddr}` : `from ${a.gsAddr}`, crc = a.crcOk ? '' : ' (CRC failed)';
   let pos: { lat: number; lon: number } | null = null, altFt: number | null = null, kt: number | null = null, hdg: number | null = null;
+  if (a.cpdlc) { const c = a.cpdlc; return { summary: `${APP_WORDS[a.app]} ${to}${c.id !== null ? ` #${c.id}` : ''}${c.ref !== null ? ` (re #${c.ref})` : ''}: ${c.text || '(no elements)'}${crc}`, pos, altFt, kt, hdg }; }
   if (!a.adsc) return { summary: `${APP_WORDS[a.app]} ${to}${crc}`, pos, altFt, kt, hdg };
   const words: string[] = [];
   for (const t of a.adsc.tags) {

@@ -65,7 +65,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 |---|---|---|---|---|
 | [x] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl (Tomasz Lemiech): hfdl.c, mpdu/lpdu/hfnpdu/acars.c, etc/systable.conf; liquid-dsp conventions checked against liquid-dsp 1.6 | GPL-3.0-or-later ✔ (spdu.c GPL-2.0-or-later ✔); libacars MIT ✔ (format only) |
 | [x] | | ADS-C (and the ARINC 622 envelope: CPDLC named) inside ACARS/VDL2/HFDL | libacars (Tomasz Lemiech): arinc.c, adsc.c, acars.c | MIT ✔ |
-| [ ] | | CPDLC message bodies (FANS-1/A, ASN.1 PER: clearances, requests, free text) | libacars (asn1/ generated from the FANS-1/A ASN.1) | MIT ✔ |
+| [x] | | CPDLC message bodies (FANS-1/A, ASN.1 PER: clearances, requests, free text) | libacars (asn1/ generated from the FANS-1/A ASN.1; asn1-format-cpdlc-text.c); asn1c 0.9.28 runtime PER rules | libacars MIT ✔ · asn1c runtime BSD-2-Clause ✔ |
 | [ ] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium; iridium-toolkit | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README) |
 | [ ] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `vor_rx` | Mayhem GPL-3.0 ✔ |
 | [ ] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) | JAERO | MIT ✔ |
@@ -646,3 +646,13 @@ for "or later" first.
   Hardware: ADS-C is mostly oceanic and polar, so HFDL (Flight Msgs → HFDL HF) is where to hear it; also VDL2 near
   airports with FANS-equipped long-haul traffic. Look for cards with an ADS-C chip and compare with dumphfdl / dumpvdl2
   on the same recording.
+- **CPDLC (FANS-1/A)** (`dsp/cpdlc/`, `scripts/fans/`, `test/cpdlc.test.ts`): the message set's unaligned-PER schema
+  (213 types, 183 uplink and 129 downlink elements) was read out of libacars' asn1c tables by a C program that walks the
+  descriptors (so constraints, alphabets and CHOICE order are asn1c's own), with libacars' element phrases, labels and
+  units; `fans.ts` is generated and `scripts/fans/README.md` says how to regenerate it. A decoder (and a test encoder)
+  follow asn1c 0.9.28's PER rules. Messages encoded here were decoded by libacars 2.2 itself to the same values
+  (header, timestamp, flight levels, QNH altitude, lat/lon, fix, free text); the tests hold those texts and values.
+  In Flight Msgs a CPDLC message is kind CPDLC and its summary is the clearance or request in words (checked in
+  Chromium). Not done: positions inside CPDLC position reports are not put on the map.
+  Hardware: as for ADS-C (HFDL over oceans, VDL2 near busy long-haul airports): CPDLC cards should read like
+  "CPDLC message from NYCODYA #12: CLIMB TO AND MAINTAIN FL360"; compare with dumphfdl / dumpvdl2.
