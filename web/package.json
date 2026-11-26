@@ -7,7 +7,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run bundle",
     "bundle": "esbuild app=src/main.ts dsp-worker=src/dsp.worker.ts --bundle --format=esm --target=es2020 --minify --legal-comments=none --outdir=build --log-level=warning",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "esbuild \"test/**/*.test.ts\" --bundle --platform=node --format=esm --target=node20 --outdir=.test-build --log-level=warning && node --test \".test-build/**/*.test.js\"",
+    "serve": "npm run build && node scripts/serve.mjs"
   },
   "devDependencies": {
     "@types/w3c-web-usb": "1.0.10",

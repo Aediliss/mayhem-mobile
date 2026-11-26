@@ -1,3 +1,5 @@
 node_modules/
 dist/
 build/
+# FORK: compiled tests (npm test)
+.test-build/

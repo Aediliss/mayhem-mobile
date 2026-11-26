@@ -23,5 +23,8 @@ keystore.properties
 *.c8
 # Tests and fixtures live in the private mayhem-mobile-tests repo (its run.sh copies them here)
 web/test/
+# FORK: this fork keeps its decoder tests and fixtures in the repo (upstream's live in a private repo)
+!web/test/
+!web/test/fixtures/**
 app/src/test/
 web/replay_tmp/
