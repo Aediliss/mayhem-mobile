@@ -81,7 +81,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 |---|---|---|---|---|
 | [x] | ★ | EDACS (standard + networked), ProVoice identification only — in Dispatch via the plug-in hook | TIA/EIA TSB-69.3; DSD-FME `edacs-fme.c`; edacs-fm; ledacs | DSD-FME ISC ✔ (COPYRIGHT: all but the D-STAR files) · edacs-fm GPL-3.0 ✔ · ledacs Unlicense ✔ · Morelos-Zaragoza BCH code "non-commercial only" ✘ not used |
 | [ ] | ★ | LTR / LTR Passport | SDRTrunk | GPL-3.0 ✔ |
-| [ ] | ★ | MPT1327 | SDRTrunk; MPT1327 spec | GPL-3.0 ✔ |
+| [x] | ★ | MPT1327 — in Dispatch via the plug-in hook | SDRTrunk `module/decode/mpt1327`, `edac/CRCFleetsync` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · MPT1327 spec PDF not reachable (Ofcom 403) |
 | [ ] | | DMR Tier III: Connect Plus, Hytera XPT mapping | DSD-FME; SDRTrunk | as above |
 | [ ] | | Two-tone sequential (QC-II) receive, GE Star | upstream `ui_test` (TX) tables | in-repo |
 | [ ] | | Alias import (RadioReference / OP25 / SDRTrunk CSV/TSV) | OP25 | OP25 (boatbod) GPL-3.0-or-later ✔ (headers) |
@@ -262,3 +262,22 @@ for "or later" first.
   TRUNKING PLANS, open Dispatch with a HackRF (or H4M in HackRF mode) and an 800 MHz antenna. The control channel
   should become "EDACS · SITE n", calls should appear with talkgroup, LID and frequency, analog calls should be heard,
   ProVoice ones listed only.
+- **Phase 6 · MPT1327** (`dsp/fleet/mpt1327.ts`, `mpt1327-plugin.ts`, `test/mpt1327*.test.ts`): 1200 bit/s FFSK
+  (1200 Hz = 1, 1800 Hz = 0) on the channel's own 24 kS/s baseband: sliding single-bin DFTs at both tones over one
+  bit, a bit clock on their difference, REVS+SYNC (0xC4D7; French 0xB433) in either polarity, the 64-bit address
+  codeword checked (15-bit check from its generator with the last bit inverted, even parity; one bit corrected), and
+  the system identity from the CCSC ahead of the sync, believed once seen twice running (its own check is not in the
+  reference). Messages: GTC (calls; data calls logged, not voiced), ALOHA family, ACK, AHOY, MAINT, CLEAR, MOVE,
+  BCAST. Channel plans gain a linear form for band plans: `MPT1327 <name>: ch0=<MHz> step=<kHz>`, proved by the
+  control channel sitting on the grid. Tests prove: the derived check table equals SDRTrunk's published entries;
+  parity and single-error correction; message layouts; slots decode from FM at 15 and 9 dB SNR in either slicer
+  polarity with the CCSC identity; noise finds nothing; Dispatch's real engine finds and classes the control
+  channel, reads SYS 2A5B, proves the linear plan and lists a GTC on channel 52 = 169.6375 MHz with FM voice.
+  Browser check (Chromium): the same as a recording in Dispatch with the plan typed in Settings. Found and fixed on
+  the way: MOVE's channel field overlaps IDENT1, so no identity is read from a MOVE; a system announced once could be
+  lost before Dispatch accepted the carrier, so the identity is now sent with every codeword that carries it.
+  Not confirmed on air: the CCSC layout (SYS in bits 2-16, REVS + SYNC as its last 32 bits) follows SDRTrunk's framing;
+  group vs individual addresses are not told apart (the fleet plan decides), so calls are shown by IDENT.
+  Hardware: an MPT1327 system (taxi, utility or public-transport fleets in Europe / Asia / Australia; VHF or UHF): put
+  its band plan in Settings → TRUNKING PLANS, open Dispatch with a HackRF (or H4M in HackRF mode). The control channel
+  should become "MPT1327 · SYS xxxx", calls should list with IDENT and frequency, analog voice should be heard.

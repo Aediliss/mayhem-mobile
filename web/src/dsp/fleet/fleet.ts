@@ -25,6 +25,7 @@ import { OswRx, OswParser, FmVoice, provePlan, tgOf, tgStatus, oswHex, oswWordTe
 import { P2Rx, p2Messages, p2Ptt, p2EndPtt, MAC_OPS, type P2Mac, type P2Seed } from './p2.js';
 import { PLUGINS, plugOf, plugOfKey, provePlanFor, lcnHz, type LcnPlan, type PlugEvent, type PlugRx, type TrunkPlugin } from './plugins.js';   // FORK: plug-in protocols
 import './edacs-plugin.js';   // FORK: registers EDACS
+import './mpt1327-plugin.js';   // FORK: registers MPT1327
 
 export const CH_RATE = 24_000;
 /** How far from its system's area a DMR unit position may resolve, and from the receiver before the area is known (km). */
