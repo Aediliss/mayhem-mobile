@@ -1,7 +1,7 @@
 /** The credits roll: [heading, text]. Shared word-for-word with the Android app. */
 export const CREDITS: [boolean, string][] = [
   // FORK: this build and its upstream; every upstream credit below is kept as it is
-  [true, "MAYHEM MOBILE (FORK) · GPL-3.0"],
+  [true, "MAD MOBILE · GPL-3.0"],
   [false, "a web-only fork of Mayhem Mobile by RocketGod · github.com/RocketGod-git/mayhem-mobile"],
   [false, "fork source · github.com/Aediliss/mayhem-mobile"],
   [true, "MAYHEM MOBILE"],

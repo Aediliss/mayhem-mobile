@@ -1,4 +1,4 @@
-# CLAUDE.md — Mayhem Mobile (fork)
+# CLAUDE.md — Mad Mobile (a fork of Mayhem Mobile)
 
 Web-only fork of [RocketGod-git/mayhem-mobile](https://github.com/RocketGod-git/mayhem-mobile) (GPL-3.0).
 All work goes in `web/`. **Leave `app/` (Android/Kotlin) alone** unless a shared file forces it; never write Kotlin twins.
@@ -90,7 +90,7 @@ Copy how `btle`, `ais` or `pager` are wired:
 
 Fork touch points outside `// FORK:` comments: `web/manifest.webmanifest` (name, short_name),
 `web/version.json` (release URL), deleted workflows (`android-*.yml`, `play-*.yml`, `release.yml`).
-Fork identity constants: `web/src/fork.ts` (plus `index.html` `<title>`/og tags and the manifest).
+Fork identity ("Mad Mobile"): `web/src/fork.ts` (plus `index.html` `<title>`/og tags and the manifest).
 
 ## Upstream sync (before every phase)
 

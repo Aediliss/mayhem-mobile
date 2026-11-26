@@ -22,7 +22,7 @@ import { GEOSCAN_SATS } from './dsp/geoscan.js';
 import type { HeardDevice, R433Data, R433Protocol, R433Report } from './dsp/r433/index.js';
 import type { ZwLink, ZwNode } from './dsp/r433/zwave.js';
 import { CREDITS } from './credits.js';
-import { FORK_NAME, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
+import { FORK_NAME, FORK_WORDMARK, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
 import { syncRows } from './list-rows.js';
 import { r433Measure, r433Value } from './devices-fmt.js';
 import * as U from './units.js';
@@ -1955,7 +1955,7 @@ const appAbout: Partial<Record<AppId, string>> = {};
 function render(app: AppId | null): void {
   const view = $('view');
   const header = $('title');
-  header.innerHTML = app ? `‹ ${APPS.find(a => a.id === app)!.title.toUpperCase()}` : `MAYHEM<span>MOBILE</span>`;
+  header.innerHTML = app ? `‹ ${APPS.find(a => a.id === app)!.title.toUpperCase()}` : FORK_WORDMARK;   // FORK: build wordmark
   $('sub').textContent = app ? APPS.find(a => a.id === app)!.blurb
     : !radio ? 'HackRF or RTL-SDR · no device'
     : radio.kind === 'rtlsdr' ? radio.label

@@ -1,4 +1,4 @@
-# Roadmap (fork)
+# Mad Mobile roadmap
 
 Web-only decoding work on top of upstream Mayhem Mobile. Phases are in build order: infrastructure first, because it
 makes every later decoder testable without a live signal. ★ = priority.
@@ -20,7 +20,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | `npm ci && npm run build` works; `npm run serve` on http://localhost:8080 | `web/scripts/serve.mjs`, no new deps |
 | [x] | `npm test` (node:test, bundled by the existing esbuild) + seed APRS round-trip test | `web/test/` |
 | [x] | CI: Android/Play/release workflows removed; `web.yml` runs check/build/test, deploys Pages on `main` | |
-| [x] | Branding: "Mayhem Mobile (fork)" placeholder, About → fork, upstream credited | waiting for a name |
+| [x] | Branding: **Mad Mobile**: title, manifest, wordmark, About → fork, upstream credited | name chosen 2026-11-26 |
 | [x] | `upstream` remote added, first sync | level with upstream at setup |
 
 ## Phase 1 — Decoding infrastructure
@@ -28,7 +28,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [ ] | ★ | **Test harness**: `web/test/lib/iq.ts` grown into tones, FSK/GFSK, OOK/ASK, PSK, AWGN at a set SNR, `.cu8/.cs8/.cs16` writers | own code | — |
-| [ ] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
+| [ ] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
 | [ ] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
 | [ ] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [ ] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
