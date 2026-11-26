@@ -44,7 +44,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
 | [x] | | BLE: auto-rotate 37/38/39, extended adv headers, PHY per packet (coded PHY: own row below) | Bluetooth Core 5.x Vol 6 | spec only |
 | [ ] | | BLE LE Coded PHY receiver (125/500 kbit/s: FEC, pattern mapping, coded access address) | Bluetooth Core 5.x Vol 6 Part B 3.3 | spec |
-| [ ] | | BLE tracker-following alert (AirTag/Find My/Tile/SmartTag/Find Hub) over time + GPS distance | Apple/Google DULT draft (IETF), AirGuard research | spec; check any code |
+| [x] | | BLE tracker-following alert (AirTag/Find My/Tile/SmartTag/Find Hub) over time + GPS distance | IETF draft-ietf-dult-accessory-protocol-01 (Apple, Google) | spec only (IETF Trust, BCP 78); no code used |
 
 ## Phase 3 — Drones
 
@@ -504,3 +504,23 @@ for "or later" first.
   Hardware: Bluetooth app with a HackRF (2 Msps), AUTO on, near phones and BLE 5 devices (recent phones, Find My / Find
   Hub trackers, smart watches): ADV_EXT_IND lines should appear with their set and aux channel, and device cards gain an
   Extended advertising row.
+- **Phase 2 · tracker alert: owner state** (`src/ble-dult.ts`, `test/ble-dult.test.ts`): upstream already alerted on a
+  tracker heard for 20 minutes or after you moved 500 m with it, for every tracker kind, so a friend's AirTag travelling
+  with its owner raised the same alarm as one following you. The IETF DULT draft (draft-ietf-dult-accessory-protocol-01)
+  has the accessory say whether it is with its owner. Now each tracker's own word is read: DULT service data 0xFCB2
+  (Network ID, then the near-owner bit, LSB); Find My's payload length (the long, full-key payload when away from its
+  owner); Find Hub's frame 0x41 (unwanted-tracking protection on). A tracker that says it is near its owner never alerts;
+  one that says it is separated alerts with "· SEPARATED FROM ITS OWNER"; one that says nothing (Tile, SmartTag) is judged
+  by time and distance as before. DULT-only accessories are a new tracker kind, and every tracker card gains an Owner
+  row. A separated DULT accessory keeps one address for 24 hours (15 minutes near its owner), so the per-address record
+  holds for a whole encounter. Upstream touch points (FORK, `ble.ts`): the import, the `dult` kind (union, label,
+  tracker kinds, classify), `BleDevice.owner`, the state taken in `add`, `trackerAlert`'s two rules, the Owner row.
+  Tests prove: each state reading; with its owner (Find My short, DULT bit 1) no alert after 40 min and 2 km; separated
+  Find My after 25 min and separated DULT after 1 km alert with the suffix; Tile alerts at 25 min and not at 10; the DULT
+  kind, owner and card row.
+  Not done: the draft's platform detection guidance is still a TODO in it, so the time / distance thresholds stay
+  upstream's (20 min, 500 m); trackers that rotate addresses near their owner are not linked across addresses (not
+  needed: those do not alert).
+  Hardware: Bluetooth app (AUTO on) while carrying, or travelling near, an AirTag: with its owner's phone nearby its card
+  should read "with its owner … not following you" and stay quiet; one left separated from its owner for a while
+  should read "separated" and alert after 20 minutes or 500 m.
