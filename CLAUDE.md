@@ -30,6 +30,8 @@ All three of check / build / test must pass before an item is marked done. CI: `
 - Export bus (`src/export/`): listens to the worker beside the page (`exportBus.attach` in `ensureWorker`), turns
   messages into `DecodeEvent`s (`event.ts`), sends them to sinks (`sinks.ts`) in wire formats (`formats.ts`). A new
   decoder is exported for free as `line` events; for a structured kind, map its worker message in `EventAdapter`.
+- Audio in (`audioradio.ts`, kind `'audio'`): audio → IQ (`audiosrc/audio2iq.ts`) in the mode the app's demodulator
+  undoes (`modForMode`), at the app's channel (`state.ham.freq` in Ham Radio, else `state.freq`). AUDIO IN: `#rm-audioin`.
 - Capture: upstream's worker recorder writes `.c8` + `.txt`; `capture-sigmf.ts` adds `.sigmf-meta` and the `.sigmf`
   archive download from the page (`sigmf.ts` builds both).
 - `src/dsp/`: one decoder per file or folder. `src/credits.ts`: the credits roll.

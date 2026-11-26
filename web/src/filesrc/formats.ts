@@ -146,7 +146,7 @@ export function parseWavHeader(head: Uint8Array, fileBytes: number): IqMeta {
       centerHz = dv.getUint32(body + 32, true);
       if (centerHz) notes.push('centre frequency from the auxi chunk (SDR# / HDSDR)');
     } else if (id === 'data') {
-      if (channels !== 2) throw new Error(`WAV has ${channels} channel(s); IQ needs 2 (I left, Q right)`);
+      if (channels !== 2) throw new Error(`WAV has ${channels} channel(s): that is audio, not IQ (I left, Q right). Play it with AUDIO IN instead`);
       const format: SampleFormat | null = fmtCode === 3 && bits === 32 ? 'cf32' : fmtCode === 1 && bits === 16 ? 'cs16' : fmtCode === 1 && bits === 8 ? 'cu8' : null;
       if (!format) throw new Error(`WAV sample format ${fmtCode}/${bits}-bit is not IQ this player reads`);
       return { format, bigEndian: false, rate, centerHz, dataOffset: body, dataBytes: Math.min(size, fileBytes - body), notes };

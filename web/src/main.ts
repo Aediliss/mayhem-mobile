@@ -24,6 +24,7 @@ import type { ZwLink, ZwNode } from './dsp/r433/zwave.js';
 import { CREDITS } from './credits.js';
 import { FileRadio, speedLabel } from './fileradio.js';   // FORK: play recordings (Phase 1)
 import { openIqSource } from './filesrc/open.js';   // FORK
+import { AudioRadio, type AudioSource } from './audioradio.js';   // FORK: audio in (Phase 1)
 import { ExportBus, loadConfig } from './export/bus.js';   // FORK: decode export bus
 import { bindExportSettings, exportSettingsHtml } from './export/ui.js';   // FORK
 import type { WsCtor } from './export/sinks.js';   // FORK
@@ -9881,6 +9882,82 @@ async function openRecording(): Promise<void> {
     if (radio instanceof FileRadio) { log(`recording: ${radio.position >= radio.src.samples ? 'finished' : 'stopped'} ${radio.src.name}`); radio = null; state.board = ''; setStatus('no radio', false); refreshLauncherLimits(); }
   }
 }
+
+// FORK: AUDIO IN in the no-radio strip. Audio from a microphone, a line-in or an audio file, modulated onto IQ at the
+// open app's channel in the way its demodulator expects (audioradio.ts), so the app decodes it as if received.
+function chooseAudioSource(): Promise<AudioSource | null> {
+  return new Promise(resolve => {
+    const el = document.createElement('div');
+    el.className = 'modal'; el.id = 'audioin';
+    el.innerHTML = `<div class="modal-card lr-owncard"><h3>AUDIO IN</h3>
+      <p>Decode audio from another radio, a line-in or a file. The open app hears it as if it were received on its channel: SSB / CW / FT8 / RTTY / PSK / SSTV in Ham Radio, APRS in Ham Map, POCSAG / FLEX in Pagers, ACARS in Flight Msgs.</p>
+      <ul><li>Best is a discriminator ("9600 baud", flat) output. A speaker output works for FT8, RTTY, PSK, SSTV, CW, APRS 1200 and POCSAG up to 1200; it is too filtered for 9600-baud packet and FLEX 3200.</li>
+      <li>With a microphone, use headphones or MUTE: a microphone that hears the speaker feeds back.</li></ul>
+      <div class="row" id="ai-devs" style="flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <div class="modal-actions"><button class="chip" id="ai-file">AUDIO FILE…</button><button class="chip" id="ai-cancel">CANCEL</button></div></div>`;
+    document.body.appendChild(el);
+    const done = (s: AudioSource | null) => { el.remove(); resolve(s); };
+    const live = async (deviceId: string | undefined, label: string) => {
+      try {
+        await ensureAudio();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+        done({ kind: 'live', ctx: audioCtx!, stream, label: stream.getAudioTracks()[0]?.label || label });
+      } catch (e) { log(`audio in: ${(e as Error).message}`); done(null); }
+    };
+    $('ai-cancel').onclick = () => done(null);
+    $('ai-file').onclick = () => {
+      const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*,.wav,.mp3,.flac,.ogg,.m4a';
+      input.onchange = async () => {
+        const f = input.files?.[0]; if (!f) return;
+        try { await ensureAudio(); done({ kind: 'file', name: f.name, buffer: await audioCtx!.decodeAudioData(await f.arrayBuffer()) }); }
+        catch (e) { log(`audio in: ${f.name} could not be decoded as audio (${(e as Error).message})`); done(null); }
+      };
+      input.click();
+    };
+    const devs = $('ai-devs');
+    devs.innerHTML = '<button class="chip primary" data-aidev="">DEFAULT INPUT</button>';
+    void navigator.mediaDevices?.enumerateDevices?.().then(list => {
+      list.filter(d => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default').forEach((d, i) => {
+        const b = document.createElement('button'); b.className = 'chip'; b.dataset.aidev = d.deviceId; b.textContent = d.label || `INPUT ${i + 1}`; devs.appendChild(b);
+      });
+      qa<HTMLButtonElement>('[data-aidev]', devs).forEach(b => b.onclick = () => void live(b.dataset.aidev || undefined, b.textContent || 'input'));
+    }).catch(() => undefined);
+    qa<HTMLButtonElement>('[data-aidev]', devs).forEach(b => b.onclick = () => void live(b.dataset.aidev || undefined, 'default input'));
+  });
+}
+async function openAudioIn(): Promise<void> {
+  if (radio?.running || connecting) { log('Disconnect the radio (or stop the recording) before using audio in.'); return; }
+  const src = await chooseAudioSource();
+  if (!src) return;
+  connecting = true;
+  const bar = $('playbar'), text = $('pb-text'), speed = $<HTMLButtonElement>('pb-speed'), pause = $<HTMLButtonElement>('pb-pause');
+  try {
+    await ensureAudio();
+    const w = ensureWorker();
+    const r = new AudioRadio(src, w, { onLog: log, onStatus: s => { text.textContent = s; state.board = r.label; state.firmware = ''; setStatus(s, true); } }, {
+      mode: () => (state.app === 'ham' ? state.ham.mode : state.mode),
+      channelHz: () => (state.app === 'ham' ? state.ham.freq : state.freq),
+    });
+    radio = r; radioDev = null; state.board = r.label; state.biast = false;
+    r.targetRateHz = nearestRate(r.limits, state.rate);
+    if (state.rate !== r.targetRateHz) { state.rate = r.targetRateHz; worker?.postMessage({ type: 'config', rate: state.rate }); }
+    r.targetFreqHz = spanCenter();
+    refreshLauncherLimits(); refreshReadout();
+    await r.open();
+    speed.hidden = src.kind === 'live'; speed.textContent = '1×'; pause.textContent = 'PAUSE'; text.textContent = r.statusLine();
+    speed.onclick = () => { const s = r.cycleSpeed(); speed.textContent = s === Infinity ? 'MAX' : `${s}×`; text.textContent = r.statusLine(); };
+    pause.onclick = () => { r.paused = !r.paused; pause.textContent = r.paused ? 'PLAY' : 'PAUSE'; text.textContent = r.statusLine(); };
+    $('pb-stop').onclick = () => r.stop();
+    bar.hidden = false;
+    connecting = false;
+    await r.run();
+  } catch (e) { log(`audio in: ${(e as Error).message}`); setStatus(`audio in: ${(e as Error).message}`, false); }
+  finally {
+    connecting = false; bar.hidden = true; speed.hidden = false;
+    if (radio instanceof AudioRadio) { log(`audio in: ${radio.label} stopped`); radio = null; state.board = ''; setStatus('no radio', false); refreshLauncherLimits(); }
+  }
+}
+// FORK: end of AUDIO IN
 // FORK: end of OPEN REC
 
 async function connectRtl(d: USBDevice, events: { onIq: (b: Int8Array) => void; onLog: (l: string) => void }): Promise<void> {
@@ -10111,7 +10188,7 @@ function enterFullscreen(): void {
   void document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 }
 /** Taps that open a chooser (the USB picker, a file) keep their gesture: full screen waits for the next tap. */
-const FS_SKIP = '#rm-openrec, #connect, #set-connect, #rm-connect, #rp-connect, #an-imp, #log-import, input[type=file], #fs-toggle';   // FORK: #rm-openrec opens a file picker
+const FS_SKIP = '#rm-audioin, #rm-openrec, #connect, #set-connect, #rm-connect, #rp-connect, #an-imp, #log-import, input[type=file], #fs-toggle';   // FORK: #rm-openrec opens a file picker
 /** Full screen was taken once this visit, or the app already runs full screen as an installed app. */
 let fsTaken = false;
 function initFullscreen(): void {
@@ -10479,6 +10556,7 @@ function init(): void {
   if (!supported) setStatus('WebUSB not available in this browser', false);
   $('connect').onclick = () => connect();
   $('rm-openrec').onclick = () => void openRecording();   // FORK: play a recording
+  $('rm-audioin').onclick = () => void openAudioIn();     // FORK: audio in
   $('mute').onclick = toggleMute;
   $('home').onclick = () => { closeSettings(); if (state.app) open(null); };
   $('brand').onclick = () => { closeSettings(); if (state.app) open(null); };

@@ -11,7 +11,7 @@ import type { RadioKind } from './radio.js';
 export const TX_APPS: readonly string[] = ['transmit', 'troll'];
 
 /** Whether the transmit apps are hidden for this radio (null or undefined: nothing connected). */
-export const txAppsHidden = (kind: RadioKind | null | undefined): boolean => kind === 'rtlsdr' || kind === 'file';   // FORK: a recording cannot send
+export const txAppsHidden = (kind: RadioKind | null | undefined): boolean => kind === 'rtlsdr' || kind === 'file' || kind === 'audio';   // FORK: a recording / audio in cannot send
 
 /** Whether app `id` is hidden for this radio. */
 export const appHidden = (id: string | null | undefined, kind: RadioKind | null | undefined): boolean =>

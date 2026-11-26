@@ -7,7 +7,7 @@
  * asks, rather than trying something and reading the wreckage afterwards.
  */
 
-export type RadioKind = 'hackrf' | 'rtlsdr' | 'file';   // FORK: 'file' = a recording played by fileradio.ts
+export type RadioKind = 'hackrf' | 'rtlsdr' | 'file' | 'audio';   // FORK: 'file' = a recording (fileradio.ts), 'audio' = audio in (audioradio.ts)
 
 /** The envelope a radio will work inside. Everything here is hardware, not preference. */
 export interface RadioLimits {

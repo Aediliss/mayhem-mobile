@@ -31,7 +31,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
 | [x] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
 | [x] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
-| [ ] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
+| [x] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
 | [ ] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
 | [ ] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
 
@@ -195,3 +195,22 @@ for "or later" first.
   negotiated, CONNECT/CONNACK, keep-alive, and the APRS recording's events published under `madmobile/events/…`.
   Hardware/infra to test: Mosquitto with `listener 9001` + `protocol websockets`, Home Assistant's MQTT integration
   on the same broker, the Devices app on 433.92 MHz near a weather sensor: the sensor should appear in HA by itself.
+- **Phase 1 · audio in** (`web/src/audiosrc/audio2iq.ts`, `web/src/audioradio.ts`, `test/audio2iq.test.ts`): AUDIO IN
+  beside OPEN REC: a microphone / line-in / virtual cable (echo cancellation, noise suppression and AGC off) or an
+  audio file (WAV, MP3, FLAC, OGG … decoded by the browser). The audio becomes a radio of kind `audio`: it is
+  modulated onto IQ at the open app's channel the way that app's demodulator expects (USB/CW → upper sideband via a
+  Hilbert filter, LSB, AM, NFM ±3 kHz, WFM ±75 kHz), re-aimed before every block, so every audio-domain decoder
+  works with no decoder changes. Files play at 1×, 4× or MAX with the same worker acks as recordings; a mono WAV
+  given to OPEN REC now says to use AUDIO IN. Tests prove: one second of audio is one second of IQ and 128-sample
+  blocks join exactly; an APRS packet as audio decodes in the real decoder on-channel and at Ham Map's -250 kHz LO
+  offset, and 25 dB quieter; USB/LSB put a tone on the right side with the mirror >30 dB down (measured ~78 dB);
+  AM carries the tone on its envelope; RTTY audio → USB IQ → product detector → the real RTTY decoder reads the text.
+  Browser checks (Chromium, real worker): APRS audio WAV via AUDIO FILE → all three packets in Ham Map; the same
+  audio as a live microphone (Chromium's fake capture device) → all three; RTTY audio WAV in Ham Radio → DIGITAL →
+  RTTY → the exact text, through the worker's own USB demodulator.
+  Note: RttyDecoder's header comment says 2125/2295 Hz, but it listens for space at mark − shift (1955 Hz), i.e. mark
+  is the higher tone, as on air in USB. Left as upstream wrote it.
+  Hardware: (1) a handheld's speaker or a scanner's discriminator output into a line-in (or a USB sound card),
+  Ham Map, AUDIO IN → that input, tuned to 144.39 MHz APRS on the handheld: packets should appear. (2) An HF rig's
+  USB audio into the line-in, Ham Radio → DIGITAL → FT8 or RTTY with the rig on 14.074 / 14.080 MHz. Use headphones
+  or MUTE with a microphone. Audio → IQ runs on the page at up to 2.4 Msps; on a slow phone pick a lower span.
