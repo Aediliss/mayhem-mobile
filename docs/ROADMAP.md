@@ -86,7 +86,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | DMR short LC (CACH): Connect Plus network/site, Hytera XPT free repeater | ETSI TS 102 361-1 (BPTC(68,36), CRC-8); SDRTrunk `lc/shorty`, `bptc/BPTC_68_36` | SDRTrunk GPL-3.0-or-later ✔ |
 | [x] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
 | [x] | | Two-tone sequential receive named: Motorola Quick Call II (reeds, cap code, call kind, group call), GE Type 99 | Midian Electronics tone signaling charts (tables, timings); PGHscanner/qsl.net k3fs QC-II table (cross-check) | facts (frequencies, timings) only; no code copied |
-| [ ] | | GE Star (digital ANI) | none found: no published description | — (skipped until a spec turns up) |
+| [ ] | | GE Star (digital ANI) — **blocked** | the only frame description found is Matthew Kaufman's STAR Encoder/Decoder Library (github.com/atmatthewat/star-encode-decode) | **GPL-2.0-only ✘** ("version 2 of the GNU General Public License", no "or later"; README offers commercial terms on request) · no published spec |
 | [x] | | Alias import (RadioReference CSV / OP25 tags / SDRTrunk XML) → names in Dispatch | file formats only (RadioReference CSV export, OP25 tag TSV, SDRTrunk playlist XML) | no code used; formats implemented from their layout |
 
 ## Phase 7 — Ham radio digital (extends Ham Radio → DIGITAL)
@@ -405,3 +405,10 @@ for "or later" first.
   whose carrier sent no CSBK has no system yet, so its grants are only logged.
   Hardware: as for Hytera XPT above; after a few calls the system's logical channels should list repeater numbers with
   their frequencies.
+- **Phase 6 · GE Star: blocked on license** (searched 2026-11-26). What is public: vendor sheets (Midian CAD-400 /
+  CAD-MF, Cimarron CIM-1000 / CIM-2200, C Plus I) give the physical layer only: PSK at 400 bit/s on a 1600 Hz (±1.5 %)
+  carrier, unit IDs of 11 to 14 bits (to 16383), about 320 ms per ANI. No sync word, field layout or check is published.
+  The only source with the frame is Matthew Kaufman's STAR library, licensed GPL-2.0-only, which rule 4 excludes (and
+  writing a decoder from it would be a port, not an implementation from a spec). Not implemented. Ways forward: the
+  author offers other license terms (matthew@eeph.com); or a published spec / a redistributable recording with known IDs
+  to work the layout out from.
