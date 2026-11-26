@@ -9496,7 +9496,7 @@ function renderAcCard(a: Aircraft | undefined): void {
         ${side ? `<div class="accard-side">${side}</div>` : ''}
       </div>
       <div class="accard-grid">
-        ${['ALTITUDE', 'GROUND SPEED', 'TRACK', 'CLIMB', 'POSITION', 'FROM YOU', 'HEARD', 'FIRST HEARD'].map(k => `<div><span class="k">${k}</span><span class="v" data-f="${k}">—</span></div>`).join('')}
+        ${['ALTITUDE', 'GROUND SPEED', 'TRACK', 'CLIMB', 'POSITION', 'FROM YOU', 'HEARD', 'FIRST HEARD', 'SQUAWK', 'SELECTED ALT', 'AIR DATA' /* FORK: + Mode-S rows */].map(k => `<div><span class="k">${k}</span><span class="v" data-f="${k}">—</span></div>`).join('')}
       </div>`;
     qa<HTMLButtonElement>('[data-acclose]', card).forEach(b => b.onclick = () => { state.adsbSel = ''; refreshAdsb(); });
     qa<HTMLButtonElement>('[data-acfly]', card).forEach(b => b.onclick = () => {
@@ -9510,7 +9510,13 @@ function renderAcCard(a: Aircraft | undefined): void {
   set('GROUND SPEED', a.gs !== undefined ? `${a.gs} kt` : '—');
   set('TRACK', a.track !== undefined ? `${a.track}°` : '—');
   set('CLIMB', a.vr !== undefined ? `${a.vr > 0 ? '+' : ''}${a.vr} ft/min` : '—');
-  set('POSITION', a.lat !== undefined && a.lon !== undefined ? `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}` : 'no position yet');
+  set('POSITION', a.lat !== undefined && a.lon !== undefined ? `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}` : a.modeSOnly ? 'Mode-S only: no ADS-B, no position' : 'no position yet');   // FORK: + Mode-S only
+  // FORK: the other downlink formats (dsp/modes.ts): squawk (the emergency codes named), Comm-B selected altitude, air data
+  { const sq = a.squawk, em: Record<string, string> = { '7500': 'HIJACK', '7600': 'RADIO FAILURE', '7700': 'EMERGENCY' };
+    set('SQUAWK', sq ? `${sq}${em[sq] ? ` · ${em[sq]}` : ''}${a.alert ? ' · changed' : ''}${a.spi ? ' · IDENT' : ''}${a.ground ? ' · on the ground' : ''}` : a.ground ? 'on the ground' : '—');
+    set('SELECTED ALT', a.selAlt !== undefined ? `${a.selAlt.toLocaleString()} ft${a.qnh !== undefined ? ` · QNH ${a.qnh} hPa` : ''}` : a.qnh !== undefined ? `QNH ${a.qnh} hPa` : '—');
+    const air = [a.hdg !== undefined ? `HDG ${Math.round(a.hdg)}°` : '', a.ias !== undefined ? `IAS ${a.ias} kt` : '', a.tas !== undefined ? `TAS ${a.tas} kt` : '', a.mach !== undefined ? `M${a.mach.toFixed(2)}` : '', a.roll !== undefined ? `roll ${a.roll}°` : ''].filter(Boolean);
+    set('AIR DATA', air.length ? air.join(' · ') : '—'); }
   if (state.home && a.lat !== undefined && a.lon !== undefined) { const d = distanceBearing(state.home.lat, state.home.lon, a.lat, a.lon); set('FROM YOU', `${d.km.toFixed(d.km < 10 ? 1 : 0)} km · ${(d.km * 0.539957).toFixed(0)} nmi · ${Math.round(d.deg)}°`); }
   else set('FROM YOU', state.home ? '—' : 'allow location to see');
   set('HEARD', ageText(now - a.seenMs));

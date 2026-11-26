@@ -40,7 +40,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | Satellites: NOAA 15/18/19 decommissioned (grey out, keep) | NOAA OSPO notices | facts |
-| [ ] | ★ | Full Mode-S in `dsp/adsb.ts`: DF0/4/5/11/16/20/21, Comm-B BDS 1,0/2,0/4,0/5,0/6,0, AP recovery vs known ICAOs, 1–2 bit CRC fix (DF11/17/18), "Mode-S only" aircraft | ICAO Annex 10 Vol IV, Doc 9871; pyModeS; readsb; dump1090-fa | pyModeS GPL-3.0 ✔ · readsb GPL-3.0 ✔ · dump1090-fa GPL-2.0-or-later ✔ · antirez dump1090 BSD-3 ✔ |
+| [x] | ★ | Full Mode-S in `dsp/adsb.ts`: DF0/4/5/11/16/20/21, Comm-B BDS 1,0/2,0/4,0/5,0/6,0, AP recovery vs known ICAOs, 1–2 bit CRC fix (DF11/17/18), "Mode-S only" aircraft | ICAO Annex 10 Vol IV, Doc 9871; pyModeS; readsb; dump1090-fa | pyModeS GPL-3.0 ✔ · readsb GPL-3.0 ✔ · dump1090-fa GPL-2.0-or-later ✔ · antirez dump1090 BSD-3 ✔ |
 | [ ] | | Mode A/C replies (≥2 Msps), unassociated tracks | dump1090-fa `mode_ac.c` | GPL-2.0-or-later ✔ |
 | [ ] | | BLE: auto-rotate 37/38/39, extended adv headers, coded PHY if feasible, PHY per packet | Bluetooth Core 5.x Vol 6; ubertooth/libbtbb | ubertooth/libbtbb GPL-2.0-or-later ✔ (headers) |
 | [ ] | | BLE tracker-following alert (AirTag/Find My/Tile/SmartTag/Find Hub) over time + GPS distance | Apple/Google DULT draft (IETF), AirGuard research | spec; check any code |
@@ -436,3 +436,30 @@ for "or later" first.
   the three dates), `main.ts` (import, tile, the info panel's early return). Tests prove the dates and that Meteor and
   the amateur satellites are not marked. Browser check (Chromium): the NOAA 19 tile is dimmed with RETIRED, the panel
   shows the message and no passes, Meteor M2-3 is unchanged, no page errors.
+- **Phase 2 · full Mode-S** (`src/dsp/modes.ts`, `test/modes.test.ts`): upstream read DF17/18 with an exact CRC only.
+  Now every downlink format, short (56-bit) frames included: DF17/18 with one-bit repair, two-bit repair for an aircraft
+  already heard; DF11 all-call with the interrogator code (II / SI) in its parity, one-bit repair when that code is 0
+  and the address is known; DF0/4/5/16/20/21 by address / parity (the syndrome is the address), taken only for an
+  aircraft heard in the last minute. Fields: altitude (25 ft, and the Gillham 100 ft code), squawk, flight status
+  (alert, SPI, on the ground), and the DF20/21 Comm-B register inferred among BDS 1,0 / 2,0 / 4,0 / 5,0 / 6,0 from fixed
+  bits, status bits and ranges, named only when exactly one fits (pyModeS's approach). An aircraft never heard on ADS-B
+  is marked Mode-S only; with no ADS-B, BDS 5,0's track and ground speed stand in. The CRC (generator 0x1FFF409), the
+  syndrome tables and the Gillham code are built here. Flights' aircraft card gains SQUAWK (7500 / 7600 / 7700 named,
+  changed, IDENT, on the ground), SELECTED ALT (with QNH) and AIR DATA (heading, IAS, TAS, Mach, roll), and says
+  "Mode-S only" where a position would be. Raw frames of every format go to the export bus (Beast takes 7 and 14 bytes).
+  Upstream touch points (FORK, `adsb.ts`): the import, the `Aircraft` fields, the frame loop (short frames, the checks),
+  the log line's per-DF counts, `es` on ADS-B, the merge of the new fields, `modeSApply` in a FORK block,
+  `CRC_TABLE` exported (its `checksum()` replaced by modes.ts); `main.ts`: the card's three rows and its position text.
+  Tests prove: the derived syndromes equal upstream's per-bit table; a public DF17 frame (KLM1023, 4840D6) is clean;
+  every one-bit error (bits 5-111) repaired back to the frame; a two-bit error repaired only for a known address; DF11
+  with interrogator codes 0-127 and rejected otherwise; address / parity gated on a known address; 25 ft altitude; every
+  Gillham 100 ft step from -1000 to 62 700 ft decoded by exactly one code; squawks; each Comm-B register and an empty one;
+  end to end through upstream's decoder on 2 Msps pulse-position IQ (callsign, DF4 altitude, DF5 7700, DF20 BDS 4,0,
+  a Mode-S only aircraft from DF11 + DF5); noise makes no aircraft. Browser check (Chromium): a recording in Flights
+  shows both aircraft and the card rows (7700 · EMERGENCY, 36 000 ft · QNH 1013.2, HDG 90° · IAS 250 kt · M0.60,
+  "Mode-S only" for the other), no page errors.
+  Not done: Comm-B registers beyond the five (BDS 1,7 capability, 3,0 ACAS, 4,4/4,5 meteo); BDS 5,0 vs 6,0 ambiguity is
+  left unnamed rather than settled against ADS-B as pyModeS can.
+  Hardware: Flights at 1090 MHz with an RTL-SDR or HackRF (2 Msps), near an airport with Mode-S radar coverage: the log's
+  "by DF" counts should show 4, 5, 11, 20 and 21 as well as 17; aircraft cards should gain squawks, and under en-route
+  radar (EHS airspace, e.g. most of Europe) selected altitude and air data.
