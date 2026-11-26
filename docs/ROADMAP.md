@@ -87,7 +87,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [ ] | | Hytera XPT channel grant (full LC opcode 9 under FID 0x68): which repeater a call moves to | SDRTrunk `lc/full/hytera/HyteraXptChannelGrant` | SDRTrunk GPL-3.0-or-later ✔ |
 | [x] | | Two-tone sequential receive named: Motorola Quick Call II (reeds, cap code, call kind, group call), GE Type 99 | Midian Electronics tone signaling charts (tables, timings); PGHscanner/qsl.net k3fs QC-II table (cross-check) | facts (frequencies, timings) only; no code copied |
 | [ ] | | GE Star (digital ANI) | none found: no published description | — (skipped until a spec turns up) |
-| [ ] | | Alias import (RadioReference / OP25 / SDRTrunk CSV/TSV) | OP25 | OP25 (boatbod) GPL-3.0-or-later ✔ (headers) |
+| [x] | | Alias import (RadioReference CSV / OP25 tags / SDRTrunk XML) → names in Dispatch | file formats only (RadioReference CSV export, OP25 tag TSV, SDRTrunk playlist XML) | no code used; formats implemented from their layout |
 
 ## Phase 7 — Ham radio digital (extends Ham Radio → DIGITAL)
 
@@ -374,3 +374,19 @@ for "or later" first.
   Hardware: a fire / EMS dispatch channel that pages by two-tone (often VHF high band 150-160 MHz) with an RTL-SDR or
   HackRF in Ham Radio, tuned to it in FM. A page should list as "2-tone page A and B Hz, Motorola QC-II individual call
   cap code nnn (reeds xxx/yyy)"; compare with the department's tone-out list (RadioReference often has it).
+- **Phase 6 · alias import** (`src/aliases.ts`, `src/aliases-ui.ts`, `test/aliases.test.ts`): Settings → ALIASES imports
+  talkgroup and unit names: RadioReference talkgroup CSV (read by its header: Decimal, Alpha Tag or Description, Mode E
+  noted as encrypted, Tag, Category; quoted commas; LTR A-HH-GGG ids), OP25 tag files (id, tab, name; the import says
+  whether the file is talkgroups or radio IDs), SDRTrunk playlist XML (alias name, talkgroup / radio ids and ranges,
+  protocol mapped, LTR ids converted to Dispatch's A·100000 + HH·1000 + GGG). Each list applies to every system or to
+  one protocol (a scoped list wins); several lists, each removable; kept in localStorage. Dispatch shows the name on
+  the on-air card and call rows ("TG 4321 · FD Main"), the talkgroup tile (name, then TG number), grant rows, the
+  talkgroup and unit detail cards, and in voice recordings' labels. Upstream touch points (FORK, `main.ts`): imports,
+  the Settings section and its jump entry, `dispatchWho` and a `flAlias` helper, the tile, grant row, the two detail
+  heads and the voice label.
+  Tests prove: each format parses (made-up names in each layout), bad lines are counted and skipped, ids in decimal,
+  hex and A-HH-GGG, scoping (a P25 list over an ALL list; other protocols fall back; unit vs talkgroup kept apart).
+  Browser check (Chromium): a RadioReference CSV scoped to DMR and an OP25 radio-ID file imported in Settings; the
+  Connect Plus recording in Dispatch shows "TG 4321 · FD Main" on the call card and "FD Main" on its tile.
+  Hardware: none needed; with any system Dispatch hears, import its RadioReference talkgroup CSV (Database → the
+  system → talkgroups → download), scoped to its protocol, and the talkgroups should read by name.

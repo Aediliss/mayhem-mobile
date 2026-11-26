@@ -29,6 +29,7 @@ import { VoiceRecorder } from './voice/recorder.js';   // FORK: voice recording 
 import { bindVoiceSettings, voiceSettingsHtml } from './voice/ui.js';   // FORK
 import type { CallMeta } from './voice/segmenter.js';   // FORK
 import { bindTrunkSettings, loadPlans, trunkSettingsHtml } from './trunk-ui.js';   // FORK: EDACS / MPT1327 / LTR plans
+import { aliasBook, aliasSettingsHtml, bindAliasSettings } from './aliases-ui.js';   // FORK: Settings → ALIASES
 import { ExportBus, loadConfig } from './export/bus.js';   // FORK: decode export bus
 import { bindExportSettings, exportSettingsHtml } from './export/ui.js';   // FORK
 import type { WsCtor } from './export/sinks.js';   // FORK
@@ -234,7 +235,7 @@ function voiceMeta(): CallMeta | null {
   if (!app || !VOICE_APPS.has(app)) return null;
   if (app === 'fleet') {
     const s = fleetUi.snap, c = s ? nowPlaying(s.calls, s.playing) : null;
-    if (c) return { key: `fleet:${c.key}`, label: `${callWho(c)}${c.src ? ` · unit ${c.src}` : ''}`, app, tg: c.tg, group: c.group, unit: c.src || undefined, system: c.sys, site: c.site || undefined, proto: c.proto, freqHz: c.hz, emergency: c.emergency || undefined };
+    if (c) return { key: `fleet:${c.key}`, label: `${dispatchWho(c)}${c.src ? ` · unit ${c.src}` : ''}`, app, tg: c.tg, group: c.group, unit: c.src || undefined, system: c.sys, site: c.site || undefined, proto: c.proto, freqHz: c.hz, emergency: c.emergency || undefined };   // FORK: + alias
     return { key: 'fleet:none', label: 'Dispatch', app };
   }
   if (app === 'hamplus') {
@@ -5299,7 +5300,7 @@ function fleetTgTilesHtml(s: FleetSnap, now: number): string {
     const sys = s.systems.find(x => x.key === t.sys), col = flMapColor(fleetColor(t.sys));
     const when = t.live ? 'ON THE AIR' : t.lastMs ? (agoShort(now - t.lastMs) === 'now' ? 'now' : `${agoShort(now - t.lastMs)} ago`) : 'not heard yet';
     return `<div class="fl-tile ${t.followed ? 'fol' : ''} ${t.live ? 'live' : ''} ${t.emergency ? 'emerg' : ''} ${t.muted ? 'muted' : ''}" role="button" style="--sys:${col}" data-flfollow="${esc(t.key)}">`
-      + `<b>TG ${t.tg}</b><small>${sys ? `<span class="fl-proto">${protoLabel(sys.proto)}</span>` : ''}${esc(sys ? fleetSysTitle(sys) : t.sys)}</small>`
+      + `<b>${esc(flAlias(t.sys, true, t.tg) || `TG ${t.tg}`)}</b><small>${sys ? `<span class="fl-proto">${protoLabel(sys.proto)}</span>` : ''}${flAlias(t.sys, true, t.tg) ? `TG ${t.tg} · ` : ''}${esc(sys ? fleetSysTitle(sys) : t.sys)}</small>`   // FORK: + alias
       + `<span><i></i>${esc(when)}</span>${t.sec ? `<em class="${t.sec === 'CLEAR' ? 'ok' : 'enc'}">${esc(t.sec)}</em>` : ''}`
       + `${t.followed ? '<u>FOLLOWING</u>' : t.muted ? '<u>MUTED</u>' : ''}<button class="fl-ti" data-flsel="tg:${esc(t.key)}" title="details" aria-label="details">i</button></div>`;
   }).join('')}</div>${tiles.length ? '' : '<div class="fl-dim">talkgroups show here as the control channels grant them and their calls are heard</div>'}`;
@@ -5624,7 +5625,8 @@ function fleetSystemCard(sys: FleetSystem, now: number): string {
 }
 function fleetGrantRow(g: FleetGrant, now: number): string {
   const col = fleetColor(g.sys), flash = Math.max(0, 1 - (now - g.ms) / 1200);
-  const who = g.group ? `<span class="fl-tg" data-flsel="tg:${esc(g.sys)}/${g.tg}">TG ${g.tg}</span>` : `<span class="fl-tg">UNIT ${g.tg}</span>`;
+  const al = flAlias(g.sys, g.group, g.tg), aka = al ? ` ${esc(al)}` : '';   // FORK: + alias
+  const who = g.group ? `<span class="fl-tg" data-flsel="tg:${esc(g.sys)}/${g.tg}">TG ${g.tg}${aka}</span>` : `<span class="fl-tg">UNIT ${g.tg}${aka}</span>`;   // FORK: + alias
   const nx = g.sys.startsWith('NXDN') || g.sys.startsWith('SMARTNET');
   const ch = g.hz > 0 ? `${fleetMhz(g.hz)}${g.tdma ? ` · TDMA S${g.slot + 1}` : nx ? ` · ${esc(g.ch)}` : g.lpcn !== undefined && g.lpcn >= 0 ? ` · TS${g.slot + 1} · LPCN ${g.lpcn}` : g.sys.startsWith('TETRA') ? ` · TS${g.slot + 1}` : ''}` : `${esc(g.ch)}${nx ? '' : g.lpcn !== undefined && g.lpcn >= 0 ? ` · TS${g.slot + 1}` : g.tdma && g.slot >= 0 ? ` · TS${g.slot + 1}` : ''}`;
   return `<div class="fl-grant ${g.emergency ? 'emerg' : ''}" style="--sys:${col};--flash:${flash.toFixed(2)}"><i></i><span class="fl-gt">${fleetClock(g.ms)}</span>${who}<span class="fl-src">${g.src ? `← ${g.src}` : ''}</span><span class="fl-gch">${ch}</span><span class="fl-gf">${g.emergency ? flPill('EMERG', 'red') : ''}${g.encrypted ? flPill('ENC', 'acc') : ''}${g.kind === 'datagrant' ? flPill('DATA') : g.kind === 'u2u' ? flPill('PRIVATE') : ''}</span></div>`;
@@ -5665,7 +5667,9 @@ function dispatchAudioNote(c: FleetCall, codecs: string[]): string {
   if (!codecs.includes(c.codec)) return c.codec === 'imbe' ? 'no audio yet, the P25 full-rate vocoder is not built' : c.codec === 'tetra' ? 'no audio yet, the TETRA codec is not built' : `no audio yet, the half-rate vocoder for ${c.proto === 'DMR' ? 'DMR' : 'Phase 2'} is not built`;
   return c.voiceMs ? '' : 'voice channel not heard';
 }
-const dispatchWho = callWho;
+/** FORK: an imported talkgroup / unit name (Settings → ALIASES), or ''. */
+const flAlias = (sys: string, group: boolean, id: number) => aliasBook.name(sys, group ? 'tg' : 'unit', id);
+const dispatchWho = (c: FleetCall) => { const n = c.tg ? flAlias(c.sys, c.group, c.tg) : ''; return n ? `${callWho(c)} · ${n}` : callWho(c); };   // FORK: + alias
 /** Security as the call itself states it: the grant's service options, the link control, the encryption sync, the privacy bit. */
 const dispatchSec = (c: FleetCall) => { const t = secText(c); return c.protectedHint && !c.encrypted ? flPill('PROTECTED?', '') : t ? flPill(t, c.encrypted ? 'acc' : 'ok') : ''; };
 /** Where a P25 key and message indicator or a DMR privacy header were read, for the card's security line. */
@@ -5850,7 +5854,7 @@ function fleetDetail(s: FleetSnap, now: number): string {
     ]) + (dbs.length >= 3 && Math.max(...dbs) - Math.min(...dbs) >= 1 ? `<div class="flc-spk"><small>SIGNAL · ${Math.round(Math.min(...dbs))} to ${Math.round(Math.max(...dbs))} dB</small>${sparkSvg(dbs.slice(-40).map(x => Math.max(1, x)))}</div>` : '');
     const times = [...reports.map(r => r.ms), ...calls.map(c => c.startMs)];
     const hist = reports.length ? [...reports].reverse().slice(0, 40).map(r => `<div class="fl-rep ${r.verified ? '' : 'unv'}"><b>${fleetClock(r.ms)}</b><span>${esc(r.kind)} · ${fleetMhz(r.hz)}${r.lat !== null && r.lon !== null ? ` · ${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}` : ''}</span><small>${esc(r.text)}</small><code>${esc(r.hex)}</code></div>`).join('') : '';
-    return `<div class="flc">${head(`${u.id}`, 'UNIT', `${u.alias ? `${u.alias} · ` : ''}${sys ? fleetSysTitle(sys) : u.sys}`, col, chips, mapBtn)}<div class="flc-grid">`
+    return `<div class="flc">${head(`${u.id}`, 'UNIT', `${u.alias ? `${u.alias} · ` : ''}${flAlias(u.sys, false, u.id) ? `${flAlias(u.sys, false, u.id)} · ` : ''}${sys ? fleetSysTitle(sys) : u.sys}`, col, chips, mapBtn)}<div class="flc-grid">`   // FORK: + alias
       + sec('WHERE', where, true) + sec('CALLS', callList(calls)) + sec('TALKGROUPS', tgs) + sec('RADIO', radio) + sec('ACTIVITY', spark(times))
       + sec(`EVERY REPORT · ${reports.length}`, hist ? `<div class="fl-hist flc-reps">${hist}</div>` : '', true) + `</div></div>`;
   }
@@ -5867,7 +5871,7 @@ function fleetDetail(s: FleetSnap, now: number): string {
     const map = placed.length ? fleetCardUnits(`tg:${t.key}`, placed, col, me) : '';
     const stats = `<div class="flc-stats">${big(`${t.grants}`, 'GRANTS')}${big(`${t.recent.length}`, 'IN 10 MIN')}${big(`${calls.length}`, 'CALLS KEPT')}${big(`${units.length}`, 'UNITS')}</div>`;
     const times = [...t.history.map(g => g.ms), ...t.recent, ...calls.map(c => c.startMs)];
-    return `<div class="flc">${head(`TG ${t.tg}`, 'TALKGROUP', sys ? fleetSysTitle(sys) : t.sys, col, chips)}<div class="pc-m fl-prefs">${dispatchPrefButtons(t.key)}</div><div class="flc-grid">`
+    return `<div class="flc">${head(`TG ${t.tg}`, 'TALKGROUP', `${flAlias(t.sys, true, t.tg) ? `${flAlias(t.sys, true, t.tg)} · ` : ''}${sys ? fleetSysTitle(sys) : t.sys}`, col, chips)}<div class="pc-m fl-prefs">${dispatchPrefButtons(t.key)}</div><div class="flc-grid">`   // FORK: + alias
       + sec('NOW', stats + kv([['TALKGROUP', `${t.tg} · 0x${t.tg.toString(16).toUpperCase()}`], ['SYSTEM', sys ? `${fleetSysTitle(sys)} · ${fleetSysType(sys, s)}` : ''], ['FIRST HEARD', fleetClock(t.firstMs)], ['LAST HEARD', `${fleetClock(t.lastMs)} · ${agoShort(now - t.lastMs)} ago`]]), true)
       + sec('RECENT CALLS', callList(calls, 14)) + sec(`UNITS · ${units.length}`, map + unitTags) + sec('ACTIVITY', spark(times))
       + sec('GRANTS', t.history.length ? `<div class="fl-hist">${t.history.map(g => fleetGrantRow(g, now)).join('')}</div>` : '', true) + `</div></div>`;
@@ -8799,7 +8803,7 @@ function renderSettings(view: HTMLElement): void {
   const over = settingsOver;
   const radioLine = radio ? (radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';   // FORK: a recording names itself
   const appRows = thisAppRows(over);
-  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['voice', 'VOICE'], ['trunk', 'TRUNKING'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT, VOICE, TRUNKING;
+  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['voice', 'VOICE'], ['trunk', 'TRUNKING'], ['alias', 'ALIASES'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT, VOICE, TRUNKING, ALIASES;
   view.innerHTML = `
     <section class="controls settings-page">
     <input id="set-search" class="txin set-search" placeholder="Search settings" autocomplete="off" spellcheck="false">
@@ -8832,7 +8836,7 @@ function renderSettings(view: HTMLElement): void {
       <div class="kv"><span>macOS</span><span>nothing to install — just close any other SDR program that has the HackRF open</span></div>
       <div class="kv"><span>Linux</span><span>the udev rule from the hackrf package (53-hackrf.rules) grants access; replug after adding it</span></div>
       <div class="kv"><span>Keyboard</span><span>digits: wheel, click top/bottom, type · ← → tune · ↑ ↓ step size · M mode · X mute · S squelch · B bookmark · Space scan · A amp · G AGC · [ ] LNA · − = VGA · L log · Esc closes Settings, then goes home · mouse wheel over the waterfall tunes, Ctrl+wheel changes the step</span></div></div></section>
-    ${exportSettingsHtml(exportBus, { mqtt: true })}${voiceSettingsHtml(voiceRec)}${trunkSettingsHtml()}${'' /* FORK: Settings → EXPORT, VOICE RECORDING, TRUNKING PLANS */}
+    ${exportSettingsHtml(exportBus, { mqtt: true })}${voiceSettingsHtml(voiceRec)}${trunkSettingsHtml()}${aliasSettingsHtml()}${'' /* FORK: Settings → EXPORT, VOICE RECORDING, TRUNKING PLANS, ALIASES */}
     <section class="sset" id="sec-log"><div class="sset-h">LOG</div>${srow('Log', 'Everything the radio and the decoders reported, to read, save or share', '<button id="set-log" class="tog">OPEN</button>')}</section>
     <section class="sset" id="sec-about"><div class="sset-h">ABOUT</div>
     <div class="panel about">
@@ -8855,6 +8859,7 @@ function renderSettings(view: HTMLElement): void {
     <div class="panel credits" id="credits"><div class="credits-roll" id="credits-roll">${(() => { const inner = CREDITS.map(([h, t]) => h ? `<h4>${esc(t)}</h4>` : `<p>${esc(t)}</p>`).join(''); return `<div class="credits-copy">${inner}</div><div class="credits-copy" aria-hidden="true">${inner}</div>`; })()}</div></div>
     </section></section>`;
   bindTrunkSettings(view, plans => worker?.postMessage({ type: 'fleet', cmd: 'plans', plans }));   // FORK: TRUNKING PLANS
+  bindAliasSettings(view, () => undefined);   // FORK: ALIASES (Dispatch picks the names up on its next draw)
   { const vsec = q('#sec-voice', view), vrefresh = bindVoiceSettings(view, voiceRec); voiceRec.onSaved = () => { if (vsec?.isConnected) void vrefresh(); }; }   // FORK: VOICE RECORDING controls
   { const sec = q('#sec-export', view), refresh = bindExportSettings(view, exportBus, log); const t = setInterval(() => { if (!sec?.isConnected) clearInterval(t); else refresh(); }, 1000); }   // FORK: EXPORT controls (timer dies with its section)
   qa<HTMLInputElement>('[data-st]', view).forEach(i => i.oninput = () => { const k = i.dataset.st as keyof Station; const v = k === 'call' || k === 'grid' ? i.value.toUpperCase() : i.value; if (k === 'call' || k === 'grid') i.value = v; state.ham.station[k] = v; saveStation(); });
