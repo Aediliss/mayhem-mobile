@@ -23,6 +23,7 @@ import { AcarsDecoder } from './dsp/acars.js';
 import { Vdl2Decoder } from './dsp/vdl2.js';
 import { TrainsProcessor } from './dsp/trains.js';
 import { FleetProcessor, type TgPrefs, type KnownState } from './dsp/fleet/fleet.js';
+import { setPlans, type LcnPlan } from './dsp/fleet/plugins.js';   // FORK: plug-in protocols' channel plans
 import { AudioFader, MAKEUP } from './dsp/fleet/codec.js';
 import { CellProcessor } from './dsp/cell/cell.js';
 import { AtscProcessor } from './dsp/atsc/atsc.js';
@@ -380,11 +381,13 @@ drainPort.port1.onmessage = () => {
   drainArmed = false;
   // a few buffers per task, so retunes and commands get in between
   const t0 = performance.now();
-  while (queue.length && performance.now() - t0 < 8) process(queue.shift()!);
+  while (queue.length && performance.now() - t0 < 8) { const b = queue.shift()!; process(b); if (ackAfter.delete(b)) post({ type: 'iqAck' }); }   // FORK: ack after processing
   armDrain();
 };
 function armDrain(): void { if (!drainArmed && queue.length) { drainArmed = true; drainPort.port2.postMessage(0); } }
-function dropQueued(): void { queue.length = 0; }
+function dropQueued(): void { for (const b of queue) if (ackAfter.delete(b)) post({ type: 'iqAck' }); queue.length = 0; }   // FORK: release acks
+/** FORK: queued recording buffers (fileradio.ts) to acknowledge once processed. */
+const ackAfter = new WeakSet<Int8Array>();
 
 self.onmessage = (e: MessageEvent) => {
   const m = e.data;
@@ -395,9 +398,10 @@ self.onmessage = (e: MessageEvent) => {
       const b = new Int8Array(m.buf as ArrayBuffer);
       // only LoRa queues (its channels catch up in bursts); every other app processes each buffer as it arrives,
       // exactly as before the queue existed
-      if (processor !== lora && queue.length === 0) { process(b); break; }
+      if (processor !== lora && queue.length === 0) { process(b); if (m.ack) post({ type: 'iqAck' }); break; }   // FORK: ack paces fileradio.ts
       const cap = Math.max(8, Math.min(QUEUE_MAX, Math.ceil(0.2 * rate * 2 / Math.max(b.length, 1))));
-      while (queue.length >= cap) queue.shift();
+      while (queue.length >= cap) { const d = queue.shift()!; if (ackAfter.delete(d)) post({ type: 'iqAck' }); }   // FORK: never strand an ack
+      if (m.ack) ackAfter.add(b);   // FORK: acked after process(), in the drain below
       queue.push(b); armDrain(); break;
     }
     case 'config':
@@ -424,6 +428,7 @@ self.onmessage = (e: MessageEvent) => {
       else if (m.cmd === 'known') emit({ type: 'fleetKnown', known: fleet.known() });
       else if (m.cmd === 'restore') fleet.restore(m.known as KnownState);
       else if (m.cmd === 'prefs') fleet.setPrefs(m.prefs as TgPrefs);
+      else if (m.cmd === 'plans') setPlans(m.plans as LcnPlan[]);   // FORK: EDACS / MPT1327 / LTR channel plans
       else if (m.cmd === 'audio') { if (!m.on && fleetAudio.on) { const t = fleetFader.tail(); if (t) toAudio(t); } fleetAudio.on = !!m.on; fleetAudio.gain = Math.max(0, Math.min(1.5, Number(m.gain ?? fleetAudio.gain))); }
       else if (m.cmd === 'replay') {
         const pcm = fleet.callAudio(m.key as string);

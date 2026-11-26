@@ -5,6 +5,7 @@
  */
 import { hex } from './codes.js';
 import { h, type Field } from './tsbk.js';
+import { parseVendorCsbk } from './csbk-vendor.js';   // FORK: vendor Tier III blocks
 
 export interface Csbk {
   op: number; fid: number; last: boolean; name: string; hex: string; fields: Field[]; kind: string;
@@ -15,6 +16,8 @@ export interface Csbk {
   lpcn?: number; slot?: number; dst?: number; src?: number; group?: boolean; emergency?: boolean;
   rest?: number; busy?: number[]; beaconSlot?: number; unit?: number; lcn?: number;
   lonLo?: number; latLo?: number; noFix?: boolean;
+  /** FORK: the vendor trunking this block belongs to (csbk-vendor.ts): 'CONNECT PLUS', 'HYTERA XPT'. */
+  trunk?: string;
 }
 
 const OPS: Record<number, string> = {
@@ -50,6 +53,7 @@ export function parseCsbk(b: ArrayLike<number>, verified: boolean): Csbk {
   const add = (k: string, v: string) => fields.push({ k, v });
   const sysF = (v: number) => { const s = sysCode(v); c.sysCode = v; c.net = s.net; c.site = s.site; c.model = s.model; add('SYSTEM CODE', `${h(v, 4)} (${s.model} net ${s.net} site ${s.site})`); };
   if (fid === 0x10) return vendor10(b, c, add);
+  { const v = parseVendorCsbk(b, c); if (v) return v; }   // FORK: Connect Plus (0x06) and Hytera (0x68)
   if (fid !== 0) { c.name = `FID ${h(fid, 2)} CSBK ${h(op, 2)}`; c.kind = 'vendor'; add('PAYLOAD', hex(b, 2, 10)); return c; }
   c.name = OPS[op] ?? `CSBK ${h(op, 2)}`;
   switch (op) {

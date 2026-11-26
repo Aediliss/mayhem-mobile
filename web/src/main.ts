@@ -22,6 +22,20 @@ import { GEOSCAN_SATS } from './dsp/geoscan.js';
 import type { HeardDevice, R433Data, R433Protocol, R433Report } from './dsp/r433/index.js';
 import type { ZwLink, ZwNode } from './dsp/r433/zwave.js';
 import { CREDITS } from './credits.js';
+import { FileRadio, speedLabel } from './fileradio.js';   // FORK: play recordings (Phase 1)
+import { openIqSource } from './filesrc/open.js';   // FORK
+import { AudioRadio, type AudioSource } from './audioradio.js';   // FORK: audio in (Phase 1)
+import { VoiceRecorder } from './voice/recorder.js';   // FORK: voice recording (Phase 1)
+import { bindVoiceSettings, voiceSettingsHtml } from './voice/ui.js';   // FORK
+import type { CallMeta } from './voice/segmenter.js';   // FORK
+import { bindTrunkSettings, loadPlans, trunkSettingsHtml } from './trunk-ui.js';   // FORK: EDACS / MPT1327 / LTR plans
+import { aliasBook, aliasSettingsHtml, bindAliasSettings } from './aliases-ui.js';   // FORK: Settings → ALIASES
+import { ExportBus, loadConfig } from './export/bus.js';   // FORK: decode export bus
+import { bindExportSettings, exportSettingsHtml } from './export/ui.js';   // FORK
+import type { WsCtor } from './export/sinks.js';   // FORK
+import { MqttSink } from './export/mqtt.js';   // FORK
+import { captureNamed, captureStarting, downloadSigmf, removeCaptureMeta } from './capture-sigmf.js';   // FORK: SigMF in Capture
+import { FORK_NAME, FORK_WORDMARK, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
 import { syncRows } from './list-rows.js';
 import { r433Measure, r433Value } from './devices-fmt.js';
 import * as U from './units.js';
@@ -213,6 +227,27 @@ const counts: Record<string, number> = {};
 const diag: string[] = [];
 let logFollow = true;   // stops when the reader scrolls up, resumes at the bottom
 let radio: Radio | null = null;
+// FORK: voice recording (Settings → VOICE RECORDING). What each receiver app says is on the air, for the file's
+// name and tags; null in apps that play no voice worth recording.
+const VOICE_APPS = new Set(['fleet', 'hamplus', 'prowl', 'cb', 'audio', 'ham']);
+function voiceMeta(): CallMeta | null {
+  const app = state.app;
+  if (!app || !VOICE_APPS.has(app)) return null;
+  if (app === 'fleet') {
+    const s = fleetUi.snap, c = s ? nowPlaying(s.calls, s.playing) : null;
+    if (c) return { key: `fleet:${c.key}`, label: `${dispatchWho(c)}${c.src ? ` · unit ${c.src}` : ''}`, app, tg: c.tg, group: c.group, unit: c.src || undefined, system: c.sys, site: c.site || undefined, proto: c.proto, freqHz: c.hz, emergency: c.emergency || undefined };   // FORK: + alias
+    return { key: 'fleet:none', label: 'Dispatch', app };
+  }
+  if (app === 'hamplus') {
+    const s = hpUi.snap, k = s?.playing?.[0], t = k ? s!.tiles.find(x => x.key === k) : undefined;
+    if (t) return { key: `hp:${t.key}`, label: [`${(t.hz / 1e6).toFixed(4)} MHz`, t.label, t.callsign].filter(Boolean).join(' '), app, freqHz: t.hz, tone: t.tone || undefined, callsign: t.callsign || undefined };
+  }
+  const hz = app === 'ham' ? state.ham.freq : state.freq, mode = app === 'ham' ? state.ham.mode : state.mode;
+  return { key: `${app}:${hz}:${mode}`, label: `${(hz / 1e6).toFixed(4)} MHz ${mode}`, app, freqHz: hz, mode };
+}
+const voiceRec = new VoiceRecorder(voiceMeta, () => `${FORK_NAME} ${versionText}`, l => log(l));
+// FORK: the decode export bus (Settings → EXPORT); off until switched on there
+const exportBus = new ExportBus(loadConfig(), { fetch: (u, i) => fetch(u, i), WebSocket: WebSocket as unknown as WsCtor, mqtt: c => new MqttSink(c, WebSocket as unknown as ConstructorParameters<typeof MqttSink>[1]) });
 /** The USB device behind `radio`, so a detach event can tell whether it was the radio that left. */
 let radioDev: USBDevice | null = null;
 /** True from the start of connect() until its radio stops, so two bring-ups never race for one device. */
@@ -253,7 +288,7 @@ function log(line: string): void {
 function logHeader(): string {
   const s = screen;
   return [
-    `Mayhem Mobile (web) ${versionText}`,
+    `${FORK_NAME} (web) ${versionText}`,   // FORK: build identity
     `${navigator.userAgent}`,
     `platform ${navigator.platform || '?'} \u00b7 ${s.width}x${s.height} @${devicePixelRatio}x \u00b7 ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
     `radio ${state.board ? `${state.board}${state.firmware ? ' \u00b7 fw ' + state.firmware : ''}` : 'none attached'}`,
@@ -314,7 +349,7 @@ function tune(hz: number, hold = false): void {
   if (tunesInSpan()) {
     // the channel moves inside the view; only when it leaves the view does the radio follow it
     const prevLo = state.viewLo;
-    if (Math.abs(state.freq - state.viewLo) > state.rate / 2 - VIEW_GUARD) state.viewLo = state.freq + (state.app === 'ais' || state.app === 'aprs' ? NARROW_SHIFT : 0);
+    if (Math.abs(state.freq - state.viewLo) > state.rate / 2 - VIEW_GUARD) state.viewLo = state.freq + (state.app === 'ais' || state.app === 'aprs' ? narrowShiftHz() : 0);   // FORK: narrowShiftHz
     // When the LO does move, slide the waterfall history by the same amount so the spectrum that was already
     // painted stays under its true frequency. Only the genuinely new sliver at the leading edge comes up black,
     // instead of the whole picture restarting empty from the top when you step to a station outside the window.
@@ -962,7 +997,8 @@ const NARROW_SHIFT = 250_000;
 const radioCan = (hz: number) => !radio || canSample(radio.limits, hz);
 /** Put the radio NARROW_SHIFT above the channel, as Mayhem keeps its channels off the DC spike; the engine mixes the
  *  channel back down through the offset. */
-function narrowShift(): void { state.viewLo = state.freq + NARROW_SHIFT; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); }
+const narrowShiftHz = () => (radio?.kind === 'file' ? 0 : NARROW_SHIFT);   // FORK: recordings need no DC-spike offset
+function narrowShift(): void { state.viewLo = state.freq + narrowShiftHz(); if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); }
 function open(app: AppId | null): void {
   if ((app as string) === 'subghz' || (app as string) === 'tpms') app = 'devices';      // Sub-GHz and TPMS are part of Devices now
   if (hiddenApp(app)) app = null;                         // an app this radio hides (TX and Troll on an RTL-SDR) opens Home instead
@@ -1954,10 +1990,10 @@ const appAbout: Partial<Record<AppId, string>> = {};
 function render(app: AppId | null): void {
   const view = $('view');
   const header = $('title');
-  header.innerHTML = app ? `‹ ${APPS.find(a => a.id === app)!.title.toUpperCase()}` : `MAYHEM<span>MOBILE</span>`;
+  header.innerHTML = app ? `‹ ${APPS.find(a => a.id === app)!.title.toUpperCase()}` : FORK_WORDMARK;   // FORK: build wordmark
   $('sub').textContent = app ? APPS.find(a => a.id === app)!.blurb
     : !radio ? 'HackRF or RTL-SDR · no device'
-    : radio.kind === 'rtlsdr' ? radio.label
+    : radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label   // FORK: a recording names itself
     : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · ' + state.firmware : ''}`;
   scope = null; sweepScope = null;
   // Audio, Looking Glass and Capture have short controls: on a wide screen they sit beside the card, over a
@@ -2031,7 +2067,7 @@ function renderLauncher(view: HTMLElement): void {
       // each group's name over its tiles: a grid two to a row on a phone, one sideways row when wide (as on iPad)
       return `<div class="lgrp"><div class="gcat" style="color:${tint(c)}">${c.toUpperCase()}</div><div class="lgrp-in">` + apps.map(a => `<button class="tile" data-app="${a.id}" style="--tint:${tint(a.cat)}"><span class="wm">${glyph(a.id, tintHex(a.cat), 84)}</span><div class="tile-top"><span class="badge">${glyph(a.id, tintHex(a.cat), 26)}</span><span class="cat">${a.cat.toUpperCase()}</span></div><div class="tile-title">${a.title}</div><div class="tile-blurb" data-blurb="${a.blurb}">${a.blurb}</div></button>`).join('') + '</div></div>';
     }).join('')}</div>
-    <div class="foot"><span id="version">${versionText}</span> · <a id="release-link" href="${releaseUrl}">release</a> · <a href="https://github.com/RocketGod-git/mayhem-mobile">source</a> · GPL-3.0 · a port of <a href="https://github.com/portapack-mayhem/mayhem-firmware">PortaPack Mayhem</a><br>made by <a href="https://rocketgod.dev">RocketGod</a> · The Pirates' Plunder · <a href="https://discord.gg/thepirates">discord.gg/thepirates</a></div></section>`;
+    <div class="foot"><span id="version">${versionText}</span> · <a id="release-link" href="${releaseUrl}">release</a> · ${'' /* FORK: fork source + upstream credit */}<a href="${FORK_REPO}">source</a> · GPL-3.0 · ${esc(FORK_NAME)}, from <a href="${UPSTREAM_REPO}">Mayhem Mobile</a> · a port of <a href="https://github.com/portapack-mayhem/mayhem-firmware">PortaPack Mayhem</a><br>made by <a href="https://rocketgod.dev">RocketGod</a> · The Pirates' Plunder · <a href="https://discord.gg/thepirates">discord.gg/thepirates</a></div></section>`;
   scope = attach(tunableScope('launch-scope', 70, 90));
   scope.setLabels(centredLabels(state.freq, state.rate));
   qa<HTMLButtonElement>('[data-app]', view).forEach(b => b.onclick = () => openPicked(b.dataset.app as AppId));
@@ -2094,6 +2130,9 @@ function attach(s: Scope): Scope {
 
 /** Center of the waterfall span: the tuned frequency, except in HAM where the LO stays put and the channel moves. */
 const spanCenter = () => state.app === 'ham' ? state.hamLo : tunesInSpan() ? state.viewLo : state.freq;
+/** FORK: the centre the worker's samples really have. A recording that cannot follow a tune outside itself plays as
+ *  recorded, so decoders that name absolute frequencies (Dispatch, Sondes …) must be told the recording's centre. */
+const workerCentre = () => (radio instanceof FileRadio && radio.targetFreqHz ? radio.targetFreqHz : spanCenter());
 /** What the worker's classifier last saw in the span (center, −6 / −20 dB widths, class). */
 interface SeenSignal { hz: number; db: number; snr: number; bw: number; cls: string; conf: number; val: number }
 let lastSignals: SeenSignal[] = [];
@@ -5229,7 +5268,8 @@ function dispatchLockFor(sysKey: string, siteLabel = ''): DispatchLock | null {
   const hz = site?.ccHz[0] ?? x.sites.find(y => y.ccHz.length)?.ccHz[0] ?? 0;
   return { sys: x.key, site: siteLabel, label: `${fleetSysTitle(x)}${siteLabel ? ` · SITE ${siteLabel}` : ''}`, hz };
 }
-const fleetSysTitle = (sys: FleetSystem) => sys.proto === 'SMARTNET' ? `TYPE II SYS ${sys.sysId.toString(16).toUpperCase().padStart(4, '0')}` : sys.proto === 'NXDN' ? (sys.trunk === 'CONVENTIONAL' ? `NXDN RAN ${sys.sysId}` : sys.trunk === 'TYPE-D' ? `TYPE-D SITE ${sys.sysId}` : `${sys.model} SYS ${sys.sysId}`) : sys.proto === 'TETRA' ? `MCC ${sys.wacn} · MNC ${sys.sysId}` : sys.proto === 'P25' ? `WACN ${sys.wacn.toString(16).toUpperCase().padStart(5, '0')} · SYS ${sys.sysId.toString(16).toUpperCase().padStart(3, '0')}` : sys.net >= 0 ? `${sys.model} NET ${sys.net}` : sys.trunk === 'CAPACITY PLUS' ? `CAP+ CC ${sys.cc}` : `CC ${sys.cc}${sys.fid > 0 ? ` · FID ${sys.fid.toString(16).toUpperCase().padStart(2, '0')}` : ''}`;
+const fleetSysTitle = (sys: FleetSystem) => sys.proto === 'EDACS' || sys.proto === 'MPT1327' || sys.proto === 'LTR' ? sys.label : sys.proto === 'SMARTNET' ?   // FORK: + plug-ins
+  `TYPE II SYS ${sys.sysId.toString(16).toUpperCase().padStart(4, '0')}` : sys.proto === 'NXDN' ? (sys.trunk === 'CONVENTIONAL' ? `NXDN RAN ${sys.sysId}` : sys.trunk === 'TYPE-D' ? `TYPE-D SITE ${sys.sysId}` : `${sys.model} SYS ${sys.sysId}`) : sys.proto === 'TETRA' ? `MCC ${sys.wacn} · MNC ${sys.sysId}` : sys.proto === 'P25' ? `WACN ${sys.wacn.toString(16).toUpperCase().padStart(5, '0')} · SYS ${sys.sysId.toString(16).toUpperCase().padStart(3, '0')}` : sys.net >= 0 ? `${sys.model} NET ${sys.net}` : sys.trunk === 'CAPACITY PLUS' ? `CAP+ CC ${sys.cc}` : `CC ${sys.cc}${sys.fid > 0 ? ` · FID ${sys.fid.toString(16).toUpperCase().padStart(2, '0')}` : ''}`;
 /** Talkgroup preferences are kept on the device (the key names keep the app's internal id). */
 function loadDispatchPrefs(): TgPrefs {
   try { const v = JSON.parse(localStorage.getItem('mm.fleet.tgprefs') ?? 'null'); if (v && Array.isArray(v.mute) && Array.isArray(v.prio)) return { mute: v.mute, hold: typeof v.hold === 'string' ? v.hold : '', prio: v.prio }; } catch { /* storage blocked */ }
@@ -5260,7 +5300,7 @@ function fleetTgTilesHtml(s: FleetSnap, now: number): string {
     const sys = s.systems.find(x => x.key === t.sys), col = flMapColor(fleetColor(t.sys));
     const when = t.live ? 'ON THE AIR' : t.lastMs ? (agoShort(now - t.lastMs) === 'now' ? 'now' : `${agoShort(now - t.lastMs)} ago`) : 'not heard yet';
     return `<div class="fl-tile ${t.followed ? 'fol' : ''} ${t.live ? 'live' : ''} ${t.emergency ? 'emerg' : ''} ${t.muted ? 'muted' : ''}" role="button" style="--sys:${col}" data-flfollow="${esc(t.key)}">`
-      + `<b>TG ${t.tg}</b><small>${sys ? `<span class="fl-proto">${protoLabel(sys.proto)}</span>` : ''}${esc(sys ? fleetSysTitle(sys) : t.sys)}</small>`
+      + `<b>${esc(flAlias(t.sys, true, t.tg) || `TG ${t.tg}`)}</b><small>${sys ? `<span class="fl-proto">${protoLabel(sys.proto)}</span>` : ''}${flAlias(t.sys, true, t.tg) ? `TG ${t.tg} · ` : ''}${esc(sys ? fleetSysTitle(sys) : t.sys)}</small>`   // FORK: + alias
       + `<span><i></i>${esc(when)}</span>${t.sec ? `<em class="${t.sec === 'CLEAR' ? 'ok' : 'enc'}">${esc(t.sec)}</em>` : ''}`
       + `${t.followed ? '<u>FOLLOWING</u>' : t.muted ? '<u>MUTED</u>' : ''}<button class="fl-ti" data-flsel="tg:${esc(t.key)}" title="details" aria-label="details">i</button></div>`;
   }).join('')}</div>${tiles.length ? '' : '<div class="fl-dim">talkgroups show here as the control channels grant them and their calls are heard</div>'}`;
@@ -5544,7 +5584,7 @@ function fleetIdenRows(idens: FleetIden[]): string {
 function fleetSiteHtml(sys: FleetSystem, site: FleetSite, now: number): string {
   const age = now - site.lastMs, live = age < 10_000, s = fleetUi.snap;
   const cars = site.carriers.map(k => s?.carriers.find(c => c.key === k)).filter((c): c is FleetCarrier => !!c);
-  const ccs = cars.map(c => `<span class="fl-cc ${c.role}" data-flsel="car:${c.key}">${fleetMhz(c.hz)}<small>${c.role === 'rest' ? 'REST' : c.role === 'control' ? (sys.proto === 'P25' || sys.proto === 'TETRA' || sys.proto === 'SMARTNET' ? 'CONTROL' : 'REPEATER') : c.role.toUpperCase()}${c.lcn ? ` · LCN ${c.lcn}` : ''}</small></span>`).join('');
+  const ccs = cars.map(c => `<span class="fl-cc ${c.role}" data-flsel="car:${c.key}">${fleetMhz(c.hz)}<small>${c.role === 'rest' ? 'REST' : c.role === 'control' ? (sys.proto === 'P25' || sys.proto === 'TETRA' || sys.proto === 'SMARTNET' || sys.proto === 'EDACS' || sys.proto === 'MPT1327' ? 'CONTROL' : 'REPEATER') : c.role.toUpperCase()}${c.lcn ? ` · LCN ${c.lcn}` : ''}</small></span>`).join('');
   const lvl = Math.max(0, Math.min(1, site.levelDb / 50));
   let body = '';
   if (sys.proto === 'SMARTNET') {
@@ -5585,7 +5625,8 @@ function fleetSystemCard(sys: FleetSystem, now: number): string {
 }
 function fleetGrantRow(g: FleetGrant, now: number): string {
   const col = fleetColor(g.sys), flash = Math.max(0, 1 - (now - g.ms) / 1200);
-  const who = g.group ? `<span class="fl-tg" data-flsel="tg:${esc(g.sys)}/${g.tg}">TG ${g.tg}</span>` : `<span class="fl-tg">UNIT ${g.tg}</span>`;
+  const al = flAlias(g.sys, g.group, g.tg), aka = al ? ` ${esc(al)}` : '';   // FORK: + alias
+  const who = g.group ? `<span class="fl-tg" data-flsel="tg:${esc(g.sys)}/${g.tg}">TG ${g.tg}${aka}</span>` : `<span class="fl-tg">UNIT ${g.tg}${aka}</span>`;   // FORK: + alias
   const nx = g.sys.startsWith('NXDN') || g.sys.startsWith('SMARTNET');
   const ch = g.hz > 0 ? `${fleetMhz(g.hz)}${g.tdma ? ` · TDMA S${g.slot + 1}` : nx ? ` · ${esc(g.ch)}` : g.lpcn !== undefined && g.lpcn >= 0 ? ` · TS${g.slot + 1} · LPCN ${g.lpcn}` : g.sys.startsWith('TETRA') ? ` · TS${g.slot + 1}` : ''}` : `${esc(g.ch)}${nx ? '' : g.lpcn !== undefined && g.lpcn >= 0 ? ` · TS${g.slot + 1}` : g.tdma && g.slot >= 0 ? ` · TS${g.slot + 1}` : ''}`;
   return `<div class="fl-grant ${g.emergency ? 'emerg' : ''}" style="--sys:${col};--flash:${flash.toFixed(2)}"><i></i><span class="fl-gt">${fleetClock(g.ms)}</span>${who}<span class="fl-src">${g.src ? `← ${g.src}` : ''}</span><span class="fl-gch">${ch}</span><span class="fl-gf">${g.emergency ? flPill('EMERG', 'red') : ''}${g.encrypted ? flPill('ENC', 'acc') : ''}${g.kind === 'datagrant' ? flPill('DATA') : g.kind === 'u2u' ? flPill('PRIVATE') : ''}</span></div>`;
@@ -5622,10 +5663,13 @@ function dispatchAudioNote(c: FleetCall, codecs: string[]): string {
   if (c.audioMs > 0) return '';
   if (c.decoded >= 10 && c.badFrames > 0.5 * c.decoded) return 'weak signal';
   if (c.sec === 'unknown' && c.voiceMs) return 'no voice decoded yet';
+  if (c.codec === 'provoice') return 'ProVoice digital voice: identified, not voiced';   // FORK: EDACS digital calls are never decoded
   if (!codecs.includes(c.codec)) return c.codec === 'imbe' ? 'no audio yet, the P25 full-rate vocoder is not built' : c.codec === 'tetra' ? 'no audio yet, the TETRA codec is not built' : `no audio yet, the half-rate vocoder for ${c.proto === 'DMR' ? 'DMR' : 'Phase 2'} is not built`;
   return c.voiceMs ? '' : 'voice channel not heard';
 }
-const dispatchWho = callWho;
+/** FORK: an imported talkgroup / unit name (Settings → ALIASES), or ''. */
+const flAlias = (sys: string, group: boolean, id: number) => aliasBook.name(sys, group ? 'tg' : 'unit', id);
+const dispatchWho = (c: FleetCall) => { const n = c.tg ? flAlias(c.sys, c.group, c.tg) : ''; return n ? `${callWho(c)} · ${n}` : callWho(c); };   // FORK: + alias
 /** Security as the call itself states it: the grant's service options, the link control, the encryption sync, the privacy bit. */
 const dispatchSec = (c: FleetCall) => { const t = secText(c); return c.protectedHint && !c.encrypted ? flPill('PROTECTED?', '') : t ? flPill(t, c.encrypted ? 'acc' : 'ok') : ''; };
 /** Where a P25 key and message indicator or a DMR privacy header were read, for the card's security line. */
@@ -5650,7 +5694,8 @@ function dispatchOnAirCard(c: FleetCall, s: FleetSnap, now: number): string {
   const lvl = Math.max(0, Math.min(1, c.levelDb / 40)), segs = 16, lit = Math.round(lvl * segs);
   const meter = Array.from({ length: segs }, (_, i) => `<i class="${i < lit ? (i >= segs - 3 ? 'hi' : 'on') : ''}"></i>`).join('');
   const note = dispatchAudioNote(c, s.codecs), key = dispatchKey(c), sel = c.group ? `tg:${esc(key)}` : `unit:${esc(c.sys)}/${c.tg}`;
-  const lpName = c.proto === 'NXDN' || c.proto === 'SMARTNET' ? 'CH' : 'LPCN', lp = c.lpcn >= 0 ? ` · ${lpName} ${c.lpcn}` : '';
+  const lpName = c.proto === 'EDACS' || c.proto === 'MPT1327' || c.proto === 'LTR' ? 'LCN' : c.proto === 'NXDN' || c.proto === 'SMARTNET' ? 'CH' : 'LPCN',   // FORK: plug-ins count LCNs
+    lp = c.lpcn >= 0 ? ` · ${lpName} ${c.lpcn}` : '';
   const ch = c.hz > 0 ? `${fleetMhz(c.hz)} MHz${c.tdma ? ` · TDMA S${c.slot + 1}` : c.proto === 'DMR' || c.proto === 'TETRA' ? ` · TS${c.slot + 1}` : ''}${lp}` : c.lpcn >= 0 ? `${lpName} ${c.lpcn}${c.proto === 'DMR' ? ` · TS${c.slot + 1}` : ''} · ${c.proto === 'SMARTNET' ? 'channel plan not proved' : 'learning its frequency'}` : 'channel not resolved';
   // the card slides in once, when the call first shows; the dot blinks with the redraws (twice a second)
   const first = fleetUi.airSeen.get(c.key) ?? now; if (!fleetUi.airSeen.has(c.key)) { fleetUi.airSeen.set(c.key, now); if (fleetUi.airSeen.size > 400) fleetUi.airSeen.delete(fleetUi.airSeen.keys().next().value as string); }
@@ -5809,7 +5854,7 @@ function fleetDetail(s: FleetSnap, now: number): string {
     ]) + (dbs.length >= 3 && Math.max(...dbs) - Math.min(...dbs) >= 1 ? `<div class="flc-spk"><small>SIGNAL · ${Math.round(Math.min(...dbs))} to ${Math.round(Math.max(...dbs))} dB</small>${sparkSvg(dbs.slice(-40).map(x => Math.max(1, x)))}</div>` : '');
     const times = [...reports.map(r => r.ms), ...calls.map(c => c.startMs)];
     const hist = reports.length ? [...reports].reverse().slice(0, 40).map(r => `<div class="fl-rep ${r.verified ? '' : 'unv'}"><b>${fleetClock(r.ms)}</b><span>${esc(r.kind)} · ${fleetMhz(r.hz)}${r.lat !== null && r.lon !== null ? ` · ${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}` : ''}</span><small>${esc(r.text)}</small><code>${esc(r.hex)}</code></div>`).join('') : '';
-    return `<div class="flc">${head(`${u.id}`, 'UNIT', `${u.alias ? `${u.alias} · ` : ''}${sys ? fleetSysTitle(sys) : u.sys}`, col, chips, mapBtn)}<div class="flc-grid">`
+    return `<div class="flc">${head(`${u.id}`, 'UNIT', `${u.alias ? `${u.alias} · ` : ''}${flAlias(u.sys, false, u.id) ? `${flAlias(u.sys, false, u.id)} · ` : ''}${sys ? fleetSysTitle(sys) : u.sys}`, col, chips, mapBtn)}<div class="flc-grid">`   // FORK: + alias
       + sec('WHERE', where, true) + sec('CALLS', callList(calls)) + sec('TALKGROUPS', tgs) + sec('RADIO', radio) + sec('ACTIVITY', spark(times))
       + sec(`EVERY REPORT · ${reports.length}`, hist ? `<div class="fl-hist flc-reps">${hist}</div>` : '', true) + `</div></div>`;
   }
@@ -5826,7 +5871,7 @@ function fleetDetail(s: FleetSnap, now: number): string {
     const map = placed.length ? fleetCardUnits(`tg:${t.key}`, placed, col, me) : '';
     const stats = `<div class="flc-stats">${big(`${t.grants}`, 'GRANTS')}${big(`${t.recent.length}`, 'IN 10 MIN')}${big(`${calls.length}`, 'CALLS KEPT')}${big(`${units.length}`, 'UNITS')}</div>`;
     const times = [...t.history.map(g => g.ms), ...t.recent, ...calls.map(c => c.startMs)];
-    return `<div class="flc">${head(`TG ${t.tg}`, 'TALKGROUP', sys ? fleetSysTitle(sys) : t.sys, col, chips)}<div class="pc-m fl-prefs">${dispatchPrefButtons(t.key)}</div><div class="flc-grid">`
+    return `<div class="flc">${head(`TG ${t.tg}`, 'TALKGROUP', `${flAlias(t.sys, true, t.tg) ? `${flAlias(t.sys, true, t.tg)} · ` : ''}${sys ? fleetSysTitle(sys) : t.sys}`, col, chips)}<div class="pc-m fl-prefs">${dispatchPrefButtons(t.key)}</div><div class="flc-grid">`   // FORK: + alias
       + sec('NOW', stats + kv([['TALKGROUP', `${t.tg} · 0x${t.tg.toString(16).toUpperCase()}`], ['SYSTEM', sys ? `${fleetSysTitle(sys)} · ${fleetSysType(sys, s)}` : ''], ['FIRST HEARD', fleetClock(t.firstMs)], ['LAST HEARD', `${fleetClock(t.lastMs)} · ${agoShort(now - t.lastMs)} ago`]]), true)
       + sec('RECENT CALLS', callList(calls, 14)) + sec(`UNITS · ${units.length}`, map + unitTags) + sec('ACTIVITY', spark(times))
       + sec('GRANTS', t.history.length ? `<div class="fl-hist">${t.history.map(g => fleetGrantRow(g, now)).join('')}</div>` : '', true) + `</div></div>`;
@@ -5886,7 +5931,7 @@ function fleetSysType(x: FleetSystem, s: FleetSnap): string {
   if (x.proto === 'DMR') return x.trunk === 'CAPACITY PLUS' ? 'DMR CAPACITY PLUS' : x.trunk === 'TIER III' ? 'DMR TIER III' : 'DMR';
   if (x.proto === 'NXDN') return x.trunk ? `NXDN ${x.trunk}` : 'NXDN';
   if (x.proto === 'SMARTNET') return 'MOTOROLA TYPE II';
-  return x.proto;
+  return x.proto;   // FORK: EDACS / MPT1327 / LTR name themselves
 }
 function refreshFleet(force = false): void {
   if (state.app !== 'fleet') return;
@@ -8714,14 +8759,20 @@ function renderCapture(view: HTMLElement): void {
     <section class="visual">${readoutHtml()}<div id="scope" class="panel short"></div></section>
     <section class="controls">
       ${stepHtml([1e6, 1e5, 1e4])}
-      <div class="caption">RECORD · signed 8-bit I/Q (.c8) + .txt sidecar, stored in the browser</div>
+      <div class="caption">RECORD · signed 8-bit I/Q (.c8) + .txt sidecar + SigMF metadata, stored in the browser${'' /* FORK */}</div>
       <div class="row"><button id="rec" class="chip">● REC</button><span id="rec-info" class="info"></span></div>
       <div class="caption">CAPTURES · tap to download, ✕ to delete</div><div id="captures" class="panel list">${emptyState('capture')}</div>
     </section>`;
   scope = attach(tunableScope('scope', 80, 70));
   $('rec').onclick = () => {
     if (state.capturing) worker?.postMessage({ type: 'capture', cmd: 'stop' });
-    else worker?.postMessage({ type: 'capture', cmd: 'start', freq: state.freq, rate: state.rate });
+    else {
+      // FORK: the centre is the radio's LO (spanCenter), not the channel slid to inside the span; and SigMF details
+      captureStarting({ centerHz: spanCenter(), rate: state.rate, datetime: new Date().toISOString(), app: 'Capture', recorder: `${FORK_NAME} ${versionText}`,
+        radio: radio ? (radio.kind === 'hackrf' ? `${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}` : radio.label) : 'none',
+        gain: { lna: state.lna, vga: state.vga, amp: state.amp, agc: state.agc }, gps: state.home ?? undefined });
+      worker?.postMessage({ type: 'capture', cmd: 'start', freq: spanCenter(), rate: state.rate });
+    }
   };
   refreshCapture();
 }
@@ -8750,9 +8801,9 @@ function thisAppRows(app: AppId | null): string {
 }
 function renderSettings(view: HTMLElement): void {
   const over = settingsOver;
-  const radioLine = radio ? (radio.kind === 'rtlsdr' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';
+  const radioLine = radio ? (radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';   // FORK: a recording names itself
   const appRows = thisAppRows(over);
-  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['log', 'LOG'], ['about', 'ABOUT']];
+  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['voice', 'VOICE'], ['trunk', 'TRUNKING'], ['alias', 'ALIASES'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT, VOICE, TRUNKING, ALIASES;
   view.innerHTML = `
     <section class="controls settings-page">
     <input id="set-search" class="txin set-search" placeholder="Search settings" autocomplete="off" spellcheck="false">
@@ -8785,15 +8836,18 @@ function renderSettings(view: HTMLElement): void {
       <div class="kv"><span>macOS</span><span>nothing to install — just close any other SDR program that has the HackRF open</span></div>
       <div class="kv"><span>Linux</span><span>the udev rule from the hackrf package (53-hackrf.rules) grants access; replug after adding it</span></div>
       <div class="kv"><span>Keyboard</span><span>digits: wheel, click top/bottom, type · ← → tune · ↑ ↓ step size · M mode · X mute · S squelch · B bookmark · Space scan · A amp · G AGC · [ ] LNA · − = VGA · L log · Esc closes Settings, then goes home · mouse wheel over the waterfall tunes, Ctrl+wheel changes the step</span></div></div></section>
+    ${exportSettingsHtml(exportBus, { mqtt: true })}${voiceSettingsHtml(voiceRec)}${trunkSettingsHtml()}${aliasSettingsHtml()}${'' /* FORK: Settings → EXPORT, VOICE RECORDING, TRUNKING PLANS, ALIASES */}
     <section class="sset" id="sec-log"><div class="sset-h">LOG</div>${srow('Log', 'Everything the radio and the decoders reported, to read, save or share', '<button id="set-log" class="tog">OPEN</button>')}</section>
     <section class="sset" id="sec-about"><div class="sset-h">ABOUT</div>
     <div class="panel about">
       <div class="row"><button id="install" class="chip" ${installPrompt ? '' : 'disabled'}>${installPrompt ? 'INSTALL TO HOME SCREEN' : 'INSTALLED / NOT OFFERED'}</button><a class="chip primary" href="https://play.google.com/store/apps/details?id=com.rocketgod.mayhem" target="_blank" rel="noopener">GET IT ON GOOGLE PLAY</a></div>
       ${isAndroid() ? `<div class="kv"><span>Android app</span><span>On Google Play. It opens by itself when the radio is plugged in and keeps running in the background.</span></div>` : ''}
       <div class="kv"><span>Mayhem Mobile</span><span>${versionText} — one build, two shells: this web app in any Chrome/Edge browser, and the Android app on Google Play</span></div>
-      <div class="kv"><span>Device</span><span>${state.board ? (radio?.kind === 'rtlsdr' ? state.board : `${state.board} · fw ${state.firmware}`) : 'no radio attached'}</span></div>
+      <div class="kv"><span>Device</span><span>${state.board ? esc(radio?.kind === 'rtlsdr' || radio?.kind === 'file' ? state.board : `${state.board} · fw ${state.firmware}`) : 'no radio attached'}${'' /* FORK: escaped (a recording's file name lands here) */}</span></div>
       <div class="kv"><span>What it is</span><span>PortaPack Mayhem's receivers ported to run in the browser from raw HackRF IQ over WebUSB</span></div>
-      <div class="kv"><span>Source</span><span><a href="https://github.com/RocketGod-git/mayhem-mobile">github.com/RocketGod-git/mayhem-mobile</a></span></div>
+      ${'' /* FORK: this build, its source and its upstream */}<div class="kv"><span>This build</span><span>${esc(FORK_NAME)} · ${versionText} · web only</span></div>
+      <div class="kv"><span>Source</span><span><a href="${FORK_REPO}">${FORK_REPO_LABEL}</a></span></div>
+      <div class="kv"><span>Based on</span><span>Mayhem Mobile by RocketGod · <a href="${UPSTREAM_REPO}">${UPSTREAM_REPO_LABEL}</a> · GPL-3.0</span></div>
       <div class="kv"><span>Upstream</span><span><a href="https://github.com/portapack-mayhem/mayhem-firmware">portapack-mayhem/mayhem-firmware</a></span></div>
       <div class="kv"><span>License</span><span>GPL-3.0 (Mayhem-derived)</span></div>
     </div>
@@ -8804,6 +8858,10 @@ function renderSettings(view: HTMLElement): void {
     <div class="sset-sub">CREDITS · drag to steer</div>
     <div class="panel credits" id="credits"><div class="credits-roll" id="credits-roll">${(() => { const inner = CREDITS.map(([h, t]) => h ? `<h4>${esc(t)}</h4>` : `<p>${esc(t)}</p>`).join(''); return `<div class="credits-copy">${inner}</div><div class="credits-copy" aria-hidden="true">${inner}</div>`; })()}</div></div>
     </section></section>`;
+  bindTrunkSettings(view, plans => worker?.postMessage({ type: 'fleet', cmd: 'plans', plans }));   // FORK: TRUNKING PLANS
+  bindAliasSettings(view, () => undefined);   // FORK: ALIASES (Dispatch picks the names up on its next draw)
+  { const vsec = q('#sec-voice', view), vrefresh = bindVoiceSettings(view, voiceRec); voiceRec.onSaved = () => { if (vsec?.isConnected) void vrefresh(); }; }   // FORK: VOICE RECORDING controls
+  { const sec = q('#sec-export', view), refresh = bindExportSettings(view, exportBus, log); const t = setInterval(() => { if (!sec?.isConnected) clearInterval(t); else refresh(); }, 1000); }   // FORK: EXPORT controls (timer dies with its section)
   qa<HTMLInputElement>('[data-st]', view).forEach(i => i.oninput = () => { const k = i.dataset.st as keyof Station; const v = k === 'call' || k === 'grid' ? i.value.toUpperCase() : i.value; if (k === 'call' || k === 'grid') i.value = v; state.ham.station[k] = v; saveStation(); });
   qa<HTMLButtonElement>('[data-skin]', view).forEach(b => b.onclick = () => { applySkin(SKINS.find(s => s.id === b.dataset.skin)!); refreshSettings(); });
   const tg = q('#tx-toggle'); if (tg) tg.onclick = () => { tx.setEnabled(!tx.enabled); refreshSettings(); };
@@ -8971,7 +9029,7 @@ function refreshReadout(): void {
   scope?.setLabels(centredLabels(spanCenter(), state.rate));
   refreshSpanBar();
   document.body.classList.toggle('offspan', channelOff());
-  if (lastCenterSent !== spanCenter()) { lastCenterSent = spanCenter(); worker?.postMessage({ type: 'config', centreHz: lastCenterSent }); }
+  if (lastCenterSent !== workerCentre()) { lastCenterSent = workerCentre(); worker?.postMessage({ type: 'config', centreHz: lastCenterSent }); }   // FORK: workerCentre
   qa('[data-preset]').forEach(b => b.classList.toggle('on', Number(b.dataset.preset) === state.freq));
   highlightBands();
   refreshFav();
@@ -9477,9 +9535,10 @@ function refreshCapture(): void {
   const b = q('#rec'), info = q('#rec-info'), el = q('#captures');
   if (b) { b.textContent = state.capturing ? '■ STOP' : '● REC'; b.classList.toggle('rec', state.capturing); }
   if (info) info.textContent = state.capturing ? `${(state.captureBytes / 1e6).toFixed(1)} MB · ${state.captureName}` : `${state.rate / 1e6} Msps · ${(state.rate * 2 / 1e6).toFixed(1)} MB/s`;
-  if (el) el.innerHTML = state.captures.length ? state.captures.map((f, i) => `<div class="li row2 ${i % 2 ? 'alt' : ''}"><span class="tap" data-dl="${f.name}">${f.name}  ${(f.size / 1e6).toFixed(1)} MB</span><button class="link" data-del="${f.name}">✕</button></div>`).join('') : emptyState('capture');
+  if (el) el.innerHTML = state.captures.length ? state.captures.map((f, i) => `<div class="li row2 ${i % 2 ? 'alt' : ''}"><span class="tap" data-dl="${f.name}">${f.name}  ${(f.size / 1e6).toFixed(1)} MB</span>${'' /* FORK: SigMF download */}<button class="link" data-dlsigmf="${f.name}" title="Download as one .sigmf archive">SigMF</button><button class="link" data-del="${f.name}">✕</button></div>`).join('') : emptyState('capture');
   qa<HTMLElement>('[data-dl]').forEach(d => d.onclick = () => worker?.postMessage({ type: 'capture', cmd: 'get', name: d.dataset.dl }));
-  qa<HTMLElement>('[data-del]').forEach(d => d.onclick = () => worker?.postMessage({ type: 'capture', cmd: 'remove', name: d.dataset.del }));
+  qa<HTMLElement>('[data-del]').forEach(d => d.onclick = () => { void removeCaptureMeta(d.dataset.del!); worker?.postMessage({ type: 'capture', cmd: 'remove', name: d.dataset.del }); });   // FORK: + its .sigmf-meta
+  qa<HTMLElement>('[data-dlsigmf]').forEach(d => d.onclick = () => void downloadSigmf(d.dataset.dlsigmf!, `${FORK_NAME} ${versionText}`, log));   // FORK
 }
 function esc(s: string): string { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!)); }
 
@@ -9487,6 +9546,8 @@ function esc(s: string): string { return s.replace(/[&<>]/g, c => ({ '&': '&amp;
 function ensureWorker(): Worker {
   if (worker) return worker;
   worker = new Worker('./build/dsp-worker.js', { type: 'module' });
+  exportBus.attach(worker, () => ({ app: state.app ?? 'home', centerHz: spanCenter(), freqHz: state.freq }));   // FORK: decode export bus
+  worker.postMessage({ type: 'fleet', cmd: 'plans', plans: loadPlans() });   // FORK: trunking channel plans
   (window as unknown as { mmFeed: (m: unknown) => void }).mmFeed = (m) => worker!.onmessage!({ data: m } as MessageEvent);   // support hook: inject a worker message
   (window as unknown as { mmWorker: (m: unknown) => void }).mmWorker = (m) => worker!.postMessage(m);                             // support hook: send the worker a message
   worker.onmessage = (e: MessageEvent) => {
@@ -9670,12 +9731,13 @@ function ensureWorker(): Worker {
         }
         refreshSweepCard(0, m.sweeps); refreshHits(); break;
       }
-      case 'capture': state.capturing = m.recording; state.captureName = m.name; state.captureBytes = m.bytes; refreshCapture(); break;
+      case 'capture': if (m.recording && m.name !== state.captureName) void captureNamed(m.name as string, log);   // FORK: SigMF beside the .c8
+        state.capturing = m.recording; state.captureName = m.name; state.captureBytes = m.bytes; refreshCapture(); break;
       case 'captures': state.captures = m.files; refreshCapture(); break;
       case 'captureFile': { const f = m.file as File; const url = URL.createObjectURL(f); const a = document.createElement('a'); a.href = url; a.download = m.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60_000); if (m.sidecar) { const b = new Blob([m.sidecar], { type: 'text/plain' }); const u2 = URL.createObjectURL(b); const a2 = document.createElement('a'); a2.href = u2; a2.download = (m.name as string).replace(/\.c8$/, '.txt'); setTimeout(() => { a2.click(); setTimeout(() => URL.revokeObjectURL(u2), 60_000); }, 500); } break; }
     }
   };
-  worker.postMessage({ type: 'config', rate: state.rate, mode: state.mode, squelch: state.squelch, specBins: scope?.cols, centreHz: spanCenter() });
+  worker.postMessage({ type: 'config', rate: state.rate, mode: state.mode, squelch: state.squelch, specBins: scope?.cols, centreHz: workerCentre() });   // FORK: workerCentre
   lastCenterSent = spanCenter();
   if (audioPort) { worker.postMessage({ type: 'audioPort', port: audioPort }, [audioPort]); audioPort = null; }
   return worker;
@@ -9688,6 +9750,7 @@ async function ensureAudio(): Promise<void> {
     const node = new AudioWorkletNode(audioCtx, 'mayhem-player', { outputChannelCount: [1] });
     muteGain = audioCtx.createGain(); muteGain.gain.value = state.muted ? 0 : 1;
     node.connect(muteGain); muteGain.connect(audioCtx.destination);
+    void voiceRec.attach(audioCtx, node);   // FORK: voice recording taps the speaker audio before MUTE
     const ch = new MessageChannel();
     node.port.postMessage({ port: ch.port1 }, [ch.port1]);
     audioPort = ch.port2;
@@ -9807,6 +9870,134 @@ async function connect(dev?: USBDevice): Promise<void> {
  * string, no PortaPack, no gain rescaling, and a rate that has to be pulled inside what the dongle will do
  * before the first buffer rather than after.
  */
+// FORK: OPEN REC in the no-radio strip. Picks a recording and plays it through the same IQ path as a radio
+// (fileradio.ts); while it plays, the playback strip (#playbar) shows progress and has speed / pause / stop.
+function parseHzAnswer(s: string): number {
+  const m = /^\s*([\d.]+)\s*([kmg]?)/i.exec(s);
+  return m ? Number(m[1]) * ({ '': 1, k: 1e3, m: 1e6, g: 1e9 } as Record<string, number>)[m[2].toLowerCase()] : NaN;
+}
+async function openRecording(): Promise<void> {
+  if (radio?.running || connecting) { log('Disconnect the radio before playing a recording.'); return; }
+  const input = document.createElement('input');
+  input.type = 'file'; input.multiple = true;
+  input.accept = '.sigmf,.cs8,.c8,.cu8,.cs16,.c16,.cf32,.fc32,.cfile,.raw,.wav,.sigmf-meta,.sigmf-data,.txt';
+  const files = await new Promise<File[]>(res => { input.onchange = () => res(Array.from(input.files ?? [])); input.click(); });
+  if (!files.length) return;
+  connecting = true;
+  const bar = $('playbar'), text = $('pb-text'), speed = $<HTMLButtonElement>('pb-speed'), pause = $<HTMLButtonElement>('pb-pause');
+  try {
+    const src = await openIqSource(files, async (what, name) => {
+      const a = prompt(what === 'rate' ? `${name}: sample rate? (e.g. 2M, 2400k, 250000)` : `${name}: centre frequency? (e.g. 433.92M; blank if unknown)`, what === 'rate' ? '2M' : '');
+      if (a === null) return what === 'rate' ? null : 0;
+      const v = parseHzAnswer(a); return Number.isFinite(v) && v > 0 ? v : 0;
+    });
+    await ensureAudio();
+    const w = ensureWorker();
+    const r = new FileRadio(src, w, { onLog: log, onStatus: s => { text.textContent = s; state.board = r.label; state.firmware = ''; setStatus(s, true); if (!state.app) $('sub').textContent = r.label; } });
+    radio = r; radioDev = null; state.board = r.label; state.biast = false;
+    if (state.rate !== r.rate) { state.rate = r.rate; worker?.postMessage({ type: 'config', rate: state.rate }); }
+    // the plain receiver (and the launcher) show the recording where it was made; fixed-band apps keep their own dial
+    if ((!state.app || state.app === 'audio' || state.app === 'capture') && r.centerHz) { state.freq = state.viewLo = r.centerHz; worker?.postMessage({ type: 'config', centreHz: r.centerHz }); }
+    r.targetFreqHz = spanCenter();   // the app's LO: inside the recording's span the player's digital LO follows it
+    if (state.app === 'ais' || state.app === 'aprs') narrowShift();   // re-placed with no offset now a recording is the radio
+    else sendOffset();                // the worker's in-span offset follows the dial set above
+    refreshLauncherLimits();
+    refreshReadout();
+    await r.open();
+    speed.textContent = speedLabel(r.speed); pause.textContent = 'PAUSE'; text.textContent = r.statusLine();
+    speed.onclick = () => { speed.textContent = speedLabel(r.cycleSpeed()); text.textContent = r.statusLine(); };
+    pause.onclick = () => { r.paused = !r.paused; pause.textContent = r.paused ? 'PLAY' : 'PAUSE'; text.textContent = r.statusLine(); };
+    $('pb-stop').onclick = () => r.stop();
+    bar.hidden = false;
+    connecting = false;
+    await r.run();
+  } catch (e) {
+    const err = e as Error;
+    if (err.message !== 'cancelled') { log(`recording: ${err.message}`); setStatus(`recording: ${err.message}`, false); }
+  } finally {
+    connecting = false;
+    bar.hidden = true;
+    if (radio instanceof FileRadio) { log(`recording: ${radio.position >= radio.src.samples ? 'finished' : 'stopped'} ${radio.src.name}`); radio = null; state.board = ''; setStatus('no radio', false); refreshLauncherLimits(); }
+  }
+}
+
+// FORK: AUDIO IN in the no-radio strip. Audio from a microphone, a line-in or an audio file, modulated onto IQ at the
+// open app's channel in the way its demodulator expects (audioradio.ts), so the app decodes it as if received.
+function chooseAudioSource(): Promise<AudioSource | null> {
+  return new Promise(resolve => {
+    const el = document.createElement('div');
+    el.className = 'modal'; el.id = 'audioin';
+    el.innerHTML = `<div class="modal-card lr-owncard"><h3>AUDIO IN</h3>
+      <p>Decode audio from another radio, a line-in or a file. The open app hears it as if it were received on its channel: SSB / CW / FT8 / RTTY / PSK / SSTV in Ham Radio, APRS in Ham Map, POCSAG / FLEX in Pagers, ACARS in Flight Msgs.</p>
+      <ul><li>Best is a discriminator ("9600 baud", flat) output. A speaker output works for FT8, RTTY, PSK, SSTV, CW, APRS 1200 and POCSAG up to 1200; it is too filtered for 9600-baud packet and FLEX 3200.</li>
+      <li>With a microphone, use headphones or MUTE: a microphone that hears the speaker feeds back.</li></ul>
+      <div class="row" id="ai-devs" style="flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <div class="modal-actions"><button class="chip" id="ai-file">AUDIO FILE…</button><button class="chip" id="ai-cancel">CANCEL</button></div></div>`;
+    document.body.appendChild(el);
+    const done = (s: AudioSource | null) => { el.remove(); resolve(s); };
+    const live = async (deviceId: string | undefined, label: string) => {
+      try {
+        await ensureAudio();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: deviceId ? { exact: deviceId } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+        done({ kind: 'live', ctx: audioCtx!, stream, label: stream.getAudioTracks()[0]?.label || label });
+      } catch (e) { log(`audio in: ${(e as Error).message}`); done(null); }
+    };
+    $('ai-cancel').onclick = () => done(null);
+    $('ai-file').onclick = () => {
+      const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*,.wav,.mp3,.flac,.ogg,.m4a';
+      input.onchange = async () => {
+        const f = input.files?.[0]; if (!f) return;
+        try { await ensureAudio(); done({ kind: 'file', name: f.name, buffer: await audioCtx!.decodeAudioData(await f.arrayBuffer()) }); }
+        catch (e) { log(`audio in: ${f.name} could not be decoded as audio (${(e as Error).message})`); done(null); }
+      };
+      input.click();
+    };
+    const devs = $('ai-devs');
+    devs.innerHTML = '<button class="chip primary" data-aidev="">DEFAULT INPUT</button>';
+    void navigator.mediaDevices?.enumerateDevices?.().then(list => {
+      list.filter(d => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default').forEach((d, i) => {
+        const b = document.createElement('button'); b.className = 'chip'; b.dataset.aidev = d.deviceId; b.textContent = d.label || `INPUT ${i + 1}`; devs.appendChild(b);
+      });
+      qa<HTMLButtonElement>('[data-aidev]', devs).forEach(b => b.onclick = () => void live(b.dataset.aidev || undefined, b.textContent || 'input'));
+    }).catch(() => undefined);
+    qa<HTMLButtonElement>('[data-aidev]', devs).forEach(b => b.onclick = () => void live(b.dataset.aidev || undefined, 'default input'));
+  });
+}
+async function openAudioIn(): Promise<void> {
+  if (radio?.running || connecting) { log('Disconnect the radio (or stop the recording) before using audio in.'); return; }
+  const src = await chooseAudioSource();
+  if (!src) return;
+  connecting = true;
+  const bar = $('playbar'), text = $('pb-text'), speed = $<HTMLButtonElement>('pb-speed'), pause = $<HTMLButtonElement>('pb-pause');
+  try {
+    await ensureAudio();
+    const w = ensureWorker();
+    const r = new AudioRadio(src, w, { onLog: log, onStatus: s => { text.textContent = s; state.board = r.label; state.firmware = ''; setStatus(s, true); } }, {
+      mode: () => (state.app === 'ham' ? state.ham.mode : state.mode),
+      channelHz: () => (state.app === 'ham' ? state.ham.freq : state.freq),
+    });
+    radio = r; radioDev = null; state.board = r.label; state.biast = false;
+    r.targetRateHz = nearestRate(r.limits, state.rate);
+    if (state.rate !== r.targetRateHz) { state.rate = r.targetRateHz; worker?.postMessage({ type: 'config', rate: state.rate }); }
+    r.targetFreqHz = spanCenter();
+    refreshLauncherLimits(); refreshReadout();
+    await r.open();
+    speed.hidden = src.kind === 'live'; speed.textContent = '1×'; pause.textContent = 'PAUSE'; text.textContent = r.statusLine();
+    speed.onclick = () => { const s = r.cycleSpeed(); speed.textContent = s === Infinity ? 'MAX' : `${s}×`; text.textContent = r.statusLine(); };
+    pause.onclick = () => { r.paused = !r.paused; pause.textContent = r.paused ? 'PLAY' : 'PAUSE'; text.textContent = r.statusLine(); };
+    $('pb-stop').onclick = () => r.stop();
+    bar.hidden = false;
+    connecting = false;
+    await r.run();
+  } catch (e) { log(`audio in: ${(e as Error).message}`); setStatus(`audio in: ${(e as Error).message}`, false); }
+  finally {
+    connecting = false; bar.hidden = true; speed.hidden = false;
+    if (radio instanceof AudioRadio) { log(`audio in: ${radio.label} stopped`); radio = null; state.board = ''; setStatus('no radio', false); refreshLauncherLimits(); }
+  }
+}
+// FORK: end of AUDIO IN
+// FORK: end of OPEN REC
+
 async function connectRtl(d: USBDevice, events: { onIq: (b: Int8Array) => void; onLog: (l: string) => void }): Promise<void> {
   const btn = $<HTMLButtonElement>('connect');
   const r = new RtlSdr(d, {
@@ -10035,7 +10226,7 @@ function enterFullscreen(): void {
   void document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 }
 /** Taps that open a chooser (the USB picker, a file) keep their gesture: full screen waits for the next tap. */
-const FS_SKIP = '#connect, #set-connect, #rm-connect, #rp-connect, #an-imp, #log-import, input[type=file], #fs-toggle';
+const FS_SKIP = '#rm-audioin, #rm-openrec, #connect, #set-connect, #rm-connect, #rp-connect, #an-imp, #log-import, input[type=file], #fs-toggle';   // FORK: #rm-openrec opens a file picker
 /** Full screen was taken once this visit, or the app already runs full screen as an installed app. */
 let fsTaken = false;
 function initFullscreen(): void {
@@ -10050,7 +10241,7 @@ function initFullscreen(): void {
 }
 
 // ---- boot -----------------------------------------------------------------------------------------------------
-let versionText = 'dev build', releaseUrl = 'https://github.com/RocketGod-git/mayhem-mobile/releases/tag/latest';
+let versionText = 'dev build', releaseUrl = `${FORK_REPO}/commits/main`;   // FORK: the fork's history, not upstream's release
 
 // ---- the phone shell: the Android app's bars ---------------------------------------------------------------------
 /** The app bar's order, the native apps' default: by what they do (receive, analyze, transmit, tools), as Home lists them. */
@@ -10402,6 +10593,8 @@ function init(): void {
   $<HTMLButtonElement>('connect').disabled = !supported;
   if (!supported) setStatus('WebUSB not available in this browser', false);
   $('connect').onclick = () => connect();
+  $('rm-openrec').onclick = () => void openRecording();   // FORK: play a recording
+  $('rm-audioin').onclick = () => void openAudioIn();     // FORK: audio in
   $('mute').onclick = toggleMute;
   $('home').onclick = () => { closeSettings(); if (state.app) open(null); };
   $('brand').onclick = () => { closeSettings(); if (state.app) open(null); };
@@ -10497,7 +10690,7 @@ function init(): void {
     navigator.usb.addEventListener('disconnect', (e) => { log(`USB detached: ${e.device.productName ?? ''}`); if (e.device === radioDev) radio?.stop(); });
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => undefined);
-  log('Mayhem Mobile web ready');
+  log(`${FORK_NAME} web ready`);   // FORK: build identity
 }
 
 init();

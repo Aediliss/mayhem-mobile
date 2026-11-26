@@ -13,12 +13,13 @@ export interface CallPos { lat: number; lon: number; unit: number; ms: number; v
 export interface Lock { sys: string; site: string; label: string; hz: number }
 export type CallSec = 'unknown' | 'clear' | 'enc';
 /** The air interfaces calls come from. */
-export type CallProto = 'P25' | 'DMR' | 'TETRA' | 'NXDN' | 'SMARTNET';
+export type CallProto = 'P25' | 'DMR' | 'TETRA' | 'NXDN' | 'SMARTNET' | 'EDACS' | 'MPT1327' | 'LTR';   // FORK: plug-in protocols (plugins.ts)
 /**
  * The vocoder of a call: IMBE for P25 Phase 1, AMBE+2 half rate for DMR, Phase 2 and NXDN, the TETRA ACELP codec for
  * TETRA. NXDN's EFR (its 9600 bps full rate) is the IMBE frame: [efr]. Motorola Type II voice is analog FM.
  */
-export const codecOf = (proto: CallProto, tdma: boolean, efr = false): CodecId => proto === 'SMARTNET' ? 'fm' : proto === 'TETRA' ? 'tetra' : (proto === 'P25' && !tdma) || (proto === 'NXDN' && efr) ? 'imbe' : 'ambe2';
+export const codecOf = (proto: CallProto, tdma: boolean, efr = false): CodecId => proto === 'SMARTNET' || proto === 'EDACS' || proto === 'MPT1327' || proto === 'LTR' ? 'fm' :   // FORK: plug-ins are analog FM
+   proto === 'TETRA' ? 'tetra' : (proto === 'P25' && !tdma) || (proto === 'NXDN' && efr) ? 'imbe' : 'ambe2';
 export interface CallRow {
   key: string; sys: string; proto: CallProto; tg: number; group: boolean; src: number; srcs: number[]; hz: number; slot: number; tdma: boolean;
   encrypted: boolean; emergency: boolean; startMs: number; lastMs: number; endMs: number; onAir: boolean;
@@ -128,7 +129,7 @@ export class CallTracker {
   }
 
   /** A voice grant (or grant update) on the control channel. */
-  grant(g: { sys: string; proto: CallProto; tg: number; group: boolean; src: number; hz: number; slot: number; tdma: boolean; encrypted: boolean; emergency: boolean; site: string; lpcn?: number; chDerived?: boolean; efr?: boolean }, now = this.now()): Call | null {
+  grant(g: { sys: string; proto: CallProto; tg: number; group: boolean; src: number; hz: number; slot: number; tdma: boolean; encrypted: boolean; emergency: boolean; site: string; lpcn?: number; chDerived?: boolean; efr?: boolean; codec?: CodecId }, now = this.now()): Call | null {   // FORK: codec override (plug-ins: ProVoice)
     if (!g.tg && !g.hz) return null;
     let c = this.calls.find(x => x.kind === 'call' && x.onAir && x.sys === g.sys && x.tg === g.tg && x.group === g.group && (!x.hz || !g.hz || gridKey(x.hz) === gridKey(g.hz)) && (x.slot === g.slot || !x.hz || !g.hz));
     if (!c && g.hz) {
@@ -138,7 +139,7 @@ export class CallTracker {
     }
     // grant updates trail a call for a moment after its terminator: they do not open it again
     if (!c && this.calls.some(x => x.kind === 'call' && !x.onAir && x.end === 'terminator' && now - x.endMs < TRAIL_MS && x.sys === g.sys && x.tg === g.tg && (!g.hz || !x.hz || gridKey(x.hz) === gridKey(g.hz)))) return null;
-    const codec = codecOf(g.proto, g.tdma, g.efr);
+    const codec = g.codec ?? codecOf(g.proto, g.tdma, g.efr);   // FORK: a grant may name its codec
     if (!c) c = this.create({ ...g, codec }, now);
     c.tg = g.tg || c.tg; c.group = g.group; c.sys = g.sys || c.sys; if (g.hz) { c.hz = g.hz; c.slot = g.slot; } c.tdma = g.tdma; c.codec = codec;
     if (g.lpcn !== undefined && g.lpcn >= 0) c.lpcn = g.lpcn;

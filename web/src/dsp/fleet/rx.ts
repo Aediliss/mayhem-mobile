@@ -185,6 +185,8 @@ export class DmrFramer {
   onBurst: (e: DmrEvent) => void = () => undefined;
   /** A voice burst: its slot from the CACH, the 144 dibits, and its place in the superframe (0 = the one with the sync). */
   onVoice: (slot: number, dibits: Uint8Array, n: number) => void = () => undefined;
+  /** FORK: each base-station burst's 24-bit CACH, in order, for the short LC (slc.ts). */
+  onCach: (cach: Uint8Array) => void = () => undefined;
   private readonly sm = new SyncMatch();
   private readonly hist = new Uint8Array(144); private hp = 0;
   private t = 0; private lastData = -1e9;
@@ -232,6 +234,7 @@ export class DmrFramer {
   private emit(q: { at: number; voice: boolean; n: number; sf: { slot: number }; ms?: boolean }): void {
     const d = new Uint8Array(144);
     for (let i = 0; i < 144; i++) d[i] = this.hist[(this.hp + i) % 144];
+    if (!q.ms) { const ca = new Uint8Array(24); for (let i = 0; i < 12; i++) { ca[2 * i] = d[i] >> 1; ca[2 * i + 1] = d[i] & 1; } this.onCach(ca); }   // FORK: short LC
     if (q.voice) {
       const cach = new Uint8Array(24);
       for (let i = 0; i < 12; i++) { cach[2 * i] = d[i] >> 1; cach[2 * i + 1] = d[i] & 1; }

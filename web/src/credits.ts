@@ -1,5 +1,9 @@
 /** The credits roll: [heading, text]. Shared word-for-word with the Android app. */
 export const CREDITS: [boolean, string][] = [
+  // FORK: this build and its upstream; every upstream credit below is kept as it is
+  [true, "MAD MOBILE · GPL-3.0"],
+  [false, "a web-only fork of Mayhem Mobile by RocketGod · github.com/RocketGod-git/mayhem-mobile"],
+  [false, "fork source · github.com/Aediliss/mayhem-mobile"],
   [true, "MAYHEM MOBILE"],
   [false, "made by RocketGod · RocketGod.dev"],
   [false, "for The Pirates' Plunder crew · discord.gg/thepirates"],
@@ -58,4 +62,11 @@ export const CREDITS: [boolean, string][] = [
   [false, "callook.info · US callsign lookups"],
   [false, "P25, NXDN and dPMR repeater IDs, written from TIA-102 (P25 Phase 1 and 2), the NXDN Forum's TS 1-A and TS 1-E, and ETSI TS 102 490 (dPMR)"],
   [false, "Shopping-cart wheel sounds and images (Gatekeeper, Rocateq) — begaydocrime.com"],
+  // FORK: Mad Mobile additions
+  [true, "MAD MOBILE ADDITIONS"],
+  [false, "EDACS control channel — message layouts after TIA/EIA TSB-69.3, as parsed in DSD-FME's edacs-fme.c by lwvmobile and ilyacodes (ISC), edacs-fm by lwvmobile (GPL-3.0) and ledacs by SP5WWP (Unlicense); BCH(40,28) built from its definition"],
+  [false, "MPT1327 control channel — field layout, sync words and codeword check after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); the check built from its generator"],
+  [false, "LTR Standard and LTR Passport — word layouts and sync after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); both checks built from their generators"],
+  [false, "DMR Connect Plus and Hytera XPT control blocks and short LC — field layouts after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); short LC codes built from ETSI TS 102 361-1"],
+  [false, "Two-tone paging tables (Motorola Quick Call II, GE Type 99) and timings from Midian Electronics' tone signaling charts, cross-checked with the PGHscanner tone-out table"],
 ];

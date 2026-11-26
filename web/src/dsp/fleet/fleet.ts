@@ -23,6 +23,11 @@ import { TetraMac, tetraCarrierHz, tetraDisconnectCause, tetraGrantName, tetraCo
 import { NxdnRx, NxdnPlan, NXDN_CATEGORY, nxdnLine, nxdnId, type NxdnSite, type NxdnMsg, type NxdnTraffic, type NxdnScch, type NxdnAdj } from './nxdn.js';
 import { OswRx, OswParser, FmVoice, provePlan, tgOf, tgStatus, oswHex, oswWordText, type Osw, type OswEvent, type OswPlan } from './smartnet.js';
 import { P2Rx, p2Messages, p2Ptt, p2EndPtt, MAC_OPS, type P2Mac, type P2Seed } from './p2.js';
+import { PLUGINS, plugOf, plugOfKey, provePlanFor, lcnHz, type LcnPlan, type PlugEvent, type PlugRx, type TrunkPlugin } from './plugins.js';   // FORK: plug-in protocols
+import './edacs-plugin.js';   // FORK: registers EDACS
+import './mpt1327-plugin.js';   // FORK: registers MPT1327
+import './ltr-plugin.js';   // FORK: registers LTR / LTR Passport
+import { SlcAssembler, type Slc } from './slc.js';   // FORK: DMR short LC
 
 export const CH_RATE = 24_000;
 /** How far from its system's area a DMR unit position may resolve, and from the receiver before the area is known (km). */
@@ -54,8 +59,9 @@ const RECHECK_MS = 300_000;
 const TURN_CHANNELS = 2;
 const LIVE_MS = 4_000;
 
-export type SysProto = 'P25' | 'DMR' | 'TETRA' | 'NXDN' | 'SMARTNET';
-export type CarrierClass = '' | 'TETRA' | 'NXDN48' | 'NXDN96' | 'P25 C4FM' | 'P25 CQPSK/LSM' | 'P25 PHASE 2 TDMA' | 'DMR' | 'ANALOG FM' | 'UNKNOWN 4FSK' | 'UNKNOWN LINEAR' | 'MOTOROLA TYPE II';
+export type SysProto = 'P25' | 'DMR' | 'TETRA' | 'NXDN' | 'SMARTNET' | 'EDACS' | 'MPT1327' | 'LTR';   // FORK: plug-in protocols
+export type CarrierClass = '' | 'TETRA' | 'NXDN48' | 'NXDN96' | 'P25 C4FM' | 'P25 CQPSK/LSM' | 'P25 PHASE 2 TDMA' | 'DMR' | 'ANALOG FM' | 'UNKNOWN 4FSK' | 'UNKNOWN LINEAR' | 'MOTOROLA TYPE II'
+  | 'EDACS' | 'MPT1327' | 'LTR';   // FORK: plug-in protocols' control channels
 export type Role = '' | 'control' | 'voice' | 'rest' | 'data';
 export interface CarrierRow {
   key: number; hz: number; levelDb: number; peakDb: number; firstMs: number; lastMs: number; onMs: number; heardMs: number;
@@ -96,7 +102,9 @@ export interface UnitRow {
   /** Position reports that resolved outside the system's area (left off the map), and all position reports. */
   offArea: number; fixes: number;
 }
-export interface GrantRow { ms: number; lastMs: number; sys: string; kind: string; tg: number; group: boolean; src: number; ch: string; hz: number; slot: number; tdma: boolean; emergency: boolean; encrypted: boolean; carrierHz: number; site: string; lpcn?: number; chDerived?: boolean; efr?: boolean }
+export interface GrantRow { ms: number; lastMs: number; sys: string; kind: string; tg: number; group: boolean; src: number; ch: string; hz: number; slot: number; tdma: boolean; emergency: boolean; encrypted: boolean; carrierHz: number; site: string; lpcn?: number; chDerived?: boolean; efr?: boolean;
+  /** FORK: the call's codec when the grant knows it (a plug-in's digital voice: 'provoice'). */
+  codec?: CodecId }
 export interface TgRow { key: string; sys: string; tg: number; firstMs: number; lastMs: number; grants: number; recent: number[]; members: number[]; history: GrantRow[] }
 export interface LogRow { ms: number; hz: number; proto: string; name: string; text: string; hex: string; ok: boolean }
 export interface FleetSnap {
@@ -168,6 +176,8 @@ class Chan {
   readonly dmr = new DmrFramer();
   /** Motorola Type II signaling words, and analog FM voice on a channel a Type II grant named. */
   osw!: OswRx; fm: FmVoice | null = null;
+  /** FORK: the plug-in protocols' receivers (plugins.ts), each on the channel baseband or its own down-converter. */
+  plugs: { p: TrunkPlugin; rx: PlugRx; ddc: Ddc | null; oi: Float32Array; oq: Float32Array }[] = [];
   cw!: CwReader;
   oi = new Float32Array(0); oq = new Float32Array(0);
   openedMs: number; lastSyncMs = 0; quietSince: number; private cwOn = false;
@@ -209,6 +219,11 @@ class Chan {
     this.rx = new SymbolRx(fs);
     this.osw = new OswRx(fs);
     this.cw = new CwReader(fs);
+    // FORK: plug-in receivers; one that wants a wider channel gets its own down-converter (a recorded clip feeds it directly)
+    for (const p of PLUGINS) {
+      if (p.ddc && rate > 0 && !baseband) { const d = new Ddc(p.ddc.cutoffHz, p.ddc.rate, 63); d.reset(rate); d.offsetHz = hz - center; this.plugs.push({ p, rx: p.rx(d.outRate), ddc: d, oi: new Float32Array(0), oq: new Float32Array(0) }); }
+      else this.plugs.push({ p, rx: p.rx(fs), ddc: null, oi: new Float32Array(0), oq: new Float32Array(0) });
+    }
     // the voice frames' payload (nine vocoder frames and the link control of each LDU) is read by the HAM receiver's
     // P25 decoder, driven by this channel's frame syncs
     this.rx.onSymbol = s => {
@@ -242,14 +257,15 @@ class Chan {
   }
   /** Something on the channel looks like a signal Dispatch reads (syncs, words through their check, training sequences). */
   hinted(): boolean {
-    return this.p25.clean > 0 || this.p25.syncs >= 2 || this.dmr.syncs >= 2 || this.osw.good >= 2 || (this.nxdn?.some(r => r.framer.gridSyncs > 0) ?? false)
+    return this.p25.clean > 0 || this.p25.syncs >= 2 || this.dmr.syncs >= 2 || this.osw.good >= 2 || this.plugs.some(x => x.rx.good >= 2) ||   // FORK: + plug-ins
+      (this.nxdn?.some(r => r.framer.gridSyncs > 0) ?? false)
       || (this.tetra ? this.tetra.rx.stats.bschOk > 0 || this.tetra.rx.stats.trainings >= 3 : false);
   }
   /** The turn of a carrier nothing has decoded is over. */
   turnOver(now: number): boolean { return now - this.openedMs >= (this.quick && !this.hinted() ? AUDITION_FIRST_MS : AUDITION_MS); }
   /** The turn is a quick first look. */
   quick = false;
-  retarget(center: number): void { this.ddc.offsetHz = this.hz - center; this.center = center; if (this.tetra?.ddc) this.tetra.ddc.offsetHz = this.tetraHz - center; if (this.nxdnDdc) this.nxdnDdc.ddc.offsetHz = this.hz - center; }
+  retarget(center: number): void { this.ddc.offsetHz = this.hz - center; this.center = center; if (this.tetra?.ddc) this.tetra.ddc.offsetHz = this.tetraHz - center; if (this.nxdnDdc) this.nxdnDdc.ddc.offsetHz = this.hz - center; for (const x of this.plugs) if (x.ddc) x.ddc.offsetHz = this.hz - center; }   // FORK: + plug-ins
   /** Where the TETRA receiver is centered: the middle of the whole 25 kHz signal, not of the piece the finder saw. */
   private tetraHz = 0;
   /** Starts the TETRA receiver: 72 kS/s off its own down-converter, or the baseband itself when it is fast enough. */
@@ -272,6 +288,10 @@ class Chan {
     } else if (x && this.nxdn) this.nxdnDdc = null;
     const t = this.tetra;
     if (t?.ddc) { const k = t.ddc.maxOut(n); if (t.oi.length < k) { t.oi = new Float32Array(k); t.oq = new Float32Array(k); } const j = t.ddc.push(fi, fq, n, t.oi, t.oq); t.rx.push(t.oi, t.oq, j); }
+    for (const x of this.plugs) if (x.ddc) {   // FORK: plug-ins on their own down-converters
+      const k = x.ddc.maxOut(n); if (x.oi.length < k) { x.oi = new Float32Array(k); x.oq = new Float32Array(k); }
+      x.rx.push(x.oi, x.oq, x.ddc.push(fi, fq, n, x.oi, x.oq));
+    }
   }
   /** Baseband straight to the TETRA receiver (a recorded or synthesized channel at its own rate). */
   tetraBaseband(zi: Float32Array, zq: Float32Array, m: number): void { if (this.tetra && !this.tetra.ddc) this.tetra.rx.push(zi, zq, m); }
@@ -280,6 +300,7 @@ class Chan {
     const s0 = this.p25.clean + this.dmr.bursts;
     this.rx.push(zi, zq, m);
     this.osw.push(zi, zq, m); this.fm?.push(zi, zq, m);
+    for (const x of this.plugs) if (!x.ddc) x.rx.push(zi, zq, m);   // FORK: plug-ins on the channel baseband
     this.p2?.push(zi, zq, m);
     if (this.nxdn) for (const r of this.nxdn) if (r.fs === this.fs) r.push(zi, zq, m);
     this.nxdnSyncCheck();
@@ -497,9 +518,11 @@ export class FleetProcessor implements IqProcessor {
     ch.p25v.onHdu = hd => this.p25Sec(c, 'HDU', hd);
     ch.cw.onText = t => this.cwText(c, t);
     ch.osw.onOsw = (o, gap) => this.oswWord(c, ch, o, gap);
+    for (const x of ch.plugs) x.rx.onEvents = (ev, hex) => this.plugEvents(c, x.p, x.rx, ev, hex);   // FORK: plug-in protocols
+    ch.dmr.onCach = cach => this.slcCach(c, cach);   // FORK: DMR short LC
     if (c.tdma) this.p2On(c, ch);
     this.chans.set(c.key, ch);
-    if (this.calls.at('', c.hz, 0)?.proto === 'SMARTNET') this.fmOn(c, ch);
+    { const pr = this.calls.at('', c.hz, 0); if (pr?.proto === 'SMARTNET' || (plugOf(pr?.proto) && pr?.codec === 'fm')) this.fmOn(c, ch); }   // FORK: + plug-in analog calls
   }
   /** A Phase 2 TDMA channel: its S-ISCH syncs class it and keep it decoding (its voice is not built yet). */
   private p2On(c: Carrier, ch: Chan): void {
@@ -987,7 +1010,8 @@ export class FleetProcessor implements IqProcessor {
   private fmOn(c: Carrier, ch: Chan): void {
     if (ch.fm) return;
     ch.fm = new FmVoice(ch.fs);
-    ch.fm.onPcm = (pcm, open) => { const call = this.calls.at('', c.hz, 0); if (call?.proto === 'SMARTNET') { this.calls.analog(call, pcm, open); if (open) this.pending = true; } };
+    ch.fm.onPcm = (pcm, open) => { const call = this.calls.at('', c.hz, 0); if (call?.proto === 'SMARTNET' || (plugOf(call?.proto) && call?.codec === 'fm')) {   // FORK: + plug-in analog calls
+      this.calls.analog(call, pcm, open); if (open) this.pending = true; } };
   }
   private oswSites(s: Sys): SiteRow[] {
     const cs = [...this.carriers.values()].filter(c => c.sys === s.key && c.cls === 'MOTOROLA TYPE II');
@@ -996,6 +1020,94 @@ export class FleetProcessor implements IqProcessor {
     return cs.map(c => ({ key: `${s.key}/${c.key}`, label: this.oswSiteLabel(c), rfss: -1, site: c.osw?.cc ?? -1, nac: -1, ccHz: [c.hz], lastMs: c.lastMs, levelDb: c.levelDb,
       neighbors: [], secondary: [], time: c.osw ? (c.osw.plan ? c.osw.plan.label : 'channel plan not proved') : '', callsign: c.callsign, carriers: [c.key], lcns, rest: -1, busy: [], idens: [], units: 0, lra: -1, cls: -1 }));
   }
+
+  // FORK: ------------------------------------------------------------------------------------ plug-in protocols
+  // EDACS / MPT1327 / LTR (plugins.ts): a carrier becomes the protocol's control channel once its receiver has passed
+  // [minGood] frames with at least half of those it found good; events become systems, calls, units and log rows.
+  /** Per control carrier: its site's label, its own LCN, and the LCN plan proved for it (null: calls show LCNs only). */
+  private readonly plugCc = new Map<number, { ccLcn: number; plan: LcnPlan | null; label: string }>();
+  private plugEvents(c: Carrier, p: TrunkPlugin, rx: PlugRx, ev: PlugEvent[], hex: string): void {
+    const now = this.now();
+    if (c.cls !== p.proto) {
+      if (rx.good < p.minGood || rx.good < 0.5 * rx.seen) return;
+      c.cls = p.proto; c.role = 'control';
+    }
+    c.frames++; c.blocks = rx.seen; c.crcOk = Math.round(rx.good); c.lastDecodeMs = now; this.blocks++;
+    const log = (name: string, text: string) => this.addLog({ ms: now, hz: c.hz, proto: p.proto, name, text, hex, ok: true });
+    for (const e of ev) {
+      if (e.kind === 'system') {
+        const prev = this.plugCc.get(c.key), plan = provePlanFor(p.proto, c.hz, e.ccLcn);
+        // a protocol with no system identity (LTR): the proved plan names the system, else the carrier's frequency
+        const id = e.planned ? (plan ? plan.label : `${(c.hz / 1e6).toFixed(4)} MHz`) : e.id, label = e.planned ? `${e.label} · ${id}` : e.label;
+        const s = this.plugSys(p, id, label, now); c.sys = s.key; s.heardHz.add(c.key);
+        this.plugCc.set(c.key, { ccLcn: e.ccLcn ?? -1, plan, label: e.site ?? id.replace(/^site\s+/i, '') });   // the UI says 'SITE 21' (the system is titled e.label)
+        if (!prev || prev.plan !== plan) log('CHANNEL PLAN', plan ? `${plan.label} · ${plan.hz.length} channels · this control channel is LCN ${e.ccLcn ?? '?'}`
+          : `no plan puts ${e.ccLcn ? `LCN ${e.ccLcn}` : 'this control channel'} on ${(c.hz / 1e6).toFixed(4)} MHz: calls show their LCN only (Settings → TRUNKING PLANS)`);
+        this.pending = true; continue;
+      }
+      const s = c.sys ? this.systems.get(c.sys) : undefined, cc = this.plugCc.get(c.key), site = cc?.label ?? `${(c.hz / 1e6).toFixed(4)} MHz`;
+      if (e.kind === 'call') {
+        const k = e.call;
+        if (!s) { log(k.update ? 'UPDATE' : 'GRANT', `${e.text} · site not identified yet`); continue; }
+        s.lastMs = now;
+        // a call on the carrier's own LCN is on the carrier itself (LTR: a repeater carries its own calls), plan or not
+        const hz = lcnHz(cc?.plan ?? null, k.lcn) || (k.lcn > 0 && k.lcn === cc?.ccLcn ? c.hz : 0);
+        // digital voice (ProVoice) is granted with a codec nothing decodes: listed, never followed, never voiced
+        this.grant(s.key, { ms: now, lastMs: now, sys: s.key, kind: k.update ? 'update' : 'grant', tg: k.tg, group: k.group, src: k.src, ch: `LCN ${k.lcn}`, hz, slot: 0, tdma: false, emergency: k.emergency, encrypted: k.encrypted, carrierHz: c.hz, site, lpcn: k.lcn, codec: k.digital ? 'provoice' : undefined }, k.update);
+        if (!k.update && k.src) this.touchUnit(s.key, k.src, c, now, 'grant', { hex, line: e.text }, site, k.group ? k.tg : undefined);
+        log(k.update ? 'UPDATE' : 'GRANT', `${e.text}${hz ? ` · ${(hz / 1e6).toFixed(4)} MHz` : ''}`);
+      } else if (e.kind === 'end') {
+        const hz = lcnHz(cc?.plan ?? null, e.lcn) || (e.lcn > 0 && e.lcn === cc?.ccLcn ? c.hz : 0);
+        if (s && hz) this.calls.terminate(s.key, hz, 0, now);
+        log('END', e.text);
+      } else if (e.kind === 'unit') {
+        if (s) this.touchUnit(s.key, e.unit, c, now, 'unit', { hex, line: e.text }, site, e.group);
+        log('UNIT', e.text);
+      } else log(e.name, e.text);
+    }
+  }
+  private plugSys(p: TrunkPlugin, id: string, label: string, now: number): Sys {
+    const key = `${p.proto} ${id}`;
+    let s = this.systems.get(key);
+    if (!s) {
+      s = { key, proto: p.proto, color: this.colorNext++, wacn: -1, sysId: -1, cc: -1, fid: -1, net: -1, model: label, firstMs: now, lastMs: now, idens: new Map(), derived: false, trunk: p.title, lcns: new Map(), lcnVotes: new Map(), rest: -1, busy: [], lpcnVotes: new Map(), lpcnHz: new Map(), heardHz: new Set() };
+      this.systems.set(key, s);
+    }
+    s.model = label; s.lastMs = now;
+    return s;
+  }
+  private plugSites(s: Sys): SiteRow[] {
+    return [...this.carriers.values()].filter(c => c.sys === s.key && c.cls === s.proto).map(c => {
+      const cc = this.plugCc.get(c.key), plan = cc?.plan ?? null;
+      return { key: `${s.key}/${c.key}`, label: cc?.label ?? `${(c.hz / 1e6).toFixed(4)} MHz`, rfss: -1, site: cc?.ccLcn ?? -1, nac: -1, ccHz: [c.hz], lastMs: c.lastMs, levelDb: c.levelDb,
+        neighbors: [], secondary: [], time: plan ? plan.label : 'no channel plan', callsign: c.callsign, carriers: [c.key],
+        lcns: plan ? plan.hz.map((hz, i) => ({ lcn: i + 1, hz, slot: 0 })) : [], rest: -1, busy: [], idens: [], units: 0, lra: -1, cls: -1 };
+    });
+  }
+  // FORK: end of plug-in protocols
+
+  // FORK: ------------------------------------------------------------------------------------ DMR short LC (slc.ts)
+  // The CACH's short LC: Connect Plus says its network and site, Hytera XPT its free repeater. Read on a carrier
+  // already known as DMR; it labels the system the carrier's CSBKs or voice already put it in.
+  private readonly slcAsm = new Map<number, SlcAssembler>();
+  /** Per carrier: the site number its short LC gave (Connect Plus). */
+  private readonly slcSite = new Map<number, number>();
+  private slcCach(c: Carrier, cach: Uint8Array): void {
+    if (c.cls !== 'DMR') return;
+    let a = this.slcAsm.get(c.key);
+    if (!a) { a = new SlcAssembler(); a.onSlc = (x, bits) => this.slcRead(c, x, bits); this.slcAsm.set(c.key, a); }
+    a.push(cach);
+  }
+  private slcRead(c: Carrier, x: Slc, bits: Uint8Array): void {
+    const now = this.now(), s = c.sys ? this.systems.get(c.sys) : undefined;
+    if (s?.proto === 'DMR') {
+      if (x.kind === 'conplus') { s.trunk = 'CONNECT PLUS'; s.model = 'CONNECT PLUS'; s.net = x.net; this.slcSite.set(c.key, x.site); this.pending = true; }
+      else if (x.kind === 'xpt') { s.trunk = 'HYTERA XPT'; this.pending = true; }
+    }
+    let hx = ''; for (let i = 0; i < 36; i += 4) hx += ((bits[i] << 3) | (bits[i + 1] << 2) | (bits[i + 2] << 1) | bits[i + 3]).toString(16);
+    this.addLog({ ms: now, hz: c.hz, proto: 'DMR', name: 'SHORT LC', text: `CC ${c.cc} · SHORT LC · ${x.text}`, hex: hx, ok: true });
+  }
+  // FORK: end of DMR short LC
 
   // ------------------------------------------------------------------------------------------------ P25
   private p25Frame(c: Carrier, nac: number, duid: number): void {
@@ -1278,6 +1390,7 @@ export class FleetProcessor implements IqProcessor {
     return s;
   }
   private dmrApply(c: Carrier, cs: Csbk, slot: number, s: Sys, now: number): void {
+    if (cs.verified && cs.trunk) s.trunk = cs.trunk;   // FORK: Connect Plus / Hytera XPT (csbk-vendor.ts)
     switch (cs.kind) {
       case 'beacon': {
         s.trunk = 'CAPACITY PLUS';
@@ -1304,6 +1417,10 @@ export class FleetProcessor implements IqProcessor {
         if (cs.src) this.touchUnit(s.key, cs.src, c, now, 'grant', cs, '', cs.group ? cs.dst : undefined);
         break;
       }
+      // FORK: vendor blocks (csbk-vendor.ts): a Connect Plus affiliation puts the radio in its talkgroup; a Hytera XPT
+      // preamble names the caller (the call itself is read from its voice header on the repeater it goes to)
+      case 'affil': if (cs.unit) this.touchUnit(s.key, cs.unit, c, now, 'affiliation', cs, '', cs.dst); break;
+      case 'xpt': if (cs.src) this.touchUnit(s.key, cs.src, c, now, 'xpt preamble', cs, '', cs.group ? cs.dst : undefined); break;
       case 'ack': case 'unit': case 'aloha': case 'callann': {
         if (cs.kind === 'aloha' && cs.verified) s.trunk = 'TIER III'; const id = cs.kind === 'callann' ? cs.unit : cs.dst; if (id && id < 0xfffff0 && !allUnits(cs, id)) this.touchUnit(s.key, id, c, now, cs.kind === 'ack' ? 'acknowledged' : cs.name.toLowerCase(), cs, ''); break; }
     }
@@ -1379,8 +1496,9 @@ export class FleetProcessor implements IqProcessor {
   private grant(sys: string, g: GrantRow, update: boolean): void {
     if (g.kind !== 'datagrant') {
       const p25 = sys.startsWith('P25'), tetra = sys.startsWith('TETRA'), nxdn = sys.startsWith('NXDN'), sn = sys.startsWith('SMARTNET');
-      const proto: CallProto = p25 ? 'P25' : tetra ? 'TETRA' : nxdn ? 'NXDN' : sn ? 'SMARTNET' : 'DMR';
-      const call = this.calls.grant({ sys, proto, tg: g.tg, group: g.group, src: g.src, hz: g.hz, slot: p25 ? (g.tdma ? g.slot : 0) : g.slot, tdma: g.tdma, encrypted: g.encrypted, emergency: g.emergency, site: g.site, lpcn: g.lpcn, chDerived: g.chDerived, efr: g.efr }, g.ms);
+      const proto: CallProto = p25 ? 'P25' : tetra ? 'TETRA' : nxdn ? 'NXDN' : sn ? 'SMARTNET' : plugOfKey(sys)?.proto ?? 'DMR';   // FORK: + plug-ins
+      const plugFm = !!plugOfKey(sys) && !g.codec;   // FORK: a plug-in call with analog FM voice
+      const call = this.calls.grant({ sys, proto, tg: g.tg, group: g.group, src: g.src, hz: g.hz, slot: p25 ? (g.tdma ? g.slot : 0) : g.slot, tdma: g.tdma, encrypted: g.encrypted, emergency: g.emergency, site: g.site, lpcn: g.lpcn, chDerived: g.chDerived, efr: g.efr, codec: g.codec }, g.ms);   // FORK: + codec (plug-ins)
       // a voice channel inside the span is listened to from the grant on, not from the next channel assignment
       if (call?.onAir && !call.muted && call.hz && this.rate > 0 && this.inSpan(call.hz)) {
         const vc = this.carrierAt(call.hz); if (!vc.role) vc.role = 'voice'; if (!vc.sys) vc.sys = sys;
@@ -1390,8 +1508,8 @@ export class FleetProcessor implements IqProcessor {
         // an NXDN voice channel is read from its first frame, at the system's symbol rate
         if (nxdn && ch && !ch.nxdn) this.nxdnOn(vc, ch, this.systems.get(sys)?.nxdnBaud);
         // a Type II voice channel carries analog FM
-        if (sn && ch) this.fmOn(vc, ch);
-      } else if (sn && call?.onAir && call.hz) {
+        if ((sn || plugFm) && ch) this.fmOn(vc, ch);   // FORK: + plug-in analog calls (an LTR repeater's channel is already open)
+      } else if ((sn || plugFm) && call?.onAir && call.hz) {   // FORK: + plug-in analog calls
         // a recorded channel fed as its own baseband
         const vc = this.carriers.get(gridKey(call.hz)), ch = vc && this.chans.get(vc.key);
         if (vc && ch) { if (!vc.role) vc.role = 'voice'; if (!vc.sys) vc.sys = sys; this.fmOn(vc, ch); }
@@ -1566,7 +1684,8 @@ export class FleetProcessor implements IqProcessor {
       const call = g.find(c => c.callsign)?.callsign ?? '', keys = new Set(g.map(c => c.key));
       const lcns = [...s.lcns].filter(([, v]) => keys.has(gridKey(v.hz)) || g.some(c => c.hz === v.hz)).map(([lcn, v]) => ({ lcn, hz: v.hz, slot: v.slot })).sort((a, b) => a.lcn - b.lcn);
       const ids = new Set<number>(); for (const c of g) for (const id of c.unitIds.keys()) ids.add(id);
-      return { key: `${s.key}/${n}`, label: call || (s.net >= 0 ? `site ${s.net}` : `site ${n}`), rfss: -1, site: n, nac: -1, ccHz: g.map(c => c.hz).sort((a, b) => a - b),
+      const slcSite = g.map(c => this.slcSite.get(c.key)).find(v => v !== undefined);   // FORK: a Connect Plus site from the short LC
+      return { key: `${s.key}/${n}`, label: call || (slcSite !== undefined ? `site ${slcSite}` : s.net >= 0 ? `site ${s.net}` : `site ${n}`), rfss: -1, site: slcSite ?? n, nac: -1, ccHz: g.map(c => c.hz).sort((a, b) => a - b),   // FORK: + short LC site
         lastMs: Math.max(...g.map(c => c.lastMs)), levelDb: Math.max(...g.map(c => c.levelDb)), neighbors: [], secondary: [], time: '', callsign: call,
         carriers: g.map(c => c.key), lcns, rest: s.rest, busy: s.busy, idens: [], units: ids.size, lra: -1, cls: -1 };
     });
@@ -1602,9 +1721,11 @@ export class FleetProcessor implements IqProcessor {
         });
       } else if (s.proto === 'NXDN') sites = this.nxdnSites(s);
       else if (s.proto === 'SMARTNET') sites = this.oswSites(s);
+      else if (plugOf(s.proto)) sites = this.plugSites(s);   // FORK: plug-in protocols
       else sites = this.dmrSites(s);
       for (const st of sites) for (const k of st.carriers) for (const u of this.units.values()) if (u.sys === s.key && u.carriers.has(k)) unitSite.set(u.key, st.label);
-      const label = s.proto === 'SMARTNET' ? `MOTOROLA TYPE II · SYSTEM ${h(s.sysId, 4)}` : s.proto === 'NXDN' ? (s.trunk === 'CONVENTIONAL' ? `NXDN · CONVENTIONAL · RAN ${s.sysId}` : s.trunk === 'TYPE-D' ? `NXDN · TYPE-D · SITE ${s.sysId}` : `NXDN · ${s.model} SYSTEM ${s.sysId}`) : s.proto === 'TETRA' ? `TETRA · MCC ${s.wacn} · MNC ${s.sysId}` : s.proto === 'P25' ? `WACN ${h(s.wacn, 5)} · SYSTEM ${h(s.sysId, 3)}` : s.net >= 0 ? `${s.model} NETWORK ${s.net}` : s.trunk === 'CAPACITY PLUS' ? `CAPACITY PLUS · COLOR CODE ${s.cc}` : `COLOR CODE ${s.cc}${s.fid > 0 ? ` · FID ${h(s.fid, 2)}` : ''}`;
+      const label = plugOf(s.proto) ? s.model : s.proto === 'SMARTNET' ? `MOTOROLA TYPE II · SYSTEM ${h(s.sysId, 4)}` :   // FORK: a plug-in system's label is kept in .model
+        s.proto === 'NXDN' ? (s.trunk === 'CONVENTIONAL' ? `NXDN · CONVENTIONAL · RAN ${s.sysId}` : s.trunk === 'TYPE-D' ? `NXDN · TYPE-D · SITE ${s.sysId}` : `NXDN · ${s.model} SYSTEM ${s.sysId}`) : s.proto === 'TETRA' ? `TETRA · MCC ${s.wacn} · MNC ${s.sysId}` : s.proto === 'P25' ? `WACN ${h(s.wacn, 5)} · SYSTEM ${h(s.sysId, 3)}` : s.net >= 0 ? `${s.model} NETWORK ${s.net}` : s.trunk === 'CAPACITY PLUS' || s.trunk === 'CONNECT PLUS' || s.trunk === 'HYTERA XPT' ? `${s.trunk} · COLOR CODE ${s.cc}` : `COLOR CODE ${s.cc}${s.fid > 0 ? ` · FID ${h(s.fid, 2)}` : ''}`;   // FORK: + Connect Plus / Hytera XPT
       const units = [...this.units.values()].filter(u => u.sys === s.key).length, tgs = [...this.tgs.values()].filter(t => t.sys === s.key).length;
       const lpcns = s.nxdnPlan ? [...s.nxdnPlan.heard].map(([lpcn, hz]) => ({ lpcn, hz, votes: s.nxdnPlan!.votes.get(lpcn)?.get(hz) ?? 0 })).sort((a, b) => a.lpcn - b.lpcn)
         : [...s.lpcnHz].map(([lpcn, hz]) => ({ lpcn, hz, votes: s.lpcnVotes.get(lpcn)?.get(hz) ?? 0 })).sort((a, b) => a.lpcn - b.lpcn);
