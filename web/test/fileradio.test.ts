@@ -190,3 +190,21 @@ test('digital LO: without it, the same app setup hears nothing (so the test abov
   await r.open(); await r.run(); await new Promise(res => setTimeout(res, 20));
   assert.deepEqual(w.lines, []);
 });
+
+test('end of file: run() resolves only after the worker has finished the last buffers (no results arrive later)', async () => {
+  // the packet ends right at the end of the file, so its last buffers are the ones still in flight at EOF
+  // (cut the 0.1 s of trailing silence and 30 of the encoder's 32 closing flags: the frame completes ~13 ms before EOF)
+  const full = aprsIq(), tail = full.subarray(0, full.length - 2 * (RATE / 10) - 2 * Math.round(RATE * 30 * 8 / 1200));
+  const src = await openIqSource([file(toCs8(tail, 60), 'eof_144.39M_960k.c8')]);
+  // a slow worker: each buffer takes 30 ms to decode, so several are still queued when the file runs out
+  const lines: string[] = []; let fns: ((e: MessageEvent) => void)[] = [], busyUntil = 0;
+  const dec = new AprsDecoder(m => { if (m.type === 'packet') lines.push(m.line as string); }); dec.reset();
+  const w: WorkerLike = {
+    postMessage(m: unknown) { const b = new Int8Array((m as { buf: ArrayBuffer }).buf); busyUntil = Math.max(busyUntil, performance.now()) + 30;
+      setTimeout(() => { dec.onIq(b, RATE); for (const f of fns) f({ data: { type: 'iqAck' } } as MessageEvent); }, busyUntil - performance.now()); },
+    addEventListener(_t, f) { fns.push(f); }, removeEventListener(_t, f) { fns = fns.filter(x => x !== f); },
+  };
+  const r = new FileRadio(src, w, { onLog: () => {}, onStatus: () => {} });
+  r.speed = Infinity; await r.open(); await r.run();          // no extra wait after this
+  assert.equal(lines.length, 1, 'the packet was decoded before run() resolved');
+});

@@ -380,11 +380,13 @@ drainPort.port1.onmessage = () => {
   drainArmed = false;
   // a few buffers per task, so retunes and commands get in between
   const t0 = performance.now();
-  while (queue.length && performance.now() - t0 < 8) process(queue.shift()!);
+  while (queue.length && performance.now() - t0 < 8) { const b = queue.shift()!; process(b); if (ackAfter.delete(b)) post({ type: 'iqAck' }); }   // FORK: ack after processing
   armDrain();
 };
 function armDrain(): void { if (!drainArmed && queue.length) { drainArmed = true; drainPort.port2.postMessage(0); } }
-function dropQueued(): void { queue.length = 0; }
+function dropQueued(): void { for (const b of queue) if (ackAfter.delete(b)) post({ type: 'iqAck' }); queue.length = 0; }   // FORK: release acks
+/** FORK: queued recording buffers (fileradio.ts) to acknowledge once processed. */
+const ackAfter = new WeakSet<Int8Array>();
 
 self.onmessage = (e: MessageEvent) => {
   const m = e.data;
@@ -397,8 +399,9 @@ self.onmessage = (e: MessageEvent) => {
       // exactly as before the queue existed
       if (processor !== lora && queue.length === 0) { process(b); if (m.ack) post({ type: 'iqAck' }); break; }   // FORK: ack paces fileradio.ts
       const cap = Math.max(8, Math.min(QUEUE_MAX, Math.ceil(0.2 * rate * 2 / Math.max(b.length, 1))));
-      while (queue.length >= cap) queue.shift();
-      queue.push(b); armDrain(); if (m.ack) post({ type: 'iqAck' }); break;   // FORK: ack paces fileradio.ts
+      while (queue.length >= cap) { const d = queue.shift()!; if (ackAfter.delete(d)) post({ type: 'iqAck' }); }   // FORK: never strand an ack
+      if (m.ack) ackAfter.add(b);   // FORK: acked after process(), in the drain below
+      queue.push(b); armDrain(); break;
     }
     case 'config':
       if (processor === lora && typeof m.rate === 'number' && m.rate !== rate) dropQueued();

@@ -318,7 +318,7 @@ function tune(hz: number, hold = false): void {
   if (tunesInSpan()) {
     // the channel moves inside the view; only when it leaves the view does the radio follow it
     const prevLo = state.viewLo;
-    if (Math.abs(state.freq - state.viewLo) > state.rate / 2 - VIEW_GUARD) state.viewLo = state.freq + (state.app === 'ais' || state.app === 'aprs' ? NARROW_SHIFT : 0);
+    if (Math.abs(state.freq - state.viewLo) > state.rate / 2 - VIEW_GUARD) state.viewLo = state.freq + (state.app === 'ais' || state.app === 'aprs' ? narrowShiftHz() : 0);   // FORK: narrowShiftHz
     // When the LO does move, slide the waterfall history by the same amount so the spectrum that was already
     // painted stays under its true frequency. Only the genuinely new sliver at the leading edge comes up black,
     // instead of the whole picture restarting empty from the top when you step to a station outside the window.
@@ -966,7 +966,8 @@ const NARROW_SHIFT = 250_000;
 const radioCan = (hz: number) => !radio || canSample(radio.limits, hz);
 /** Put the radio NARROW_SHIFT above the channel, as Mayhem keeps its channels off the DC spike; the engine mixes the
  *  channel back down through the offset. */
-function narrowShift(): void { state.viewLo = state.freq + NARROW_SHIFT; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); }
+const narrowShiftHz = () => (radio?.kind === 'file' ? 0 : NARROW_SHIFT);   // FORK: recordings need no DC-spike offset
+function narrowShift(): void { state.viewLo = state.freq + narrowShiftHz(); if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); }
 function open(app: AppId | null): void {
   if ((app as string) === 'subghz' || (app as string) === 'tpms') app = 'devices';      // Sub-GHz and TPMS are part of Devices now
   if (hiddenApp(app)) app = null;                         // an app this radio hides (TX and Troll on an RTL-SDR) opens Home instead
@@ -1961,7 +1962,7 @@ function render(app: AppId | null): void {
   header.innerHTML = app ? `‹ ${APPS.find(a => a.id === app)!.title.toUpperCase()}` : FORK_WORDMARK;   // FORK: build wordmark
   $('sub').textContent = app ? APPS.find(a => a.id === app)!.blurb
     : !radio ? 'HackRF or RTL-SDR · no device'
-    : radio.kind === 'rtlsdr' ? radio.label
+    : radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label   // FORK: a recording names itself
     : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · ' + state.firmware : ''}`;
   scope = null; sweepScope = null;
   // Audio, Looking Glass and Capture have short controls: on a wide screen they sit beside the card, over a
@@ -8760,7 +8761,7 @@ function thisAppRows(app: AppId | null): string {
 }
 function renderSettings(view: HTMLElement): void {
   const over = settingsOver;
-  const radioLine = radio ? (radio.kind === 'rtlsdr' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';
+  const radioLine = radio ? (radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';   // FORK: a recording names itself
   const appRows = thisAppRows(over);
   const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['log', 'LOG'], ['about', 'ABOUT']];
   view.innerHTML = `
@@ -8801,7 +8802,7 @@ function renderSettings(view: HTMLElement): void {
       <div class="row"><button id="install" class="chip" ${installPrompt ? '' : 'disabled'}>${installPrompt ? 'INSTALL TO HOME SCREEN' : 'INSTALLED / NOT OFFERED'}</button><a class="chip primary" href="https://play.google.com/store/apps/details?id=com.rocketgod.mayhem" target="_blank" rel="noopener">GET IT ON GOOGLE PLAY</a></div>
       ${isAndroid() ? `<div class="kv"><span>Android app</span><span>On Google Play. It opens by itself when the radio is plugged in and keeps running in the background.</span></div>` : ''}
       <div class="kv"><span>Mayhem Mobile</span><span>${versionText} — one build, two shells: this web app in any Chrome/Edge browser, and the Android app on Google Play</span></div>
-      <div class="kv"><span>Device</span><span>${state.board ? (radio?.kind === 'rtlsdr' ? state.board : `${state.board} · fw ${state.firmware}`) : 'no radio attached'}</span></div>
+      <div class="kv"><span>Device</span><span>${state.board ? esc(radio?.kind === 'rtlsdr' || radio?.kind === 'file' ? state.board : `${state.board} · fw ${state.firmware}`) : 'no radio attached'}${'' /* FORK: escaped (a recording's file name lands here) */}</span></div>
       <div class="kv"><span>What it is</span><span>PortaPack Mayhem's receivers ported to run in the browser from raw HackRF IQ over WebUSB</span></div>
       ${'' /* FORK: this build, its source and its upstream */}<div class="kv"><span>This build</span><span>${esc(FORK_NAME)} · ${versionText} · web only</span></div>
       <div class="kv"><span>Source</span><span><a href="${FORK_REPO}">${FORK_REPO_LABEL}</a></span></div>
@@ -9850,6 +9851,8 @@ async function openRecording(): Promise<void> {
     // the plain receiver (and the launcher) show the recording where it was made; fixed-band apps keep their own dial
     if ((!state.app || state.app === 'audio' || state.app === 'capture') && r.centerHz) { state.freq = state.viewLo = r.centerHz; worker?.postMessage({ type: 'config', centreHz: r.centerHz }); }
     r.targetFreqHz = spanCenter();   // the app's LO: inside the recording's span the player's digital LO follows it
+    if (state.app === 'ais' || state.app === 'aprs') narrowShift();   // re-placed with no offset now a recording is the radio
+    else sendOffset();                // the worker's in-span offset follows the dial set above
     refreshLauncherLimits();
     refreshReadout();
     await r.open();

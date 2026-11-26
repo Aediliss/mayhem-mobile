@@ -150,6 +150,9 @@ export class FileRadio implements Radio {
         // as-fast-as-possible still yields, so the page stays responsive
         if (!Number.isFinite(this.speed)) await this.waitFor(0);
       }
+      // the end of the file is not the end of decoding: let the worker finish what it holds (bounded; STOP skips it)
+      const drainStart = now();
+      while (this.inFlight > 0 && !this.stopWanted && now() - drainStart < ACK_GIVE_UP_MS) await this.waitFor(ACK_GIVE_UP_MS - (now() - drainStart));
     } finally {
       this.running = false;
       this.worker.removeEventListener('message', this.onMessage);
