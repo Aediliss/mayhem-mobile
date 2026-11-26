@@ -80,7 +80,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | EDACS (standard + networked), ProVoice identification only — in Dispatch via the plug-in hook | TIA/EIA TSB-69.3; DSD-FME `edacs-fme.c`; edacs-fm; ledacs | DSD-FME ISC ✔ (COPYRIGHT: all but the D-STAR files) · edacs-fm GPL-3.0 ✔ · ledacs Unlicense ✔ · Morelos-Zaragoza BCH code "non-commercial only" ✘ not used |
-| [ ] | ★ | LTR / LTR Passport | SDRTrunk | GPL-3.0 ✔ |
+| [x] | ★ | LTR / LTR Passport — in Dispatch via the plug-in hook | SDRTrunk `module/decode/ltrstandard`, `passport`, `edac/CRCLTR`, `CRCPassport` | SDRTrunk GPL-3.0-or-later ✔ (file headers); no public spec |
 | [x] | ★ | MPT1327 — in Dispatch via the plug-in hook | SDRTrunk `module/decode/mpt1327`, `edac/CRCFleetsync` | SDRTrunk GPL-3.0-or-later ✔ (file headers) · MPT1327 spec PDF not reachable (Ofcom 403) |
 | [ ] | | DMR Tier III: Connect Plus, Hytera XPT mapping | DSD-FME; SDRTrunk | as above |
 | [ ] | | Two-tone sequential (QC-II) receive, GE Star | upstream `ui_test` (TX) tables | in-repo |
@@ -281,3 +281,30 @@ for "or later" first.
   Hardware: an MPT1327 system (taxi, utility or public-transport fleets in Europe / Asia / Australia; VHF or UHF): put
   its band plan in Settings → TRUNKING PLANS, open Dispatch with a HackRF (or H4M in HackRF mode). The control channel
   should become "MPT1327 · SYS xxxx", calls should list with IDENT and frequency, analog voice should be heard.
+- **Phase 6 · LTR / LTR Passport** (`dsp/fleet/ltr.ts`, `ltr-plugin.ts`, `test/ltr*.test.ts`): no control channel; every
+  repeater sends 300 bit/s sub-audible NRZ data under its own voice. Receiver on the channel's 24 kS/s baseband: FM
+  discriminator averaged to ~2400 S/s, two bit-long moving averages (matched filter; first null at 300 Hz keeps voice
+  out), sliced at the middle of the recent highs and lows (absorbs the carrier's frequency offset), a bit clock on the
+  crossings, sync 101011000 in either polarity, then the 40-bit LTR word and the 68-bit Passport word behind it checked.
+  The checks are built from their generators: LTR = a 6-bit shift register (feedback from its top two stages) + even
+  parity; Passport = CRC-7 x^7+x^3+1 + even parity. No correction (7-8 check bits leave none to spare). One plug-in
+  serves both: each busy repeater becomes a site, learns its own LCN as the channel its calls name most (go-to words for
+  other repeaters do not move it), a call on its own LCN is placed on the carrier itself (plan or not) and its FM voice
+  followed there. LTR Standard sends no system identity, so the proved plan names the system (else the frequency);
+  Passport's site number does. Groups are A-HH-GGG, listed as A·100000 + HH·1000 + GGG (0-03-045 → 3045); LTR Standard
+  sends no unit IDs. Dispatch change (FORK): a plug-in call with FM voice turns the voice on at grant time even when its
+  channel is already open (it is, for LTR); a system event may carry `planned` and `site`.
+  Tests prove: both derived tables equal SDRTrunk's published ones; word layouts and kinds; a flipped bit fails;
+  LTR words decode under a 2.5 kHz voice tone at 10 dB, with a 1.8 kHz carrier offset, in either polarity (at most the
+  first two words of a keyup go to settling); Passport words decode; noise and voice alone decode nothing; the plug-in
+  learns its LCN, treats repeats as updates and ends the right call; Dispatch's real engine classes a busy repeater,
+  proves the plan by its LCN, lists the call on 461.0375 MHz and follows over a second of its voice; without a plan the
+  call still sits on the repeater. Browser check (Chromium): a recording in Dispatch plays "LTR · Shop net", TG 3045,
+  REPEATER 3, 461.0375 MHz with voice.
+  Not confirmed on air: that a busy repeater names itself most often (the LTR scheme says so); Passport's channel-number
+  to frequency rule (its band field is logged, not used: a plan gives the frequencies); idle repeaters send nothing, so
+  only repeaters that carry a call while Dispatch is looking are found.
+  Hardware: an LTR or Passport system (business / utility trunking, often 450-470 MHz or 800/900 MHz) with an RTL-SDR or
+  HackRF. Put the site's repeaters in Settings → TRUNKING PLANS in LCN order (`LTR <name>: <MHz> <MHz> …`, RadioReference
+  lists them), open Dispatch. As repeaters key up, each should show as "REPEATER n" under "LTR · <name>", calls should list
+  by group with their frequency, and the voice should be heard.

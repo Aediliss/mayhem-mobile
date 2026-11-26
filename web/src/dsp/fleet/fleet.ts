@@ -26,6 +26,7 @@ import { P2Rx, p2Messages, p2Ptt, p2EndPtt, MAC_OPS, type P2Mac, type P2Seed } f
 import { PLUGINS, plugOf, plugOfKey, provePlanFor, lcnHz, type LcnPlan, type PlugEvent, type PlugRx, type TrunkPlugin } from './plugins.js';   // FORK: plug-in protocols
 import './edacs-plugin.js';   // FORK: registers EDACS
 import './mpt1327-plugin.js';   // FORK: registers MPT1327
+import './ltr-plugin.js';   // FORK: registers LTR / LTR Passport
 
 export const CH_RATE = 24_000;
 /** How far from its system's area a DMR unit position may resolve, and from the receiver before the area is known (km). */
@@ -1033,9 +1034,11 @@ export class FleetProcessor implements IqProcessor {
     const log = (name: string, text: string) => this.addLog({ ms: now, hz: c.hz, proto: p.proto, name, text, hex, ok: true });
     for (const e of ev) {
       if (e.kind === 'system') {
-        const s = this.plugSys(p, e.id, e.label, now); c.sys = s.key; s.heardHz.add(c.key);
         const prev = this.plugCc.get(c.key), plan = provePlanFor(p.proto, c.hz, e.ccLcn);
-        this.plugCc.set(c.key, { ccLcn: e.ccLcn ?? -1, plan, label: e.id.replace(/^site\s+/i, '') });   // the UI says 'SITE 21' (the system is titled e.label)
+        // a protocol with no system identity (LTR): the proved plan names the system, else the carrier's frequency
+        const id = e.planned ? (plan ? plan.label : `${(c.hz / 1e6).toFixed(4)} MHz`) : e.id, label = e.planned ? `${e.label} · ${id}` : e.label;
+        const s = this.plugSys(p, id, label, now); c.sys = s.key; s.heardHz.add(c.key);
+        this.plugCc.set(c.key, { ccLcn: e.ccLcn ?? -1, plan, label: e.site ?? id.replace(/^site\s+/i, '') });   // the UI says 'SITE 21' (the system is titled e.label)
         if (!prev || prev.plan !== plan) log('CHANNEL PLAN', plan ? `${plan.label} · ${plan.hz.length} channels · this control channel is LCN ${e.ccLcn ?? '?'}`
           : `no plan puts ${e.ccLcn ? `LCN ${e.ccLcn}` : 'this control channel'} on ${(c.hz / 1e6).toFixed(4)} MHz: calls show their LCN only (Settings → TRUNKING PLANS)`);
         this.pending = true; continue;
@@ -1045,13 +1048,14 @@ export class FleetProcessor implements IqProcessor {
         const k = e.call;
         if (!s) { log(k.update ? 'UPDATE' : 'GRANT', `${e.text} · site not identified yet`); continue; }
         s.lastMs = now;
-        const hz = lcnHz(cc?.plan ?? null, k.lcn);
+        // a call on the carrier's own LCN is on the carrier itself (LTR: a repeater carries its own calls), plan or not
+        const hz = lcnHz(cc?.plan ?? null, k.lcn) || (k.lcn > 0 && k.lcn === cc?.ccLcn ? c.hz : 0);
         // digital voice (ProVoice) is granted with a codec nothing decodes: listed, never followed, never voiced
         this.grant(s.key, { ms: now, lastMs: now, sys: s.key, kind: k.update ? 'update' : 'grant', tg: k.tg, group: k.group, src: k.src, ch: `LCN ${k.lcn}`, hz, slot: 0, tdma: false, emergency: k.emergency, encrypted: k.encrypted, carrierHz: c.hz, site, lpcn: k.lcn, codec: k.digital ? 'provoice' : undefined }, k.update);
         if (!k.update && k.src) this.touchUnit(s.key, k.src, c, now, 'grant', { hex, line: e.text }, site, k.group ? k.tg : undefined);
         log(k.update ? 'UPDATE' : 'GRANT', `${e.text}${hz ? ` · ${(hz / 1e6).toFixed(4)} MHz` : ''}`);
       } else if (e.kind === 'end') {
-        const hz = lcnHz(cc?.plan ?? null, e.lcn);
+        const hz = lcnHz(cc?.plan ?? null, e.lcn) || (e.lcn > 0 && e.lcn === cc?.ccLcn ? c.hz : 0);
         if (s && hz) this.calls.terminate(s.key, hz, 0, now);
         log('END', e.text);
       } else if (e.kind === 'unit') {
@@ -1463,6 +1467,7 @@ export class FleetProcessor implements IqProcessor {
     if (g.kind !== 'datagrant') {
       const p25 = sys.startsWith('P25'), tetra = sys.startsWith('TETRA'), nxdn = sys.startsWith('NXDN'), sn = sys.startsWith('SMARTNET');
       const proto: CallProto = p25 ? 'P25' : tetra ? 'TETRA' : nxdn ? 'NXDN' : sn ? 'SMARTNET' : plugOfKey(sys)?.proto ?? 'DMR';   // FORK: + plug-ins
+      const plugFm = !!plugOfKey(sys) && !g.codec;   // FORK: a plug-in call with analog FM voice
       const call = this.calls.grant({ sys, proto, tg: g.tg, group: g.group, src: g.src, hz: g.hz, slot: p25 ? (g.tdma ? g.slot : 0) : g.slot, tdma: g.tdma, encrypted: g.encrypted, emergency: g.emergency, site: g.site, lpcn: g.lpcn, chDerived: g.chDerived, efr: g.efr, codec: g.codec }, g.ms);   // FORK: + codec (plug-ins)
       // a voice channel inside the span is listened to from the grant on, not from the next channel assignment
       if (call?.onAir && !call.muted && call.hz && this.rate > 0 && this.inSpan(call.hz)) {
@@ -1473,8 +1478,8 @@ export class FleetProcessor implements IqProcessor {
         // an NXDN voice channel is read from its first frame, at the system's symbol rate
         if (nxdn && ch && !ch.nxdn) this.nxdnOn(vc, ch, this.systems.get(sys)?.nxdnBaud);
         // a Type II voice channel carries analog FM
-        if (sn && ch) this.fmOn(vc, ch);
-      } else if (sn && call?.onAir && call.hz) {
+        if ((sn || plugFm) && ch) this.fmOn(vc, ch);   // FORK: + plug-in analog calls (an LTR repeater's channel is already open)
+      } else if ((sn || plugFm) && call?.onAir && call.hz) {   // FORK: + plug-in analog calls
         // a recorded channel fed as its own baseband
         const vc = this.carriers.get(gridKey(call.hz)), ch = vc && this.chans.get(vc.key);
         if (vc && ch) { if (!vc.role) vc.role = 'voice'; if (!vc.sys) vc.sys = sys; this.fmOn(vc, ch); }

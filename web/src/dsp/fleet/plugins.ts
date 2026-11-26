@@ -21,8 +21,12 @@ export interface PlugCall {
 }
 
 export type PlugEvent =
-  /** The system / site this control channel belongs to: `id` is unique within the protocol; `ccLcn` its own LCN, if said. */
-  | { kind: 'system'; id: string; label: string; ccLcn?: number }
+  /**
+   * The system / site this control channel belongs to: `id` is unique within the protocol; `ccLcn` its own LCN, if said;
+   * `site` how to list this carrier as a site (default: `id`). `planned`: the protocol sends no system identity, so the
+   * plan proved for this carrier names the system (without one, the carrier's frequency does).
+   */
+  | { kind: 'system'; id: string; label: string; ccLcn?: number; site?: string; planned?: boolean }
   | { kind: 'call'; call: PlugCall; text: string }
   /** A channel was dropped or unkeyed. */
   | { kind: 'end'; lcn: number; text: string }
