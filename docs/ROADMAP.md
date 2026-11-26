@@ -30,7 +30,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | **Test harness**: `web/test/lib/iq.ts` grown into tones, FSK/GFSK, OOK/ASK, PSK, AWGN at a set SNR, `.cu8/.cs8/.cs16` writers | own code | — |
 | [x] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
 | [x] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
-| [ ] | | **Decode export bus** (in progress: all but MQTT done): JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
+| [x] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [ ] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
 | [ ] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
 | [ ] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
@@ -182,3 +182,16 @@ for "or later" first.
   survive reload, the APRS recording played in Ham Map → a local WebSocket server receives the three TNC2 lines, a
   local CORS webhook one POST of 9 events, and DOWNLOAD gives the same 9 as JSON lines.
   Beast timestamps are 0 (no sample clock), so the Beast output suits readsb/tar1090 but not MLAT.
+- **Phase 1 · export bus, part B: MQTT** (`web/src/export/mqtt.ts`, `test/mqtt.test.ts`): MQTT 3.1.1 over WebSockets
+  written from the OASIS spec (CONNECT with optional user/password, PUBLISH QoS 0, keep-alive PINGREQ, DISCONNECT;
+  no client library added). Topics: `<prefix>/events/<kind>` (log lines under `events/line/<app>`), and each
+  rtl_433-style device's latest fields at `<prefix>/devices/<model_channel_id>`. Optional Home Assistant discovery:
+  one retained `homeassistant/<sensor|binary_sensor>/madmobile_<uid>_<field>/config` per field it understands
+  (temperature °C/°F, humidity, pressure, wind, rain, light, UV, moisture; `battery_ok` as a battery binary sensor
+  that is "on" when low), announced once per device per connection. Tests prove: the remaining-length boundaries
+  from §2.2.3; CONNECT and PUBLISH bytes; CONNACK handled when split across WebSocket messages; a refused CONNACK
+  reported and not retried; discovery topics, retain flags, templates and units for an Ambient F007TH report.
+  Browser check (Chromium against a fake broker doing a real WebSocket handshake): the `mqtt` subprotocol is
+  negotiated, CONNECT/CONNACK, keep-alive, and the APRS recording's events published under `madmobile/events/…`.
+  Hardware/infra to test: Mosquitto with `listener 9001` + `protocol websockets`, Home Assistant's MQTT integration
+  on the same broker, the Devices app on 433.92 MHz near a weather sensor: the sensor should appear in HA by itself.

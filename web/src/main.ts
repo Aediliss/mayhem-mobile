@@ -27,6 +27,7 @@ import { openIqSource } from './filesrc/open.js';   // FORK
 import { ExportBus, loadConfig } from './export/bus.js';   // FORK: decode export bus
 import { bindExportSettings, exportSettingsHtml } from './export/ui.js';   // FORK
 import type { WsCtor } from './export/sinks.js';   // FORK
+import { MqttSink } from './export/mqtt.js';   // FORK
 import { captureNamed, captureStarting, downloadSigmf, removeCaptureMeta } from './capture-sigmf.js';   // FORK: SigMF in Capture
 import { FORK_NAME, FORK_WORDMARK, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
 import { syncRows } from './list-rows.js';
@@ -221,7 +222,7 @@ const diag: string[] = [];
 let logFollow = true;   // stops when the reader scrolls up, resumes at the bottom
 let radio: Radio | null = null;
 // FORK: the decode export bus (Settings → EXPORT); off until switched on there
-const exportBus = new ExportBus(loadConfig(), { fetch: (u, i) => fetch(u, i), WebSocket: WebSocket as unknown as WsCtor });
+const exportBus = new ExportBus(loadConfig(), { fetch: (u, i) => fetch(u, i), WebSocket: WebSocket as unknown as WsCtor, mqtt: c => new MqttSink(c, WebSocket as unknown as ConstructorParameters<typeof MqttSink>[1]) });
 /** The USB device behind `radio`, so a detach event can tell whether it was the radio that left. */
 let radioDev: USBDevice | null = null;
 /** True from the start of connect() until its radio stops, so two bring-ups never race for one device. */
@@ -8801,7 +8802,7 @@ function renderSettings(view: HTMLElement): void {
       <div class="kv"><span>macOS</span><span>nothing to install — just close any other SDR program that has the HackRF open</span></div>
       <div class="kv"><span>Linux</span><span>the udev rule from the hackrf package (53-hackrf.rules) grants access; replug after adding it</span></div>
       <div class="kv"><span>Keyboard</span><span>digits: wheel, click top/bottom, type · ← → tune · ↑ ↓ step size · M mode · X mute · S squelch · B bookmark · Space scan · A amp · G AGC · [ ] LNA · − = VGA · L log · Esc closes Settings, then goes home · mouse wheel over the waterfall tunes, Ctrl+wheel changes the step</span></div></div></section>
-    ${exportSettingsHtml(exportBus)}${'' /* FORK: Settings → EXPORT */}
+    ${exportSettingsHtml(exportBus, { mqtt: true })}${'' /* FORK: Settings → EXPORT */}
     <section class="sset" id="sec-log"><div class="sset-h">LOG</div>${srow('Log', 'Everything the radio and the decoders reported, to read, save or share', '<button id="set-log" class="tog">OPEN</button>')}</section>
     <section class="sset" id="sec-about"><div class="sset-h">ABOUT</div>
     <div class="panel about">
