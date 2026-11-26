@@ -18,7 +18,7 @@ export interface AcarsMsg {
  * the next line (the CRC and mode parts only when they say something), or the same with VDL2 in front (ACARS carried
  * over VDL Mode 2). Null for any other line.
  */
-const HEAD = /^(?:ACARS|VDL2) (\d+[.,]\d{3}) ([↓↑]) (.*?)  (..)  blk (.)  ack (NAK|.)(?:  #(.{4}) (\S*))?(  CRC\?)?(?:  mode (.))?$/;
+const HEAD = /^(?:ACARS|VDL2|HFDL) (\d+[.,]\d{3}) ([↓↑]) (.*?)  (..)  blk (.)  ack (NAK|.)(?:  #(.{4}) (\S*))?(  CRC\?)?(?:  mode (.))?$/;   // FORK: + HFDL
 export function parseAcarsLine(line: string, ms: number): AcarsMsg | null {
   const nl = line.indexOf('\n');
   const head = nl >= 0 ? line.slice(0, nl) : line, text = nl >= 0 ? line.slice(nl + 1) : '';

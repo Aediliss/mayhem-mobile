@@ -13,6 +13,8 @@ import { Scope, WF_ICON, centredLabels, rangeLabels, rowToSpec } from './scope.j
 import { btleChannelFreq } from './dsp/btle.js';
 import { BleTracker, KIND_LABEL, parseAdv, type BleDevice } from './ble.js';
 import { AcarsPlanes, labelMeaning, normReg, parseAcarsLine, type AcarsMsg } from './acars-planes.js';
+import { HFDL_BANDS, HFDL_FREQS, type HfdlPdu } from './dsp/hfdl/pdu.js';   // FORK: HFDL
+import { HfdlHeard } from './hfdl-ui.js';   // FORK: HFDL
 import { AcarsStats, Vdl2Tracker, VDL2_CHANNELS, acarsFor, airlineOf, kindLabelOf, msgInsight, numChips, planeInsight, xidSummary, type Airport, type AvlcFrame, type MsgInsight, type PlaneInsight, type VdlAircraft, type VdlStation } from './acars-insight.js';
 import { ORBCOMM_CHANNELS, type OrbcommSat } from './dsp/orbcomm.js';
 import type { PacketFrame } from './dsp/g3ruh.js';
@@ -45,6 +47,9 @@ import type { Burst } from './dsp/analyzer/capture.js';
 import { Tx, type SigMode } from './tx.js';
 import * as Apps from './tx-apps.js';
 import type { Aircraft } from './dsp/adsb.js';
+import type { DroneIdFrame } from './dsp/droneid.js';   // FORK: DJI DroneID
+import { LinkTracker, type LoraBurst } from './dsp/linkprint.js';   // FORK: control-link fingerprints
+import { FPV_CHANNELS, type FpvLook, type OfdmLook } from './dsp/fpv.js';   // FORK: analog FPV video
 import type { AcTrack } from './dsp/modeac.js';   // FORK: Mode A/C
 /** FORK: Mode A/C codes heard as tracks (the worker's latest list). */
 let modeAc: AcTrack[] = [];
@@ -71,8 +76,9 @@ import type { Js8Decode } from './dsp/js8/decoder.js';
 import type { Js8Speed } from './dsp/js8/modes.js';
 import { GeoMap, type GeoItem, type RadarCell, type GeoShape, type GeoImage, mapStart, saveLastPos, lastKnownPos, zoneGuess } from './geomap.js';
 import type { StationSnap, ProgramRow } from './dsp/hd/station.js';
-import { hdChannelLevels, hdLookPlan, hdMergeLevels, hdStrongStations, hdStrongest, hdVisitOrder, hdWindows, HD_REST_MS, type HdLookPlan } from './hdscan.js';
+import { hdChannelLevels, hdLookPlan, hdMergeLevels, hdStrongStations, hdStrongest, hdVisitOrder, hdWindows, HD_BAND_HI, HD_BAND_LO, HD_REST_MS, type HdLookPlan } from './hdscan.js';
 import { parseTrafficInfo, parseRadarInfo, tileBounds, trafficTile, radarImage, type TrafficInfo, type RadarInfo } from './dsp/hd/lot.js';
+import type { HdAudioStatus } from './dsp/hd/audio.js';
 import { programTypeName, dataTypeName, locationValid, clockCheck, localTimeHint, utcOffsetText, BLEND_NAMES, type SisSummary } from './dsp/hd/sis.js';
 import type { AtscSnap, StationRow as AtscStation, SubRow as AtscSub, EventRec as AtscEvent, LiveSignal as AtscLive } from './dsp/atsc/atsc.js';
 import { CHANNELS as ATSC_CHANNELS, centerOf, pilotOf } from './dsp/atsc/channels.js';
@@ -107,7 +113,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'vdl2' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, hfdl
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -121,6 +127,7 @@ const APPS: AppDef[] = [
   { id: 'acars', title: 'Flight Msgs', blurb: 'ACARS · VDL2', cat: 'Receive' },
   // VDL2 has no tile or bar key of its own: it is the 136.975 band of Flight Messages (see MERGED_INTO)
   { id: 'vdl2', title: 'Flight Msgs', blurb: 'VDL Mode 2 · 136.975 MHz', cat: 'Receive' },
+  { id: 'hfdl', title: 'Flight Msgs', blurb: 'HFDL · 3-22 MHz', cat: 'Receive' },   // FORK: HFDL
   { id: 'trains', title: 'Trains', blurb: 'EOT · PTC', cat: 'Receive' },
   { id: 'ais', title: 'Ships', blurb: 'AIS · 162 MHz', cat: 'Receive' },
   { id: 'cell', title: 'Cell', blurb: 'LTE alerts · cell info', cat: 'Receive' },
@@ -132,6 +139,8 @@ const APPS: AppDef[] = [
   { id: 'aprs', title: 'Ham Map', blurb: 'APRS · FT8 · JS8', cat: 'Receive' },
   { id: 'ert', title: 'Utility Meters', blurb: 'ERT · Gridstream · 802.15.4g', cat: 'Receive' },
   { id: 'btle', title: 'Bluetooth', blurb: 'BLE advertising · 2.4 GHz', cat: 'Receive' },
+  { id: 'droneid', title: 'Drones', blurb: 'DJI DroneID · 2.4 GHz', cat: 'Receive' },   // FORK: DJI DroneID
+  { id: 'fpv', title: 'FPV', blurb: 'Analog FPV video · 5.8 GHz', cat: 'Receive' },   // FORK: analog FPV video
   { id: 'sat', title: 'Satellites', blurb: 'track and decode', cat: 'Receive' },
   { id: 'sondes', title: 'Weather Balloons', blurb: 'radiosondes · 400–406 MHz', cat: 'Receive' },
   { id: 'atsc', title: 'TV', blurb: 'ATSC · guide · pictures', cat: 'Receive' },
@@ -146,14 +155,14 @@ const APPS: AppDef[] = [
   { id: 'settings', title: 'Settings', blurb: 'theme · about', cat: 'Tools' },
 ];
 /** Apps folded into another app's tile and bar key: VDL2 is the second band of Flight Messages. */
-const MERGED_INTO: Partial<Record<AppId, AppId>> = { vdl2: 'acars' };
+const MERGED_INTO: Partial<Record<AppId, AppId>> = { vdl2: 'acars', hfdl: 'acars' };   // FORK: + hfdl
 const keyOf = (id: AppId | null) => id ? MERGED_INTO[id] ?? id : id;
 /** Whether the connected radio hides this app (an RTL-SDR hides TX and Troll; see app-visibility.ts). */
 const hiddenApp = (id: AppId | null | undefined) => appHidden(id, radio?.kind);
 const FLIGHT_MSGS_KEY = 'mm.flightmsgs.band';
 /** The tile and the bar key open Flight Messages on the band you used last. */
 function openPicked(id: AppId): void {
-  if (id === 'acars') { let b = 'acars'; try { b = localStorage.getItem(FLIGHT_MSGS_KEY) ?? 'acars'; } catch { /* no storage */ } open(b === 'vdl2' ? 'vdl2' : 'acars'); return; }
+  if (id === 'acars') { let b = 'acars'; try { b = localStorage.getItem(FLIGHT_MSGS_KEY) ?? 'acars'; } catch { /* no storage */ } open(b === 'vdl2' ? 'vdl2' : b === 'hfdl' ? 'hfdl' : 'acars'); return; }   // FORK: + hfdl
   open(id);
 }
 const RANGES: [string, number, number][] = [
@@ -1006,7 +1015,7 @@ function open(app: AppId | null): void {
   if ((app as string) === 'subghz' || (app as string) === 'tpms') app = 'devices';      // Sub-GHz and TPMS are part of Devices now
   if (hiddenApp(app)) app = null;                         // an app this radio hides (TX and Troll on an RTL-SDR) opens Home instead
   if (app === 'settings') { openSettings(); return; }
-  if (app === 'acars' || app === 'vdl2') { try { localStorage.setItem(FLIGHT_MSGS_KEY, app); } catch { /* no storage */ } }
+  if (app === 'acars' || app === 'vdl2' || app === 'hfdl') { try { localStorage.setItem(FLIGHT_MSGS_KEY, app); } catch { /* no storage */ } }   // FORK: + hfdl
   if (state.capturing) { worker?.postMessage({ type: 'capture', cmd: 'stop' }); state.capturing = false; }
   if (state.scanning && app !== 'audio') setScanning(false);
   if (state.prowl.on && app !== 'prowl') prowlStop();       // the hunt owns the receiver; anything else takes it back
@@ -1062,10 +1071,13 @@ function open(app: AppId | null): void {
     case 'lora': loraOpen(); break;
     case 'sondes': sondesOpen(); break;
     case 'btle': configure('NONE', btleChannelFreq(state.btleCh), 2e6, 32, 40, true, 'btle'); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); break;
+    case 'droneid': configure('NONE', droneUi.freq, 15.36e6, 32, 40, true, 'droneid'); break;   // FORK: DJI DroneID at 15.36 MS/s
+    case 'fpv': configure('NONE', fpvUi.hz, 20e6, 24, 30, true, 'fpv'); worker?.postMessage({ type: 'fpvTune', ch: fpvUi.ch, watch: true }); break;   // FORK: analog FPV video at 20 MS/s
     // The span is centred on 130.8 MHz: every US ACARS channel (130.025-131.550) is inside it and decoded at once,
     // none of them on the radio's DC spike; 131.550 is the one heard.
     case 'vdl2': configure('AM', 136_975_000, 2e6, 32, 32, false, 'vdl2'); state.viewLo = VDL2_SPAN_HZ; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); break;
     case 'acars': configure('AM', 131_550_000, 2e6, 32, 32, false, 'acars'); state.viewLo = ACARS_SPAN_HZ; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); break;
+    case 'hfdl': hfdlOpen(); break;   // FORK: HFDL
     case 'trains': trainsTune(); if (trainsUi.auto) trainsCycle(); break;
     case 'fleet': fleetOpen(); break;
     case 'hamplus': hpOpen(); break;
@@ -1101,7 +1113,7 @@ function open(app: AppId | null): void {
 const mapEmptySub = (what: string) => `${what}. ${state.home ? 'Centered on you.' : mapStart(null).standIn ? 'No location yet: allow it to center the map on you.' : 'Centered where you were last.'}`;
 function requestGeo(): void {
   if (!('geolocation' in navigator)) return;
-  navigator.geolocation.getCurrentPosition(p => { state.home = { lat: p.coords.latitude, lon: p.coords.longitude }; saveLastPos(state.home); geo?.setHome(state.home); geo?.recenter(state.home.lat, state.home.lon); if (state.app === 'ais') refreshAis(); else if (state.app === 'aprs') refreshAprs(); else if (state.app === 'adsb') refreshAdsb(); else if (state.app === 'acars' || state.app === 'vdl2') refreshAcars(true); worker?.postMessage({ type: 'geo', lat: p.coords.latitude, lon: p.coords.longitude }); log(`GPS reference ${p.coords.latitude.toFixed(3)},${p.coords.longitude.toFixed(3)} for single-frame CPR`); }, () => log('no GPS fix — ADS-B positions need even+odd frame pairs'), { maximumAge: 600_000, timeout: 8000 });
+  navigator.geolocation.getCurrentPosition(p => { state.home = { lat: p.coords.latitude, lon: p.coords.longitude }; saveLastPos(state.home); geo?.setHome(state.home); geo?.recenter(state.home.lat, state.home.lon); if (state.app === 'ais') refreshAis(); else if (state.app === 'aprs') refreshAprs(); else if (state.app === 'adsb') refreshAdsb(); else if (state.app === 'acars' || state.app === 'vdl2' || state.app === 'hfdl') refreshAcars(true); worker?.postMessage({ type: 'geo', lat: p.coords.latitude, lon: p.coords.longitude }); log(`GPS reference ${p.coords.latitude.toFixed(3)},${p.coords.longitude.toFixed(3)} for single-frame CPR`); }, () => log('no GPS fix — ADS-B positions need even+odd frame pairs'), { maximumAge: 600_000, timeout: 8000 });   // FORK: + hfdl
 }
 
 
@@ -1781,9 +1793,12 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   prowl: ['prowl', 'Nothing heard yet', ['Press HUNT: it lands on anyone talking and moves on when they stop', 'A wider SPAN watches more at once; a narrower one hears weak voices better']],
   search: ['search', 'No active frequencies yet', ['Pick a range above: AIR 118–137 and 2m 144–148 are busy almost everywhere', 'Set ABOVE to +10 dB to catch weaker signals']],
   capture: ['capture', 'No captures yet', ['Tune to a signal and press ● REC', 'Keep it short: 2 Msps fills about 4 MB a second']],
-  hd: ['hd', 'No HD stations yet', ['AUTO finds the stations across the FM band, then visits the strong ones from the bottom up until each fills in', 'Most big FM stations in the US are hybrid: name, songs, logos and album art come in within a minute or two', 'What plays is the analog FM: the digital audio codec is not decoded']],
+  hd: ['hd', 'No HD stations yet', ['AUTO finds the stations across the FM band, then visits the strong ones from the bottom up until each fills in', 'Most big FM stations in the US are hybrid: name, songs, logos and album art come in within a minute or two', 'Each program (HD1 to HD8) plays its digital audio; HD1 plays the analog FM until its digital is ready']],
   vdl2: ['vdl2', 'Waiting for VDL2 messages', ['Every VDL2 channel from 136.10 to 136.975 MHz is decoded at once; 136.975 is the common one', 'Aircraft talk to ground stations every few minutes, more near an airport; an antenna that sees the sky hears them 200 miles out']],
+  hfdl: ['hfdl', 'Waiting for HFDL', ['Ground stations send a squitter every 32 seconds on each of their frequencies; aircraft answer when they have something to say', 'HF wants a long wire or a loop outside, away from the house; a band is often dead by day and alive at night (or the other way round)']],   // FORK: HFDL
   acars: ['acars', 'Waiting for ACARS messages', ['Aircraft send them every few minutes; 131.550 is the busiest US channel', 'Near an airport, or with an antenna that sees the sky, you hear aircraft up to 200 miles out']],
+  fpv: ['fpv', 'No FPV video found yet', ['SCAN steps through the 48 channels of bands A, B, E, F, R and L; channels with video turn gold', 'Tap a channel to watch it: the picture is drawn from the sync pulses, in black and white', 'Needs a HackRF at 20 MS/s and a 5.8 GHz antenna; an RTL-SDR cannot reach 5.8 GHz']],   // FORK: analog FPV video
+  droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   btle: ['btle', 'Waiting for BLE advertisements', ['Phones, earbuds and watches advertise several times a second: start on CH 37', 'BLE is low power: hold the radio within a few meters of a device']],
   lora: ['lora', 'No nodes yet', ['Meshtastic nodes beacon about every 15 minutes: leave it running', 'AREA picks where you are; a wider SPAN (20 MHz on a HackRF) holds more of its channels']],
   sondes: ['sondes', 'No weather balloons yet', ['Weather services launch around 00:00 and 12:00 UTC; a sonde climbs for about 90 minutes and is heard 200+ miles out', 'Every type is decoded on its own: leave it running and they show up']],
@@ -2030,7 +2045,10 @@ function render(app: AppId | null): void {
     case 'cell': renderCell(view); break;
     case 'atsc': renderAtsc(view); break;
     case 'btle': renderBle(view); break;
+    case 'droneid': renderDroneId(view); break;   // FORK: DJI DroneID
+    case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
+    case 'hfdl': renderAcars(view, 'hfdl'); break;   // FORK: HFDL
     case 'acars': renderAcars(view, 'acars'); break;
     case 'subghz': renderPacket(view, app); break;
     case 'devices': renderR433(view); break;
@@ -3339,10 +3357,10 @@ function renderAudio(view: HTMLElement): void {
 }
 
 // ---- HD Radio: a badge over the waterfall saying whether the station carries a digital signal beside it, from
-// the worker's sideband detector. Detection only: the audio codec is proprietary, so there is nothing to play.
+// the worker's sideband detector. Detection only: the HD Radio screen is where the digital audio plays.
 let hdWanted = false;
 let lastHd: { present: boolean; snrDb: number; lock: number; cfoHz: number; symbols: number } | null = null;
-function sendHd(): void { worker?.postMessage({ type: 'hd', on: hdWanted }); }
+function sendHd(): void { worker?.postMessage({ type: 'hd', on: hdWanted }); hdApplySurround(); }
 function drawHd(): void {
   const t = q('#hd-toggle'); if (t) t.classList.toggle('on', hdWanted);
   const el = q('#hd'); if (!el) return;
@@ -4022,6 +4040,123 @@ function bleDetail(d: BleDevice, now: number): string {
     + `<div class="mt-fields">${[...d.fields, ...more].map(f => `<div><b>${esc(f.name)}</b><span>${esc(f.value)}</span></div>`).join('')}</div>`
     + `<div class="caption">RAW ADVERTISEMENTS · newest first · ${d.history.length} kept</div><div class="ble-raw">${rows}</div>`;
 }
+// FORK: ------------------------------------------------------------------------------- Drones (DJI DroneID)
+/** Where DJI drones have been heard sending DroneID (proto17/dji_droneid); AUTO steps through them. */
+const DRONEID_FREQS = [2_414_500_000, 2_429_500_000, 2_444_500_000, 2_459_500_000];
+const droneLinks = new LinkTracker();   // FORK: LoRa control links heard in the Drones app
+const droneUi = { drones: new Map<string, { f: DroneIdFrame; first: number; last: number; n: number; cfo: number }>(), bursts: 0, decoded: 0, freq: DRONEID_FREQS[2], auto: false, timer: 0, sel: '' };
+function renderDroneId(view: HTMLElement): void {
+  const why = radio ? blockedBecause(APP_NEEDS.droneid, radio.limits) : '';
+  view.innerHTML = `
+    <section class="${visCls('droneid')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. A HackRF covers 2.4 GHz at 15.36 MS/s.</div>` : ''}
+      <div class="row">${DRONEID_FREQS.map(f => `<button class="chip" data-dji="${f}">${(f / 1e6).toFixed(1)}</button>`).join('')}<button class="chip" data-djiauto title="step through the channels">AUTO</button></div>
+      <div id="dji-stats" class="caption"></div>
+      <div id="dji-links" class="caption"></div>
+      <div id="dji-map" class="panel map" hidden></div>
+      <div id="dji-cards"></div>
+      <div id="dji-log">${logHtml('droneid', 'listening…')}</div>
+      <div class="note about">DJI DroneID, receive only: the burst a DJI drone sends about every 600 ms (10 MHz of OFDM at 2.4 GHz) with its serial number, its position, height and speed, and where its pilot and its home point are. Decoded here from the air: the burst is found by its Zadoff-Chu symbols, corrected for frequency, equalized, descrambled and turbo decoded, and kept only when both of its checks pass. Newer DJI models encrypt it and are not shown. Needs a HackRF at 15.36 MS/s. Height, altitude, speeds and yaw are shown as the drone sends them.</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  geo = new GeoMap($('dji-map'), { home: state.home, start: mapStart(state.home), fitPins: true, onPick: id => { droneUi.sel = id.replace(/^(pilot|home):/, ''); refreshDrone(); }, log });
+  const pick = (f: number) => { droneUi.freq = f; tune(f); refreshDrone(); };
+  qa<HTMLButtonElement>('[data-dji]', view).forEach(b => b.onclick = () => { setDroneAuto(false); pick(Number(b.dataset.dji)); });
+  qa<HTMLButtonElement>('[data-djiauto]', view).forEach(b => b.onclick = () => setDroneAuto(!droneUi.auto));
+  refreshList('droneid'); refreshDrone();
+}
+function setDroneAuto(on: boolean): void {
+  droneUi.auto = on; if (droneUi.timer) { clearInterval(droneUi.timer); droneUi.timer = 0; }
+  if (on) droneUi.timer = window.setInterval(() => {
+    if (state.app !== 'droneid') { setDroneAuto(false); return; }
+    droneUi.freq = DRONEID_FREQS[(DRONEID_FREQS.indexOf(droneUi.freq) + 1) % DRONEID_FREQS.length]; tune(droneUi.freq); refreshDrone();
+  }, 1500);
+  refreshDrone();
+}
+/** A LoRa packet seen in the Drones app's span: its frequency from the tuned centre, into a link. */
+function onLoraBurst(b: LoraBurst): void { droneLinks.add({ ...b, centerHz: b.centerHz + droneUi.freq }); if (state.app === 'droneid') refreshDrone(); }
+function onDroneId(m: { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }): void {
+  const f = m.frame, key = f.serial || 'unknown', now = Date.now(), d = droneUi.drones.get(key);
+  if (d) { d.f = f; d.last = now; d.n++; d.cfo = m.cfoHz; } else droneUi.drones.set(key, { f, first: now, last: now, n: 1, cfo: m.cfoHz });
+  droneUi.bursts = m.bursts; droneUi.decoded = m.decoded;
+  if (state.app === 'droneid') refreshDrone();
+}
+function refreshDrone(): void {
+  if (state.app !== 'droneid') return;
+  qa('[data-dji]').forEach(b => b.classList.toggle('on', Number(b.dataset.dji) === droneUi.freq)); qa('[data-djiauto]').forEach(b => b.classList.toggle('on', droneUi.auto));
+  // control links: LoRa links heard three times or more; named ExpressLRS only where its published parameters fit
+  const lk = q('#dji-links'), links = [...droneLinks.links.values()].filter(l => l.sure);
+  if (lk) lk.textContent = links.length ? `CONTROL LINKS · ${links.map(l => `${l.fits ? `consistent with ${l.fits}` : 'hopping LoRa link'} · SF${l.sf} · ${(l.bwHz / 1e3).toFixed(1)} kHz${l.rateHz ? ` · ${l.rateHz} Hz` : ''} · ${l.channels.length} channels · ${l.packets} packets`).join(' / ')}` : '';
+  const st = q('#dji-stats'); if (st) st.textContent = `${droneUi.drones.size} DRONE${droneUi.drones.size === 1 ? '' : 'S'} · ${droneUi.decoded} FRAMES DECODED · ${droneUi.bursts} BURSTS SEEN`;
+  const now = Date.now(), list = [...droneUi.drones.entries()].sort((a, b) => b[1].last - a[1].last);
+  const pos = (lat?: number, lon?: number) => lat !== undefined && lon !== undefined ? `${lat.toFixed(6)}, ${lon.toFixed(6)}` : 'not sent';
+  const cards = q('#dji-cards');
+  if (cards) cards.innerHTML = list.length ? list.map(([k, d]) => { const f = d.f; return `<div class="panel ${droneUi.sel === k ? 'gold' : ''}" data-djisel="${esc(k)}" style="margin-top:6px">`
+    + `<div class="kv"><span><b>${esc(f.serial || 'no serial')}</b></span><span>${agoShort(now - d.last)} ago · ${d.n} frame${d.n === 1 ? '' : 's'} · product type ${f.productType}</span></div>`
+    + [['Drone', pos(f.lat, f.lon)], ['Height · altitude', `${f.height} · ${f.altitude} (as sent)`], ['Velocity N · E · up', `${f.vNorth} · ${f.vEast} · ${f.vUp} (as sent)`], ['Yaw', `${f.yaw} (as sent)`],
+      ['Pilot', pos(f.pilotLat, f.pilotLon)], ['Home point', pos(f.homeLat, f.homeLon)], ['Sequence', `${f.seq} · state 0x${f.state.toString(16).padStart(4, '0')}${f.uuid ? ` · UUID ${esc(f.uuid)}` : ''}`], ['Received', `${(d.cfo / 1000).toFixed(1)} kHz off · frame CRC ${f.crcOk ? 'good' : 'bad'}`]]
+      .map(([a, b]) => `<div class="kv"><span>${a}</span><span>${esc(b)}</span></div>`).join('') + '</div>'; }).join('') : emptyState('droneid');
+  qa<HTMLElement>('[data-djisel]').forEach(el => el.onclick = () => { droneUi.sel = droneUi.sel === el.dataset.djisel ? '' : el.dataset.djisel!; refreshDrone(); });
+  const mapEl = q('#dji-map'), items: GeoItem[] = [], lines: [[number, number], [number, number]][] = [];
+  for (const [k, d] of list) {
+    const f = d.f;
+    if (f.lat !== undefined) items.push({ id: k, lat: f.lat, lon: f.lon!, label: `${f.serial || 'drone'} · ${f.height}`, kind: 'plane' });
+    if (f.pilotLat !== undefined && f.pilotLon !== undefined) { items.push({ id: `pilot:${k}`, lat: f.pilotLat, lon: f.pilotLon, label: 'pilot', kind: 'station' }); if (f.lat !== undefined) lines.push([[f.pilotLat, f.pilotLon], [f.lat, f.lon!]]); }
+    if (f.homeLat !== undefined && f.homeLon !== undefined) items.push({ id: `home:${k}`, lat: f.homeLat, lon: f.homeLon, label: 'home', kind: 'landing' });
+  }
+  if (mapEl && geo) { const was = mapEl.hidden; mapEl.hidden = !items.length; if (items.length) { geo.update(items, droneUi.sel); geo.setLines(lines); if (was) geo.invalidate(); } }
+}
+// FORK: end of Drones
+
+// FORK: ------------------------------------------------------------------------------- FPV (analog video, dsp/fpv.ts)
+type FpvSeen = FpvLook & { powerDb: number; digital: OfdmLook | null };
+const fpvUi = { ch: 'R1', hz: FPV_CHANNELS.find(c => c.name === 'R1')!.hz, scan: false, timer: 0, seen: new Map<string, FpvSeen & { ms: number }>() };
+function renderFpv(view: HTMLElement): void {
+  const why = radio ? blockedBecause(APP_NEEDS.fpv, radio.limits) : '';
+  view.innerHTML = `
+    <section class="${visCls('fpv')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. A HackRF covers 5.8 GHz at 20 MS/s.</div>` : ''}
+      <div class="row"><button class="chip" id="fpv-scan" title="step through every channel">SCAN</button><span id="fpv-now" class="caption"></span></div>
+      <div id="fpv-grid" class="row" style="flex-wrap:wrap;gap:4px;margin-top:6px"></div>
+      <div class="panel" style="margin-top:6px"><canvas id="fpv-pic" width="320" height="240" style="width:100%;image-rendering:pixelated;background:#000"></canvas></div>
+      <div class="note about">Analog FPV video, receive only: the composite video an analog FPV transmitter sends as wideband FM on the 5.8 GHz channel grid (bands A, B, E, F / IRC, R raceband, L lowband). SCAN looks at each channel in turn and marks the ones carrying video (by their line rate: NTSC or PAL) with their strength; tap one to watch it, drawn in black and white from its sync pulses. Digital FPV (DJI, Walksnail, HDZero) is not video to this and is not shown. Needs a HackRF at 20 MS/s.</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 60, spectrumHeight: 70 }));
+  $('fpv-scan').onclick = () => setFpvScan(!fpvUi.scan);
+  $('fpv-grid').onclick = e => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-fpv]'); if (b) { setFpvScan(false); fpvGo(b.dataset.fpv!, true); } };
+  refreshFpv();
+}
+function fpvGo(name: string, watch: boolean): void {
+  const c = FPV_CHANNELS.find(x => x.name === name); if (!c) return;
+  fpvUi.ch = name; fpvUi.hz = c.hz; tune(c.hz); worker?.postMessage({ type: 'fpvTune', ch: name, watch }); refreshFpv();
+}
+function setFpvScan(on: boolean): void {
+  fpvUi.scan = on; if (fpvUi.timer) { clearInterval(fpvUi.timer); fpvUi.timer = 0; }
+  if (on) fpvUi.timer = window.setInterval(() => {
+    if (state.app !== 'fpv') { setFpvScan(false); return; }
+    const i = FPV_CHANNELS.findIndex(c => c.name === fpvUi.ch); fpvGo(FPV_CHANNELS[(i + 1) % FPV_CHANNELS.length].name, false);
+  }, 350);
+  refreshFpv();
+}
+function onFpvLook(m: FpvSeen & { ch: string }): void { if (!m.ch) return; fpvUi.seen.set(m.ch, { ...m, ms: Date.now() }); if (state.app === 'fpv') refreshFpv(); }
+function onFpvField(m: { ch: string; width: number; lines: number; pixels: Uint8ClampedArray; standard: string }): void {
+  if (state.app !== 'fpv' || m.ch !== fpvUi.ch) return;
+  const cv = q<HTMLCanvasElement>('#fpv-pic'); if (!cv) return;
+  cv.width = m.width; cv.height = m.lines;
+  const img = new ImageData(m.width, m.lines);
+  for (let i = 0; i < m.pixels.length; i++) { const v = m.pixels[i]; img.data[4 * i] = v; img.data[4 * i + 1] = v; img.data[4 * i + 2] = v; img.data[4 * i + 3] = 255; }
+  cv.getContext('2d')?.putImageData(img, 0, 0);
+}
+function refreshFpv(): void {
+  if (state.app !== 'fpv') return;
+  q('#fpv-scan')?.classList.toggle('on', fpvUi.scan);
+  const cur = fpvUi.seen.get(fpvUi.ch), now = q('#fpv-now');
+  if (now) now.textContent = `${fpvUi.ch} · ${(fpvUi.hz / 1e6).toFixed(0)} MHz · ${cur ? cur.standard ? `${cur.standard} video · ${Math.round(cur.score * 100)}% · ${(cur.deviationHz / 1e6).toFixed(1)} MHz swing` : cur.digital ? `digital (OFDM) · ${cur.digital.bwMHz} MHz wide · ${cur.digital.spacingKHz} kHz carriers · ${cur.digital.usefulUs} µs symbols` : 'no video' : 'listening'}${cur ? ` · ${cur.powerDb} dB` : ''}`;
+  const grid = q('#fpv-grid');
+  if (grid) grid.innerHTML = FPV_CHANNELS.map(c => { const s = fpvUi.seen.get(c.name), vid = !!s?.standard, dig = !!s?.digital; return `<button class="chip ${c.name === fpvUi.ch ? 'on' : ''} ${vid || dig ? 'gold' : ''}" data-fpv="${c.name}" title="${(c.hz / 1e6).toFixed(0)} MHz${s ? ` · ${s.standard ?? 'no video'} · ${s.powerDb} dB` : ''}">${c.name}${vid ? ` ${s!.standard}` : dig ? ' DIG' : ''}</button>`; }).join('');
+}
+// FORK: end of FPV
+
 function renderBle(view: HTMLElement): void {
   const why = radio ? blockedBecause(APP_NEEDS.btle, radio.limits) : '';
   view.innerHTML = `
@@ -4029,12 +4164,14 @@ function renderBle(view: HTMLElement): void {
     <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. Nothing will decode here. A HackRF covers 1 MHz to 6 GHz.</div>` : ''}
       <div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}<button class="chip" data-btleauto title="step through 37, 38 and 39">AUTO</button>${'' /* FORK: AUTO channel rotation */}</div>
       <div id="ble-alert" class="ble-warn big" hidden></div>
+      <div id="ble-map" class="panel map" hidden></div><!-- FORK: drones (Remote ID) and their operators -->
       <div class="ctlrow">${segHtml(['cards', 'log'].map(v => `<button data-bleview="${v}">${v.toUpperCase()}</button>`))}${pauseClearHtml('btle')}</div>
       <div id="ble-stage" class="mt-stage"><div id="ble-cards" class="mt-cards"></div><div id="ble-detail" class="mt-detail" hidden></div></div>
       <div id="ble-log">${logHtml('btle', 'listening…')}</div>
       <div class="note about">One card per device, by its address: the maker from its manufacturer ID, the type from what it advertises (Find My, Tile, SmartTag, Find Hub, iBeacon, Eddystone, Fast Pair, AirPods, phones, watches). A tracker that stays near you for 20 minutes, or is still there after you move 500 m (with location allowed), is flagged. Phones and tags change their random address every 15 minutes or so, so one phone can show up as several cards over time.</div>
     </section>`;
   scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  geo = new GeoMap($('ble-map'), { home: state.home, start: mapStart(state.home), fitPins: true, onPick: id => { bleUi.sel = id.replace(/^op:/, ''); refreshBle(true); }, log });   // FORK: drone map
   qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { setBtleAuto(false); state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });   // FORK: a channel picked stops AUTO
   qa<HTMLButtonElement>('[data-btleauto]', view).forEach(b => b.onclick = () => setBtleAuto(!btleAuto));   // FORK: AUTO
   qa<HTMLButtonElement>('[data-bleview]', view).forEach(b => b.onclick = () => { bleUi.view = b.dataset.bleview as typeof bleUi.view; refreshBle(true); });
@@ -4081,6 +4218,22 @@ function refreshBle(force = false): void {
   if (picked) { const top = det.scrollTop; det.innerHTML = bleDetail(picked, now); det.scrollTop = top; }
   if (alerts.length) setLamp(`${alerts.length} TRACKER${alerts.length === 1 ? '' : 'S'}`, 'red');
   else if (devs.length) setLamp(`${devs.length} DEVICE${devs.length === 1 ? '' : 'S'}`, 'ok');
+  // FORK: drones that sent their position (Remote ID): on the map with their operators, a line between each pair
+  { const mapEl = q('#ble-map'), drones = devs.filter(d => d.rid && (d.rid.lat !== undefined || d.rid.opLat !== undefined));
+    if (mapEl && geo) {
+      const was = mapEl.hidden; mapEl.hidden = !drones.length;
+      if (drones.length) {
+        const items: GeoItem[] = [];
+        for (const d of drones) {
+          const r = d.rid!, name = r.uasId || d.mac;
+          if (r.lat !== undefined) items.push({ id: d.mac, lat: r.lat, lon: r.lon!, heading: r.direction, label: `${name}${r.height !== undefined ? ` · ${Math.round(r.height)} m` : ''}`, kind: 'plane' });
+          if (r.opLat !== undefined) items.push({ id: `op:${d.mac}`, lat: r.opLat, lon: r.opLon!, label: `operator${r.operatorId ? ` ${r.operatorId}` : ''}`, kind: 'station' });
+        }
+        geo.update(items, bleUi.sel);
+        geo.setLines(drones.filter(d => d.rid!.lat !== undefined && d.rid!.opLat !== undefined).map(d => [[d.rid!.opLat!, d.rid!.opLon!], [d.rid!.lat!, d.rid!.lon!]]));
+        if (was) geo.invalidate();
+      }
+    } }
 }
 
 // ---- ACARS and VDL2: one card per aircraft (VDL2: by ICAO address, ACARS or not), a map, the activity, the log ----
@@ -4088,9 +4241,9 @@ type AcarsView = 'cards' | 'map' | 'stats' | 'log';
 type AcarsUi = { planes: AcarsPlanes; stats: AcarsStats; vdl: Vdl2Tracker; view: AcarsView; sel: string; drawn: number; pending: number; timer: number };
 const newAcarsUi = (): AcarsUi => ({ planes: new AcarsPlanes(), stats: new AcarsStats(), vdl: new Vdl2Tracker(acLookup), view: 'cards', sel: '', drawn: 0, pending: 0, timer: 0 });
 /** ACARS and VDL2 share these screens (VDL2 carries ACARS messages), each with its own aircraft. */
-const acarsUis = { acars: newAcarsUi(), vdl2: newAcarsUi() };
+const acarsUis = { acars: newAcarsUi(), vdl2: newAcarsUi(), hfdl: newAcarsUi() };   // FORK: + hfdl
 type AcarsApp = keyof typeof acarsUis;
-const acarsApp = (): AcarsApp => state.app === 'vdl2' ? 'vdl2' : 'acars';
+const acarsApp = (): AcarsApp => state.app === 'vdl2' ? 'vdl2' : state.app === 'hfdl' ? 'hfdl' : 'acars';   // FORK: + hfdl
 /** The ACARS channels the presets offer (counted even before anything is heard on them). */
 const ACARS_CHANNELS = ['131.550', '131.525', '131.725', '131.450', '130.025'];
 /** An airport from the bundled list (loaded with the UAT one), for the message readers, the stations and the map. */
@@ -4123,7 +4276,7 @@ function acarsAdsbMatch(p: { icao: string; reg: string; flight: string; vdl?: Vd
 /** Where an aircraft is: only the newest position its own messages gave (the radio hears one band at a time, so
  *  nothing here comes from ADS-B). */
 function acWhere(r: AcRow): { lat: number; lon: number; ms: number } | null {
-  return r.ins.pos ? { lat: r.ins.pos.lat, lon: r.ins.pos.lon, ms: r.ins.posMs } : null;
+  return r.ins.pos ? { lat: r.ins.pos.lat, lon: r.ins.pos.lon, ms: r.ins.posMs } : state.app === 'hfdl' ? hfdlWhere(r) : null;   // FORK: HFDL position reports
 }
 const acTitle = (r: AcRow) => r.reg || r.flight || r.icao;
 const acChip = (text: string, cls = '') => `<span class="ac-chip ${cls}">${esc(text)}</span>`;
@@ -4214,17 +4367,18 @@ function renderAcars(view: HTMLElement, id: AcarsApp): void {
   view.innerHTML = `
     <section class="${visCls(id)}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
     <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. Nothing will decode here. A HackRF covers 1 MHz to 6 GHz.</div>` : ''}
-      <div class="ctlrow">${segHtml([['acars', 'ACARS 131'], ['vdl2', 'VDL2 136.975']].map(([k, t]) => `<button data-acband="${k}" class="${k === id ? 'on' : ''}">${t}</button>`))}</div>
-      ${vdl ? '' : presetHtml('CHANNEL · MHz', [['131.550 US', 131_550_000], ['131.525 EU', 131_525_000], ['131.725 EU2', 131_725_000], ['131.450 JP', 131_450_000], ['130.025', 130_025_000]])}
+      <div class="ctlrow">${segHtml([['acars', 'ACARS 131'], ['vdl2', 'VDL2 136.975'], ['hfdl', 'HFDL HF'] /* FORK: + hfdl */].map(([k, t]) => `<button data-acband="${k}" class="${k === id ? 'on' : ''}">${t}</button>`))}</div>
+      ${id === 'hfdl' /* FORK: HFDL bands */ ? hfdlBandsHtml() : vdl ? '' : presetHtml('CHANNEL · MHz', [['131.550 US', 131_550_000], ['131.525 EU', 131_525_000], ['131.725 EU2', 131_725_000], ['131.450 JP', 131_450_000], ['130.025', 130_025_000]])}
       <div class="ctlrow">${segHtml(['cards', 'map', 'stats', 'log'].map(v => `<button data-acview="${v}">${v.toUpperCase()}</button>`))}${pauseClearHtml(id)}</div>
       <div id="ac-stage" class="mt-stage"><div id="ac-cards" class="mt-cards"></div><div id="ac-map" class="panel map"></div><div id="ac-nopos" class="mt-nopos">no positions yet</div><div id="ac-unplaced" class="ac-unplaced"></div><div id="ac-stats" class="ac-stats"></div><div id="ac-detail" class="mt-detail" hidden></div></div>
       <div id="ac-log">${logHtml(id, 'listening…')}</div>
-      <div class="note about">${vdl
+      <div class="note about">${id === 'hfdl' /* FORK: HFDL */ ? HFDL_ABOUT : vdl
         ? 'VDL Mode 2, the digital link that carries most airline ACARS now: every channel from 136.10 to 136.975 MHz at once, each frame checked. One card per aircraft by its ICAO address (exact, so ADS-B links straight to it), ACARS or not, with its registration and flight once it sends ACARS; ground stations below, placed at the airport their XIDs name. MAP plots the aircraft where their own messages put them, with lines to the stations they work.'
         : 'One card per aircraft (by registration, else flight), each message read into plain words: out, off, on and in times, positions, weather, ATIS, free text, engine data. MAP plots them where their own messages put them. ADS-B links to the same aircraft when ADS-B has seen it (by its ICAO address, its registration or its flight).'}</div>
     </section>`;
   scope = attach(tunableScope('scope', 80, 70));
   qa<HTMLButtonElement>('[data-acband]', view).forEach(b => b.onclick = () => { if (b.dataset.acband !== id) open(b.dataset.acband as AcarsApp); });
+  qa<HTMLButtonElement>('[data-hfband]', view).forEach(b => b.onclick = () => hfdlSetBand(Number(b.dataset.hfband)));   // FORK: HFDL bands
   qa<HTMLButtonElement>('[data-acview]', view).forEach(b => b.onclick = () => { ui.view = b.dataset.acview as AcarsView; refreshAcars(true); if (ui.view === 'map') requestAnimationFrame(() => { geo?.invalidate(); geo?.fit(); }); });
   $('ac-unplaced').onclick = (e) => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-acp]'); if (c) { ui.sel = ui.sel === c.dataset.acp ? '' : c.dataset.acp!; refreshAcars(true); } };
   $('ac-cards').onclick = (e) => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-acp]'); if (c) { ui.sel = ui.sel === c.dataset.acp ? '' : c.dataset.acp!; refreshAcars(true); } };
@@ -4259,14 +4413,51 @@ function onVdl2Frame(f: AvlcFrame): void {
   acarsUis.vdl2.vdl.add({ ...f, ms: Date.now() });
   if (state.app === 'vdl2') refreshAcars();
 }
+// FORK: HFDL (dsp/hfdl/, hfdl-ui.ts): the band to tune, the ground stations heard, the positions aircraft report
+const hfdlHeard = new HfdlHeard();
+const HFDL_BAND_KEY = 'mm.hfdlBand';
+let hfdlBand = ((): number => { try { const v = localStorage.getItem(HFDL_BAND_KEY), n = v === null ? NaN : Number(v); return n >= 0 && n < HFDL_BANDS.length ? n : 5; } catch { return 5; } })();
+const HFDL_ABOUT = 'HFDL, the HF data link aircraft use over oceans and the poles: every published HFDL frequency in the band at once (300 to 1800 bps, each burst checked), from 16 ground stations around the world. ACARS inside gives the same aircraft cards as ACARS and VDL2; ground stations are listed below them with the frequencies their squitters say they use, and MAP plots the positions aircraft report. HF needs a HackRF (1 MHz to 6 GHz) or a dongle that samples HF directly (RTL-SDR Blog V3 direct sampling, V4), and an outdoor wire or loop.';
+function hfdlOpen(): void {
+  const b = HFDL_BANDS[hfdlBand];
+  configure('NONE', b.centreHz, 2e6, 32, 32, false, 'hfdl');
+}
+function hfdlSetBand(i: number): void {
+  if (!(i >= 0 && i < HFDL_BANDS.length) || i === hfdlBand) return;
+  hfdlBand = i; try { localStorage.setItem(HFDL_BAND_KEY, String(i)); } catch { /* no storage */ }
+  open('hfdl');
+}
+function hfdlBandsHtml(): string {
+  const c = HFDL_BANDS[hfdlBand].centreHz, reach = (radio ? state.rate : 2e6) / 2 - 20_000;
+  const on = HFDL_FREQS.filter(f => Math.abs(f + 1440 - c) < reach);
+  return `<div class="caption">HFDL BAND · MHz</div><div class="ctlrow">${segHtml(HFDL_BANDS.map((b, i) => `<button data-hfband="${i}" class="${i === hfdlBand ? 'on' : ''}">${esc(b.name)}</button>`))}</div>`
+    + `<div class="note">${on.length} HFDL frequencies here, all decoded at once: ${on.map(f => (f / 1e6).toFixed(3)).join(' · ')} MHz</div>`;
+}
+function hfdlWhere(r: { flight: string }): { lat: number; lon: number; ms: number } | null {
+  const p = hfdlHeard.posFor(r.flight); return p ? { lat: p.lat, lon: p.lon, ms: p.ms } : null;
+}
+function hfdlStationsHtml(now: number): string {
+  const l = hfdlHeard.list(); if (!l.length) return '';
+  return `<div class="caption ac-span">HFDL GROUND STATIONS · ${l.length}</div>` + l.map(g => {
+    const age = now - g.lastMs, live = age < 120_000;
+    return `<div class="mt-card ac-gs ${live ? '' : 'dim'}"><div class="mt-h"><span class="mt-id">${g.id}</span><span class="mt-k"><b>${esc(g.name.toUpperCase())}</b><small>${esc(g.freqs.length ? `on ${g.freqs.map(k => (k / 1000).toFixed(3)).join(' · ')} MHz` : 'its frequencies not heard yet')}</small></span><span class="mt-live ${live ? 'on' : ''}"><i></i>${live ? 'LIVE' : bleAgo(age)}</span></div>`
+      + `<div class="mt-clk"><b>${g.squitters}</b><small>SQUITTER${g.squitters === 1 ? '' : 'S'} · ${g.pdus} PDU${g.pdus === 1 ? '' : 'S'} · ${g.aircraft.size} AIRCRAFT</small><em>${[...g.heardOn].sort((a, b) => a - b).map(k => (k / 1000).toFixed(3)).join(' ')}</em></div>`
+      + `<div class="mt-hex">${g.snr !== null ? `heard itself at ${acSnr(Math.round(g.snr))}` : 'heard only through the aircraft working it'}</div></div>`;
+  }).join('');
+}
+function onHfdl(m: { khz: number; snrDb: number; pdu: HfdlPdu }): void {
+  hfdlHeard.add(m.pdu, m.khz, m.snrDb, Date.now());
+  if (state.app === 'hfdl') refreshAcars();
+}
+// FORK: end HFDL
 function refreshAcars(force = false): void {
-  if (state.app !== 'acars' && state.app !== 'vdl2') return;
+  if (state.app !== 'acars' && state.app !== 'vdl2' && state.app !== 'hfdl') return;   // FORK: + hfdl
   const id = acarsApp(), ui = acarsUis[id], vdl = id === 'vdl2';
   const now = Date.now();
   if (!force && now - ui.drawn < 240) { clearTimeout(ui.pending); ui.pending = window.setTimeout(() => refreshAcars(true), 250); return; }
   ui.drawn = now;
   const rows = acRows(ui, vdl), stations = vdl ? ui.vdl.stationList() : [];
-  const placed = rows.filter(r => acWhere(r)).length + stations.filter(g => g.airport && acLookup(g.airport)).length;
+  const placed = rows.filter(r => acWhere(r)).length + stations.filter(g => g.airport && acLookup(g.airport)).length + (id === 'hfdl' ? hfdlHeard.stations.size : 0);   // FORK: + HFDL stations
   qa<HTMLButtonElement>('[data-acview]').forEach(b => {
     const v = b.dataset.acview; b.classList.toggle('on', v === ui.view);
     b.textContent = v === 'cards' ? `AIRCRAFT ${rows.length}` : v === 'map' ? `MAP ${placed}` : v === 'stats' ? 'STATS' : `LOG ${counts[id] ?? 0}`;
@@ -4279,7 +4470,8 @@ function refreshAcars(force = false): void {
     const top = cards.scrollTop;
     const gs = vdl && (rows.length || stations.length)
       ? `<div class="caption ac-span">GROUND STATIONS · ${stations.length}</div>${stations.length ? stations.map(g => acStationCard(g, now, ui.sel)).join('') : '<div class="mt-hex ac-span">none heard yet</div>'}` : '';
-    cards.innerHTML = rows.length || stations.length ? rows.map(r => acarsCard(r, now, ui.sel)).join('') + gs : emptyState(id);
+    const hfGs = id === 'hfdl' ? hfdlStationsHtml(now) : '';   // FORK: HFDL ground stations
+    cards.innerHTML = rows.length || stations.length || hfGs ? rows.map(r => acarsCard(r, now, ui.sel)).join('') + gs + hfGs : emptyState(id);   // FORK: + hfGs
     cards.scrollTop = top;
   }
   if (ui.view === 'stats' && !paused.has(id)) statsEl.innerHTML = acStats(ui, vdl, rows, now);
@@ -4290,6 +4482,7 @@ function refreshAcars(force = false): void {
       const apt = g.airport ? acLookup(g.airport) : undefined; if (!apt) continue;
       items.push({ id: `G:${g.addr}`, lat: apt.lat, lon: apt.lon, label: `GS ${g.addr} · ${g.airport}`, kind: 'tower' }); at.set(g.addr, [apt.lat, apt.lon]);
     }
+    if (id === 'hfdl') for (const g of hfdlHeard.list()) items.push({ id: `H:${g.id}`, lat: g.lat, lon: g.lon, label: `HFDL ${g.name}`, kind: 'tower' });   // FORK: HFDL ground stations
     for (const r of rows) {
       const w = acWhere(r); if (!w) continue;
       const alt = r.ins.nums.altFt !== null ? ` · ${numChips({ ...r.ins.nums, kt: null, mach: '', hdg: null, fuel: '', eta: '' })[0]}` : '';
@@ -4553,11 +4746,11 @@ function trBrake(u: EotUnit): [string, 'red' | 'ok'] | null {
 /* Waterfalls that can be put away (the Android app's WATERFALL button). On a wide screen each starts shown; on a phone
  * BLE, ADS-B and Trains start without it (their bursts hardly show on it, and the cards or the map get the room), while
  * Meters, LoRa and ACARS keep it. A choice is remembered per app. */
-const WF_PHONE: Partial<Record<AppId, boolean>> = { hamplus: false, cb: false, hd: false, sondes: false, btle: false, adsb: false, trains: false, fleet: false, cell: false, atsc: false, ert: true, lora: true, acars: true, vdl2: true };
+const WF_PHONE: Partial<Record<AppId, boolean>> = { hamplus: false, cb: false, hd: false, sondes: false, btle: false, adsb: false, trains: false, fleet: false, cell: false, atsc: false, ert: true, lora: true, acars: true, vdl2: true, hfdl: true };   // FORK: + hfdl
 const WF_SVG = WF_ICON;
 /** The apps whose waterfall can be put away. The button is the scope's own (Scope.setHide, top left corner), wired
  *  for these apps in wireCommon, so no screen draws one of its own. */
-const WF_HIDE = new Set<AppId>(['adsb', 'uat', 'btle', 'acars', 'vdl2', 'ert', 'lora', 'sondes', 'trains', 'fleet', 'hd', 'cell', 'atsc']);
+const WF_HIDE = new Set<AppId>(['adsb', 'uat', 'btle', 'acars', 'vdl2', 'hfdl', 'ert', 'lora', 'sondes', 'trains', 'fleet', 'hd', 'cell', 'atsc']);   // FORK: + hfdl
 function wfShown(app: AppId): boolean {
   let v: string | null = null;
   try { v = localStorage.getItem('mm.wf.' + app); } catch { /* storage blocked */ }
@@ -6090,6 +6283,12 @@ const hdUi = {
   objects: [] as HdObj[], stations: loadHdStations(), maps: loadHdMaps(),
   tileUrls: new Map<string, string>(),
   auto: false,
+  /** HD audio upmixed to 5.1; takes effect only on a device that plays 6 channels. */
+  surround: false,
+  /** DATA: the gallery filter and whether TECH is open. */
+  kind: 'all', tech: false,
+  /** The output level meter: a tap on the audio after the mute, L and R in percent. */
+  vuAn: null as AnalyserNode[] | null, vuRaf: 0, vuLv: [0, 0],
   scan: {
     phase: 'look' as 'look' | 'survey' | 'dwell' | 'rest', plan: { wide: false, rate: HD_RATE, centers: HD_WINDOWS } as HdLookPlan, step: 0, from: 0, until: 0,
     acc: null as Float64Array | null, accN: 0, levels: new Map<number, number>(), found: [] as number[], queue: [] as number[], locked: 0, cur: 0, started: 0,
@@ -6104,7 +6303,7 @@ interface HdSnapMsg {
   hz: number; centerHz: number; rate: number; rx: { state: string; cfoHz: number; cpLock: number; blocks: number; blocksBad: number; psmi: number; bc: number };
   station: StationSnap; cands: { hz: number; scoreDb: number; levelDb: number }[];
   det: { present: boolean; snrDb: number; lock: number; sbLoDb: number; sbHiDb: number; refDb: number; analogDb: number; cfoHz: number } | null;
-  dropped: number; load: number; queued: number;
+  dropped: number; load: number; queued: number; audio?: HdAudioStatus;
 }
 const HD_WIDE = window.matchMedia('(min-width: 1000px)');
 HD_WIDE.addEventListener('change', () => { if (state.app === 'hd') { const v = q<HTMLElement>('main#view'); if (v) { renderHd(v); refreshReadout(); refreshChannel(); } } });
@@ -6127,17 +6326,45 @@ function hdSaveStations(): void {
 }
 function hdOpen(): void {
   const known = [...hdUi.stations.values()].sort((a, b) => b.lastMs - a.lastMs)[0];
-  const dial = state.dial >= 87_900_000 && state.dial <= 107_900_000 ? state.dial : 0;
+  const dial = state.dial >= HD_BAND_LO && state.dial <= HD_BAND_HI ? state.dial : 0;
   const f = dial || known?.hz || HD_WINDOWS[0];
   configure('WFM', f, HD_RATE, 24, 24, false, 'hd');
   worker?.postMessage({ type: 'hdLook', on: false });
+  hdSetProg(hdUi.prog, true);
   requestGeo();
   if (!dial && !known) hdSetAuto(true);
   else if (hdUi.auto) hdBandStart();
 }
+/** The speakers this device can play, 0 until audio has started. */
+function hdChannels(): number { return audioCtx?.destination.maxChannelCount ?? 0; }
+/** 5.1 output is offered only where the device has 6 or more channels. */
+function hdSurroundAvail(): boolean { return hdChannels() >= 6; }
+/** Turns the HD 5.1 upmix on or off (no effect on a stereo device). */
+function hdSetSurround(on: boolean): void { hdUi.surround = on; hdApplySurround(); }
+function hdApplySurround(): void {
+  const on = hdUi.surround && hdSurroundAvail();
+  if (audioCtx && hdSurroundAvail()) {
+    const d = audioCtx.destination;
+    d.channelCount = on ? 6 : 2; d.channelCountMode = 'explicit'; d.channelInterpretation = 'speakers';
+  }
+  worker?.postMessage({ type: 'hdSurround', on, channels: hdChannels() });
+}
+/** The program whose audio plays: only it is decoded. */
+function hdSetProg(n: number, force = false): void {
+  if (n === hdUi.prog && !force) return;
+  hdUi.prog = n; worker?.postMessage({ type: 'hdProgram', n });
+}
+/** What the selected program's audio is doing, in words and how it shows. */
+function hdAudioText(m: HdSnapMsg | null, n: number): [string, '' | 'ok' | 'amber'] {
+  const a = hdMine(m) ? m.audio : undefined;
+  if (!a || a.program !== n) return [n === 0 ? 'ANALOG' : 'WAITING', ''];
+  if (a.state === 'digital') return ['DIGITAL', 'ok'];
+  const wait = a.good > 0 || a.bufferS > 0 ? `BUFFERING ${Math.min(99, Math.round(a.bufferS / 2 * 100))}%` : 'WAITING';
+  return [n === 0 ? `ANALOG · ${wait}` : wait === 'WAITING' ? 'SILENT · WAITING' : `SILENT · ${wait}`, 'amber'];
+}
 /** Tune a station: the channel moves inside the span; the radio follows only when the sidebands would leave it. */
 function hdTune(hz: number, recenter = false): void {
-  state.freq = Math.round(Math.min(107_900_000, Math.max(87_900_000, hz)) / 100_000) * 100_000;
+  state.freq = Math.round(Math.min(HD_BAND_HI, Math.max(HD_BAND_LO, hz)) / 100_000) * 100_000;
   const prev = state.viewLo;
   if (recenter || Math.abs(state.freq - state.viewLo) > HD_REACH) {
     state.viewLo = state.freq;
@@ -6356,7 +6583,7 @@ function renderHd(view: HTMLElement): void {
       <div id="hd-detail" class="mt-detail hd-detail" hidden></div>
       <div id="hd-stage" class="hd-stage">${wide ? '' : `<div id="hd-hero" class="hd-hero"></div>${mapHtml}`}<div id="hd-stations" class="hd-stations"></div><div id="hd-data" class="hd-data"></div></div>
       <div id="hd-log"><div class="countrow"><span id="count-hd" class="count">0 DECODED</span></div>${listHtml('hd', 'listening for HD Radio…')}</div>
-      <div class="note about">HD Radio (NRSC-5) on hybrid FM stations, receive only. Layer 1 is decoded here from the standard: the station's name, ID, location, slogan and message (SIS, majority-voted: its checksum does not verify yet), each program's title, artist and album (PSD), and the data services: album art, station logos, traffic map tiles and weather radar placed on the map, every file shown in DATA. The digital audio codec is proprietary and not decoded: what plays is the station's analog FM under the digital sidebands. The large-object and service-directory formats are derived from our recordings. AUTO first finds the stations across the band, then visits the strong ones from the bottom up and stays on each until it fills in. At the top it looks again.</div>
+      <div class="note about">HD Radio (NRSC-5) on hybrid FM stations, receive only. Layer 1 is decoded here from the standard: the station's name, ID, location, slogan and message (SIS, majority-voted: its checksum does not verify yet), each program's title, artist and album (PSD), and the data services: album art, station logos, traffic map tiles and weather radar placed on the map, every file shown in DATA. The digital audio of every program is decoded: HD1 plays the station's analog FM until its digital audio is ready, or when it drops out; the other programs are silent until then. The large-object and service-directory formats are derived from our recordings. AUTO first finds the stations across the band, then visits the strong ones from the bottom up and stays on each until it fills in. At the top it looks again.</div>
     </section>`;
   scope = attach(tunableScope('scope', 80, 70));
   qa<HTMLButtonElement>('[data-hdview]', view).forEach(b => b.onclick = () => { hdUi.view = b.dataset.hdview as HdView; hdUi.sel = ''; refreshHd(true); });
@@ -6368,9 +6595,12 @@ function renderHd(view: HTMLElement): void {
   const pick = (e: Event) => {
     const t = e.target as HTMLElement;
     const tuneEl = t.closest<HTMLElement>('[data-hdtune]'); if (tuneEl) { hdSetAuto(false); hdTune(Number(tuneEl.dataset.hdtune)); if (!HD_WIDE.matches) hdUi.view = 'now'; else hdUi.left = 'now'; refreshHd(true); return; }
-    const prog = t.closest<HTMLElement>('[data-hdprog]'); if (prog) { hdUi.prog = Number(prog.dataset.hdprog); refreshHd(true); return; }
+    if (t.closest('[data-hdsurround]')) { hdSetSurround(!hdUi.surround); refreshHd(true); return; }
+    const prog = t.closest<HTMLElement>('[data-hdprog]'); if (prog) { hdSetProg(Number(prog.dataset.hdprog)); refreshHd(true); return; }
     const save = t.closest<HTMLElement>('[data-hdsave]'); if (save) { const o = hdUi.objects.find(x => x.key === save.dataset.hdsave); if (o) hdSaveObject(o); return; }
     const obj = t.closest<HTMLElement>('[data-hdobj]'); if (obj) { hdUi.sel = hdUi.sel === obj.dataset.hdobj ? '' : obj.dataset.hdobj!; refreshHd(true); return; }
+    const kind = t.closest<HTMLElement>('[data-hdkind]'); if (kind) { hdUi.kind = kind.dataset.hdkind!; refreshHd(true); return; }
+    if (t.closest('[data-hddo="tech"]')) { hdUi.tech = !hdUi.tech; refreshHd(true); return; }
     const close = t.closest<HTMLElement>('[data-hddo="close"]'); if (close) { hdUi.sel = ''; refreshHd(true); }
   };
   // A redraw between press and release would swap the element under the pointer and lose the click.
@@ -6385,6 +6615,39 @@ function renderHd(view: HTMLElement): void {
   if (hdUi.auto) { clearTimeout(hdUi.scanTimer); hdUi.scanTimer = window.setTimeout(hdScanTick, 500); }
   refreshList('hd');
   refreshHd(true);
+  hdVuStart();
+}
+
+/** The output level meter: taps the audio after the mute and moves every [data-hdvu] each frame. */
+function hdVuStart(): void {
+  if (hdUi.vuRaf || !audioCtx || !muteGain) return;
+  if (!hdUi.vuAn) {
+    const ctx = audioCtx, sp = ctx.createChannelSplitter(2);
+    muteGain.connect(sp);
+    hdUi.vuAn = [0, 1].map(i => { const a = ctx.createAnalyser(); a.fftSize = 1024; sp.connect(a, i); return a; });
+  }
+  const buf = new Float32Array(1024);
+  const tick = () => {
+    if (state.app !== 'hd' || !hdUi.vuAn) { hdUi.vuRaf = 0; return; }
+    const els = qa<HTMLElement>('[data-hdvu]');
+    if (els.length) {
+      hdUi.vuLv = hdUi.vuAn.map((a, i) => {
+        a.getFloatTimeDomainData(buf);
+        let s = 0; for (let k = 0; k < buf.length; k++) s += buf[k] * buf[k];
+        const pct = Math.max(0, Math.min(100, (10 * Math.log10(s / buf.length + 1e-12) + 54) * 100 / 50));
+        return pct > hdUi.vuLv[i] ? pct : hdUi.vuLv[i] * 0.85 + pct * 0.15;
+      });
+      for (const el of els) { el.style.setProperty('--l', `${hdUi.vuLv[0].toFixed(0)}%`); el.style.setProperty('--r', `${hdUi.vuLv[1].toFixed(0)}%`); }
+    }
+    hdUi.vuRaf = requestAnimationFrame(tick);
+  };
+  hdUi.vuRaf = requestAnimationFrame(tick);
+}
+/** Signal quality from the raw BER, 0 (none) to 5 bars. */
+function hdBars(st: StationSnap | null): number {
+  if (!st || !st.frames) return 0;
+  const b = st.ber;
+  return b < 0.002 ? 5 : b < 0.01 ? 4 : b < 0.03 ? 3 : b < 0.06 ? 2 : 1;
 }
 
 /** The lock, in words, and how it shows. */
@@ -6402,10 +6665,11 @@ function hdHead(m: HdSnapMsg | null, now: number): string {
   const call = sis?.callsign && sis.nameVotes[0] >= 3 ? sis.callsign : rec?.call ?? '';
   const [lock, tone] = hdLock(m, now);
   const s = hdUi.scan;
-  const scan = hdUi.auto ? (s.phase === 'rest' ? 'AUTO · NO HD HEARD · LOOKING AGAIN SOON' : s.phase !== 'dwell' ? 'AUTO · FINDING STATIONS 88–108' : `AUTO · ${s.locked ? 'FILLING IN' : 'CHECKING'} ${Math.max(0, Math.ceil((s.until - now) / 1000))} s · ${s.queue.length} NEXT`) : '';
+  const scan = hdUi.auto ? (s.phase === 'rest' ? 'AUTO · NO HD HEARD · LOOKING AGAIN SOON' : s.phase !== 'dwell' ? `AUTO · FINDING STATIONS ${hdMhz(HD_BAND_LO)}–${Math.round(HD_BAND_HI / 1e6)}` : `AUTO · ${s.locked ? 'FILLING IN' : 'CHECKING'} ${Math.max(0, Math.ceil((s.until - now) / 1000))} s · ${s.queue.length} NEXT`) : '';
   const tile = (n: number | string, l: string) => `<span><b>${n}</b><small>${l}</small></span>`;
   const progs = st ? st.programs.filter(p => p.lastMs).length : rec?.programs.length ?? 0;
   return `<div class="hd-watch"><b>${hdMhz(state.freq)} MHz</b>${call ? `<strong>${esc(call)}</strong>` : ''}<small>${esc(sis?.slogan || rec?.slogan || (st?.frames ? '' : 'no digital data yet'))}</small><em class="${tone}">${lock}</em></div>`
+    + (sis?.alert ? `<div class="hd-alert" role="alert"><em>EMERGENCY ALERT</em><span>${esc(sis.alert.text || 'no text')}</span><small>${esc(hdAlertMeta(sis.alert))}</small></div>` : '')
     + (sis?.message ? `<div class="hd-ticker${sis.messagePriority ? ' prio' : ''}">${sis.messagePriority ? '<em>PRIORITY</em>' : ''}<span><i>${esc(sis.message)}</i></span></div>` : '')
     + (scan ? `<div class="hd-scan">${scan}</div>` : '')
     + `<div class="hd-count">${tile(progs, 'PROGRAMS')}${tile(hdUi.stations.size, 'STATIONS')}${tile(hdObjects().length, 'OBJECTS')}${tile(st?.frames ?? 0, 'FRAMES')}${tile(st && st.frames ? (st.ber * 100).toFixed(2) + '%' : '-', 'RAW BER')}</div>`;
@@ -6441,10 +6705,26 @@ function hdDataSvcText(s: SisSummary): string {
   const c = new Map<number, number>(); for (const d of s.data) c.set(d.type, (c.get(d.type) ?? 0) + 1);
   return [...c].map(([t, n]) => `${dataTypeName(t)} (${t})${n > 1 ? ` ×${n}` : ''}`).join(' · ') || '-';
 }
-/** Emergency alerts: a single EA PDU is most likely a bit error the missing CRC let through, so only a repeat counts. */
+/** Emergency alerts (SIS message 9): only one whose CRC-7 and control data CRC both verify is shown. */
 function hdAlertText(s: SisSummary): string {
-  if (!s.alerts) return 'none';
-  return s.alertsRepeated ? `${s.alertsRepeated} repeated, content not decoded` : `none confirmed · ${s.alerts} single EA PDU${s.alerts === 1 ? '' : 's'}, unverified (likely bit errors)`;
+  if (s.alert) return `${s.alert.text} · ${hdAlertMeta(s.alert)}`;
+  return s.alerts ? `none verified · ${s.alerts} alert message${s.alerts === 1 ? '' : 's'}${s.alertsBad ? `, ${s.alertsBad} failed the alert CRC` : ', not complete yet'}` : 'none';
+}
+function hdAlertMeta(a: NonNullable<SisSummary['alert']>): string {
+  return `categories ${a.categories.join(' / ')} · ${a.locations.length ? `${a.locationFormat} ${a.locations.join(', ')}` : 'no area codes'} · ${hdClock(a.ms)}`;
+}
+/** A SIS exciter or importer: maker code, versions and status. */
+function hdDeviceText(d: SisSummary['exciter']): string {
+  return d ? `${d.maker} · core ${d.core} · maker ${d.makerVersion} · status ${d.coreStatus < 0 ? '?' : `${d.coreStatus}/${d.makerStatus}`}${d.importerConnected !== undefined ? ` · importer ${d.importerConnected ? 'connected' : 'not connected'}` : ''}` : '-';
+}
+/** Bytes as hex rows of 16 with their text. */
+function hdHexDump(b: Uint8Array, max = 512): string {
+  const rows: string[] = [];
+  for (let i = 0; i < Math.min(b.length, max); i += 16) {
+    const s = b.subarray(i, Math.min(i + 16, b.length));
+    rows.push(`${i.toString(16).padStart(6, '0')}  ${Array.from(s, x => x.toString(16).padStart(2, '0')).join(' ').padEnd(47)}  ${Array.from(s, x => x >= 32 && x < 127 ? String.fromCharCode(x) : '.').join('')}`);
+  }
+  return rows.join('\n') + (b.length > max ? `\n… ${b.length - max} more bytes` : '');
 }
 /** The last frames, each as its raw BER and the FCS results of the packets it carried. */
 function hdFrames(st: StationSnap): string {
@@ -6461,24 +6741,40 @@ function hdHero(m: HdSnapMsg | null, now: number): string {
   const st = hdMine(m) ? m.station : null, rec = hdUi.stations.get(hdKey(state.freq));
   const progs: ProgramRow[] = st?.programs ?? [];
   const sel = progs.find(p => p.n === hdUi.prog) ?? progs[0] ?? null;
-  if (sel && sel.n !== hdUi.prog) hdUi.prog = sel.n;
-  const art = hdArt(sel, state.freq), logo = hdLogo(hdKey(state.freq), sel?.n ?? 0);
+  if (sel && sel.n !== hdUi.prog) hdSetProg(sel.n);
+  const n = sel?.n ?? 0, art = hdArt(sel, state.freq), logo = hdLogo(hdKey(state.freq), n);
   const call = (st?.sis.callsign && st.sis.nameVotes[0] >= 3 ? st.sis.callsign : rec?.call) || hdMhz(state.freq);
-  const artHtml = art ? `<img src="${art.url}" alt="${art.kind === 'art' ? 'album art' : 'station logo'}" class="${art.kind}">` : `<div class="hd-ph"><span>${glyph('hd', 'currentColor', 54)}</span><b>${esc(call)}</b><small>HD${(sel?.n ?? 0) + 1}</small></div>`;
-  const recProg = rec?.programs.find(p => p.n === (sel?.n ?? 0));
+  const artHtml = art ? `<img src="${art.url}" alt="${art.kind === 'art' ? 'album art' : 'station logo'}" class="${art.kind}">` : `<div class="hd-ph"><span>${glyph('hd', 'currentColor', 54)}</span><b>${esc(call)}</b></div>`;
+  const recProg = rec?.programs.find(p => p.n === n), type = sel?.typeName || recProg?.typeName || '';
   const title = sel?.title || '', artist = sel?.artist || '';
   const waiting = !st?.frames ? (hdLock(m, now)[0] === 'ANALOG ONLY' ? 'No digital sidebands on this station: the analog audio plays' : 'Waiting for the digital side') : 'Waiting for this program\'s song data';
-  const tabs = progs.length ? `<div class="hd-progs">${progs.map(p => `<button data-hdprog="${p.n}" class="hd-prog ${p.n === sel?.n ? 'on' : ''} ${p.lastMs && now - p.lastMs < 10_000 ? 'live' : ''}"><b>HD${p.n + 1}</b><small>${esc(p.typeName || 'program')}</small><i>${esc(p.title ? `${p.title}${p.artist ? ` · ${p.artist}` : ''}` : p.lastMs ? 'on air' : 'listed in SIS')}</i></button>`).join('')}</div>` : '';
+  const [aText, aTone] = sel ? hdAudioText(m, n) : ['ANALOG FM', '' as const];
+  const bars = hdBars(st);
+  const q = `<span class="hd-q" title="signal quality from the raw bit error rate"><span class="hd-qb">${[1, 2, 3, 4, 5].map(k => `<i class="${k <= bars ? 'on' : ''}"></i>`).join('')}</span><small>${st?.frames ? `BER ${(st.ber * 100).toFixed(2)}%` : 'NO DIGITAL'}</small></span>`;
+  const surround = hdSurroundAvail() ? `<button data-hdsurround class="tog hd-51 ${hdUi.surround ? 'on' : ''}">5.1 SURROUND</button>` : '';
+  const [l, r] = hdUi.vuLv;
+  const vu = `<div class="hd-vu" data-hdvu style="--l:${l.toFixed(0)}%;--r:${r.toFixed(0)}%"><small>L</small><span><i class="l"></i></span><small>R</small><span><i class="r"></i></span></div>`;
+  const tiles = progs.length ? `<div class="hd-progs">${progs.map(p => {
+    const a = hdArt(p, state.freq), live = p.lastMs && now - p.lastMs < 10_000, on = p.n === sel?.n;
+    return `<button data-hdprog="${p.n}" class="hd-prog ${on ? 'on' : ''} ${live ? 'live' : ''}"><span class="hd-pth">${a ? `<img src="${a.url}" alt="" class="${a.kind}">` : `<b>HD${p.n + 1}</b>`}</span>`
+      + `<span class="hd-ptx"><b>HD${p.n + 1}</b><small>${esc(p.typeName || 'program')}</small><i>${esc(p.title ? `${p.title}${p.artist ? ` · ${p.artist}` : ''}` : p.lastMs ? 'on air' : 'listed in SIS')}</i>`
+      + `${on ? (([t, c]) => `<em class="${c}">${t}</em>`)(hdAudioText(m, p.n)) : ''}</span></button>`;
+  }).join('')}</div>` : '';
   const det = hdMine(m) ? m.det : null;
-  const sig = `<div class="hd-sig">${hdSideband('LOWER', st && st.frames ? st.snrLoDb : null, det?.sbLoDb ?? null, det?.refDb ?? null)}${hdSideband('UPPER', st && st.frames ? st.snrHiDb : null, det?.sbHiDb ?? null, det?.refDb ?? null)}`
-    + `<div class="hd-kv"><span>LOCK <b>${hdLock(m, now)[0]}</b></span>${st?.frames ? `<span>RAW BER <b>${(st.ber * 100).toFixed(2)}%</b></span><span>PCI <b>${esc(st.pciName)}</b></span>` : ''}${hdMine(m) ? `<span>CARRIER <b>${m.rx.cfoHz >= 0 ? '+' : ''}${m.rx.cfoHz.toFixed(0)} Hz</b></span>` : ''}${st && st.blend >= 0 ? `<span>BLEND <b>${BLEND_NAMES[st.blend].toUpperCase()}</b></span>` : ''}<span>AUDIO <b>ANALOG FM</b></span></div>${st?.frames ? hdFrames(st) : ''}</div>`;
+  const sig = `<div class="hd-card hd-sig"><small class="hd-cap">SIGNAL</small>${hdSideband('LOWER', st && st.frames ? st.snrLoDb : null, det?.sbLoDb ?? null, det?.refDb ?? null)}${hdSideband('UPPER', st && st.frames ? st.snrHiDb : null, det?.sbHiDb ?? null, det?.refDb ?? null)}`
+    + `<div class="hd-kv"><span>LOCK <b>${hdLock(m, now)[0]}</b></span>${st?.frames ? `<span>RAW BER <b>${(st.ber * 100).toFixed(2)}%</b></span><span>PCI <b>${esc(st.pciName)}</b></span>` : ''}${hdMine(m) ? `<span>CARRIER <b>${m.rx.cfoHz >= 0 ? '+' : ''}${m.rx.cfoHz.toFixed(0)} Hz</b></span>` : ''}${st && st.blend >= 0 ? `<span>BLEND <b>${BLEND_NAMES[st.blend].toUpperCase()}</b></span>` : ''}<span>AUDIO <b>${sel ? `HD${sel.n + 1} ${aText}` : 'ANALOG FM'}</b></span></div>${st?.frames ? hdFrames(st) : ''}</div>`;
   const s = st?.frames ? st.sis : null;
-  const info = s ? `<div class="hd-info"><small>STATION</small><div class="hd-kv">${s.facility >= 0 ? `<span>FACILITY <b>${esc(s.country)} ${s.facility}</b></span>` : ''}${s.lat !== null ? `<span>TRANSMITTER <b>${esc(hdLocText(s))}</b></span>` : ''}${s.data.length ? `<span>DATA SERVICES <b>${esc(hdDataSvcText(s))}</b></span>` : ''}${s.alfnMs ? `<span>CLOCK <b>${esc(hdClockText(s))}</b></span>` : ''}</div></div>` : '';
-  const songs = sel && sel.songs.length > 1 ? `<div class="hd-hist"><small>EARLIER ON HD${sel.n + 1}</small>${sel.songs.slice(1, 8).map(s => `<div><b>${hdClock(s.ms)}</b><span>${esc(s.title)}${s.artist ? ` · ${esc(s.artist)}` : ''}</span></div>`).join('')}</div>` : '';
-  return `<div class="hd-np"><div class="hd-art">${artHtml}</div><div class="hd-meta">`
-    + `<div class="hd-station">${logo ? `<img src="${logo}" alt="logo">` : ''}<b>${esc(call)}</b><span>${hdMhz(state.freq)} MHz${sel ? ` · HD${sel.n + 1}` : ''}${sel?.typeName ? ` · ${esc(sel.typeName)}` : recProg?.typeName ? ` · ${esc(recProg.typeName)}` : ''}</span></div>`
+  const f: [string, string][] = s ? [['CALL SIGN', s.callsign], ['NAME', s.longName], ['SLOGAN', s.slogan], ['MESSAGE', s.message], ['FACILITY', s.facility >= 0 ? `${s.country} ${s.facility}` : ''],
+    ['TRANSMITTER', s.lat !== null ? hdLocText(s) : ''], ['CLOCK', s.alfnMs ? hdClockText(s) : ''], ['DATA', s.data.length ? hdDataSvcText(s) : '']]
+    : rec ? [['CALL SIGN', rec.call], ['NAME', rec.longName], ['SLOGAN', rec.slogan], ['MESSAGE', rec.message], ['FACILITY', rec.facility >= 0 ? `${rec.country} ${rec.facility}` : ''], ['DATA', rec.data.join(', ')]] : [];
+  const rows = f.filter(([, v]) => v);
+  const info = rows.length ? `<div class="hd-card hd-info"><small class="hd-cap">STATION</small><div class="hd-fields">${rows.map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('')}</div></div>` : '';
+  const songs = sel && sel.songs.length > 1 ? `<div class="hd-card hd-hist"><small class="hd-cap">EARLIER ON HD${sel.n + 1}</small>${sel.songs.slice(1, 8).map(s => `<div><b>${hdClock(s.ms)}</b><span>${esc(s.title)}${s.artist ? ` · ${esc(s.artist)}` : ''}</span></div>`).join('')}</div>` : '';
+  return `<div class="hd-np ${art?.kind === 'art' ? 'has-art' : ''}"${art ? ` style="--art:url('${art.url}')"` : ''}><div class="hd-art">${artHtml}<span class="hd-pbadge">HD${n + 1}</span></div><div class="hd-meta">`
+    + `<div class="hd-station">${logo ? `<img src="${logo}" alt="logo">` : ''}<span><b>${esc(call)}</b><small>${hdMhz(state.freq)} MHz${type ? ` · ${esc(type)}` : ''}</small></span></div>`
     + `<div class="hd-title">${esc(title || waiting)}</div>${artist ? `<div class="hd-artist">${esc(artist)}</div>` : ''}${sel?.album ? `<div class="hd-album">${esc(sel.album)}</div>` : ''}`
-    + `</div></div>${tabs}${sig}${info}${songs}`;
+    + `<div class="hd-state"><em class="hd-mode ${aTone}">${aText}</em>${q}${surround}</div>${vu}`
+    + `</div></div>${tiles}${info}${sig}${songs}`;
 }
 function hdStationsHtml(now: number): string {
   const list = [...hdUi.stations.values()].sort((a, b) => a.hz - b.hz);
@@ -6492,29 +6788,60 @@ function hdStationsHtml(now: number): string {
       + `<div class="hd-stk">${r.facility >= 0 ? `<span>FACILITY <b>${r.facility}</b></span>` : ''}${r.country ? `<span>COUNTRY <b>${esc(r.country)}</b></span>` : ''}${r.lat !== null && r.lon !== null ? `<span>TX <b>${r.lat.toFixed(4)}, ${r.lon.toFixed(4)}${r.altM !== null ? ` · ${r.altM} m` : ''}</b></span>` : ''}${r.data.length ? `<span>DATA <b>${esc(r.data.join(', '))}</b></span>` : ''}<span>FIRST <b>${new Date(r.firstMs).toLocaleDateString()}</b></span></div></div></div>`;
   }).join('');
 }
-const HD_KIND: Record<string, string> = { art: 'ALBUM ART', logo: 'LOGO', traffic: 'TRAFFIC TILE', 'traffic-info': 'TRAFFIC MAP INFO', radar: 'WEATHER RADAR', 'radar-info': 'RADAR INFO', image: 'IMAGE', text: 'TEXT', file: 'FILE' };
+/** DATA's gallery filters: each object kind's group and its label. */
+const HD_GROUPS: [string, string][] = [['art', 'ART'], ['logo', 'LOGOS'], ['traffic', 'TRAFFIC'], ['radar', 'RADAR'], ['other', 'FILES']];
+const hdGroup = (o: HdObj) => o.kind === 'art' || o.kind === 'logo' ? o.kind : o.kind.startsWith('traffic') ? 'traffic' : o.kind.startsWith('radar') ? 'radar' : 'other';
+const HD_KIND: Record<string, string> = { art: 'ALBUM ART', logo: 'LOGO', traffic: 'TRAFFIC TILE', 'traffic-info': 'TRAFFIC MAP INFO', radar: 'WEATHER RADAR', 'radar-info': 'RADAR INFO', image: 'IMAGE', text: 'TEXT', file: 'FILE', carved: 'FOUND INSIDE' };
 function hdDataHtml(m: HdSnapMsg | null, now: number): string {
-  const st = hdMine(m) ? m.station : null, objs = hdObjects(state.freq);
-  const rows = objs.map(o => `<div class="hd-obj ${hdUi.sel === o.key ? 'sel' : ''}" data-hdobj="${esc(o.key)}">${o.mime.startsWith('image/') ? `<img src="${o.kind === 'traffic' ? hdTileUrl(o) : o.url}" alt="">` : `<span class="hd-oi">${o.mime === 'text/plain' ? 'TXT' : 'BIN'}</span>`}`
+  const st = hdMine(m) ? m.station : null, all = hdObjects(state.freq);
+  const counts = new Map<string, number>(); for (const o of all) counts.set(hdGroup(o), (counts.get(hdGroup(o)) ?? 0) + 1);
+  if (hdUi.kind !== 'all' && !counts.get(hdUi.kind)) hdUi.kind = 'all';
+  const objs = hdUi.kind === 'all' ? all : all.filter(o => hdGroup(o) === hdUi.kind);
+  const chips = all.length ? `<div class="hd-kinds">${(['all', ...HD_GROUPS.map(g => g[0]).filter(g => counts.get(g))]).map(g => `<button class="chip ${hdUi.kind === g ? 'on' : ''}" data-hdkind="${g}">${g === 'all' ? 'ALL' : HD_GROUPS.find(x => x[0] === g)![1]} <b>${g === 'all' ? all.length : counts.get(g)}</b></button>`).join('')}</div>` : '';
+  const imgs = objs.filter(o => o.mime.startsWith('image/')), files = objs.filter(o => !o.mime.startsWith('image/'));
+  const gallery = imgs.length ? `<div class="hd-gal">${imgs.map(o => `<div class="hd-gi ${hdUi.sel === o.key ? 'sel' : ''} k-${esc(o.kind)}" data-hdobj="${esc(o.key)}" title="${esc(o.name)}"><img src="${o.kind === 'traffic' ? hdTileUrl(o) : o.url}" alt="" loading="lazy"><b>${HD_KIND[o.kind] ?? o.kind}</b><small>${o.program >= 0 ? `HD${o.program + 1} · ` : ''}${hdSize(o.size)} · ${hdAgo(now - o.ms)}</small></div>`).join('')}</div>` : '';
+  const rows = files.map(o => `<div class="hd-obj ${hdUi.sel === o.key ? 'sel' : ''}" data-hdobj="${esc(o.key)}"><span class="hd-oi">${o.mime.startsWith('text/') ? 'TXT' : 'BIN'}</span>`
     + `<div><b>${esc(o.name || `object ${hdHex(o.id)}`)}</b><small>${HD_KIND[o.kind] ?? o.kind} · port ${hdHex(o.port)} · ${hdSize(o.size)} · ${esc(o.mime)} · ${hdAgo(now - o.ms)}</small></div><button class="chip" data-hdsave="${esc(o.key)}">SAVE</button></div>`).join('');
   const pend = st?.pending.filter(p => p.need < 10_000) ?? [];
   const pendHtml = pend.length ? `<div class="hd-sec"><small>COMING IN</small>${pend.map(p => `<div class="hd-pend"><b>${esc(p.name || `object ${hdHex(p.id)}`)}</b><span class="hd-bar"><i style="width:${(100 * p.have / p.need).toFixed(0)}%"></i></span><small>${p.have}/${p.need} · port ${hdHex(p.port)}</small></div>`).join('')}</div>` : '';
-  const ports = st?.ports.length ? `<div class="hd-sec"><small>PORTS</small><table class="hd-tab"><tr><th>PORT</th><th>WHAT</th><th>PACKETS</th><th>BYTES</th><th>LAST</th></tr>${st.ports.map(p => `<tr><td>${hdHex(p.port)}</td><td>${esc([p.kind, p.name].filter(Boolean).join(' · ') || p.bearer)}</td><td>${p.packets}</td><td>${hdSize(p.bytes)}</td><td>${hdAgo(now - p.lastMs)}</td></tr>`).join('')}</table></div>` : '';
-  const sig = st?.sig.length ? `<div class="hd-sec"><small>SERVICE DIRECTORY (format derived from recordings)</small>${st.sig.map(s => `<div class="hd-svc"><b>${esc(s.name || (s.kind === 'audio' ? `HD${s.program + 1}` : 'data'))}</b><span>${s.kind === 'audio' ? `HD${s.program + 1} · ${esc(programTypeName(s.progType))}` : 'data service'}</span><small>${s.components.map(c => `port ${hdHex(c.port)} · MIME ${c.mimeHex}`).join(' · ')}</small></div>`).join('')}</div>` : '';
-  const sis = st && st.frames ? (() => { const s = st.sis; const f: [string, string][] = [['CALL SIGN', s.callsign ? `${s.callsign} (${s.nameVotes[0]} of ${s.nameVotes[1]} votes)` : '-'], ['LONG NAME', s.longName || '-'], ['UNIVERSAL NAME', s.universal || '-'], ['SLOGAN', s.slogan || '-'], ['MESSAGE', s.message ? `${s.message}${s.messagePriority ? ' (priority)' : ''}` : '-'], ['FACILITY', s.facility >= 0 ? `${s.country} ${s.facility}` : '-'],
+  const pinfo = new Map((st?.portInfo ?? []).map(p => [p.port, p]));
+  const ports = st?.ports.length ? `<div class="hd-sec"><small>PORTS</small><table class="hd-tab"><tr><th>PORT</th><th>WHAT</th><th>CONTENT</th><th>PACKETS</th><th>BYTES</th><th>LAST</th></tr>${st.ports.map(p => { const i = pinfo.get(p.port); return `<tr><td>${hdHex(p.port)}</td><td>${esc([p.kind, p.name].filter(Boolean).join(' · ') || p.bearer)}</td><td>${esc(i ? `${i.content}${i.tpeg?.frames ? ` · ${i.tpeg.frames} frames` : ''} · ${i.entropy} bits/B · ${i.minLen}..${i.maxLen} B` : '-')}</td><td>${p.packets}</td><td>${hdSize(p.bytes)}</td><td>${hdAgo(now - p.lastMs)}</td></tr>`; }).join('')}</table></div>` : '';
+  const sig = st?.sig.length ? `<div class="hd-sec"><small>SERVICE DIRECTORY (format derived from recordings)</small>${st.sig.map(s => `<div class="hd-svc"><b>${esc(s.name || (s.kind === 'audio' ? `HD${s.program + 1}` : 'data'))}</b><span>${s.kind === 'audio' ? `HD${s.program + 1} · ${esc(programTypeName(s.progType))}` : `data service ${s.id}`}</span><small>${s.components.map(c => `port ${hdHex(c.port)} · ${esc(c.mimeName || `MIME ${c.mimeHex}`)} · ${esc(c.aasTypeName)} · ${esc(dataTypeName(c.dataType))}`).join('<br>')}${(s.extra ?? []).filter(e => e.text).map(e => `<br>tag ${hdHex(e.tag, 2)} · ${esc(e.text)}`).join('')}</small></div>`).join('')}</div>` : '';
+  const sis = st && st.frames ? (() => { const s = st.sis; const f: [string, string][] = [['CALL SIGN', s.callsign ? `${s.callsign} (${s.nameVotes[0]} of ${s.nameVotes[1]} votes)` : '-'], ['LONG NAME', s.longName || '-'], ['UNIVERSAL NAME', s.universal || '-'], ['SLOGAN', s.slogan || '-'], ['MESSAGE', s.message ? `${s.message}${s.messagePriority ? ' (priority)' : ''}${s.messageChecksumOk ? '' : ' (checksum not verified yet)'}` : '-'], ['FACILITY', s.facility >= 0 ? `${s.country} ${s.facility}` : '-'],
     ['TRANSMITTER', hdLocText(s)], ['STATION CLOCK', hdClockText(s)], ['TIME ZONE HINT', hdTzText(s)],
-    ['LEAP SECONDS', s.params[0] !== undefined ? `${(s.params[0] << 24) >> 24} s as sent (the clock uses 18 s)` : '-'], ['EMERGENCY ALERTS', hdAlertText(s)],
-    ['AUDIO SERVICES', s.audio.map(a => `HD${a.program + 1} ${programTypeName(a.type)}`).join(' · ') || '-'], ['DATA SERVICES', s.data.map(d => `${dataTypeName(d.type)} (${d.type}, MIME ${d.mime12})`).join(' · ') || '-'],
-    ['FIXED BEARER', st.ccc ? st.ccc.subs.map(x => `${x.length} B/frame`).join(' + ') : '-'], ['PACKETS', `${st.hdlcGood} good · ${st.hdlcBad} failed FCS`], ['SIS PDUS', `${s.pdus} (${s.llds} other)`]];
-    return `<div class="hd-sec"><small>STATION INFORMATION (SIS, voted)</small><div class="mt-fields">${f.map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('')}</div></div>`; })() : '';
-  return (rows ? `<div class="hd-objs">${rows}</div>` : `<div class="empty">no files yet · logos and album art take a minute or two to come in whole</div>`) + pendHtml + sis + sig + ports;
+    ['LEAP SECONDS', s.leap ? `${s.leap.current} s now${s.leap.pendingAlfn && s.leap.pending !== s.leap.current ? ` · ${s.leap.pending} s from ALFN ${s.leap.pendingAlfn}` : ''} (the clock uses 18 s)` : s.params[0] !== undefined ? `${s.params[0] & 255} s as sent (the clock uses 18 s)` : '-'], ['EMERGENCY ALERTS', hdAlertText(s)],
+    ['EXCITER', hdDeviceText(s.exciter)], ['IMPORTER', hdDeviceText(s.importer)],
+    ['AUDIO SERVICES', s.audio.map(a => `HD${a.program + 1} ${programTypeName(a.type)}${a.access ? ' (restricted)' : ''}${a.soundExp ? ` · sound ${a.soundExp}` : ''}`).join(' · ') || '-'], ['DATA SERVICES', s.data.map(d => `${dataTypeName(d.type)} (${d.mimeName || `MIME ${d.mime12}`})`).join(' · ') || '-'],
+    ['FIXED BEARER', st.ccc ? st.ccc.subs.map(x => `${x.length} B/frame`).join(' + ') : '-'], ['PACKETS', `${st.hdlcGood} good · ${st.hdlcBad} failed FCS`],
+    ['SIS PDUS', `${s.pdus} · CRC verified ${s.crcGood ?? 0} (${s.pdus ? (100 * (s.crcGood ?? 0) / s.pdus).toFixed(0) : 0}%)${s.llds ? ` · ${s.llds} low latency data` : ''}`]];
+    return `<div class="hd-sec"><small>STATION INFORMATION (SIS, CRC checked)</small><div class="mt-fields">${f.map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('')}</div></div>`; })() : '';
+  const psd = st?.programs.some(p => p.id3?.length) ? `<div class="hd-sec"><small>PROGRAM DATA (ID3)</small>${st.programs.filter(p => p.id3?.length).map(p => `<div class="hd-svc"><b>HD${p.n + 1}</b><span>${p.psdFrames} tags · ${p.psdBad} failed FCS${p.psdOther ? ` · ${p.psdOther} not ID3` : ''}</span><small>${(p.id3 ?? []).map(f => `${esc(f.id)}${f.desc ? ` [${esc(f.desc)}]` : ''} ${esc(f.text || f.hex)}`).join('<br>')}${p.commercial ? `<br>COMMERCIAL ${esc([p.commercial.price, p.commercial.seller, p.commercial.description, p.commercial.url, p.commercial.validUntil].filter(Boolean).join(' · '))}` : ''}${p.ufid ? `<br>UFID ${esc(p.ufid.owner)} ${esc(p.ufid.id)}` : ''}</small></div>`).join('')}</div>` : '';
+  const found = st?.findings?.length ? `<div class="hd-sec"><small>FOUND INSIDE (not announced)</small>${st.findings.map(f => `<div class="hd-svc"><b>${esc(f.type)}</b><span>${esc(f.where)} · @${f.offset} · ${hdSize(f.length)}${f.width ? ` · ${f.width}×${f.height}` : ''}</span><small>${esc(f.note)}</small></div>`).join('')}</div>` : '';
+  const unk = st?.unknowns?.length ? `<div class="hd-sec"><small>NOT DECODED</small>${st.unknowns.map(u => `<div class="hd-svc"><b>${esc(u.where)}</b><small>${esc(u.what)}</small></div>`).join('')}</div>` : '';
+  const tech = [sis, psd, sig, ports, found, unk].filter(Boolean);
+  const techHtml = tech.length ? `<button class="hd-techbtn ${hdUi.tech ? 'on' : ''}" data-hddo="tech" aria-expanded="${hdUi.tech}"><b>TECH</b><small>${tech.length} sections · SIS, ports, service directory</small><i>${hdUi.tech ? '▾' : '▸'}</i></button>${hdUi.tech ? `<div class="hd-tech">${tech.join('')}</div>` : ''}` : '';
+  return chips + (all.length ? gallery + (rows ? `<div class="hd-objs">${rows}</div>` : '') : `<div class="empty">no files yet · logos and album art take a minute or two to come in whole</div>`) + pendHtml + techHtml;
 }
 function hdDetail(now: number): string {
   const o = hdUi.objects.find(x => x.key === hdUi.sel); if (!o) return '';
-  const text = o.mime === 'text/plain' ? new TextDecoder('latin1').decode(o.bytes) : '';
+  const isText = o.mime.startsWith('text/') || o.mime === 'application/json' || o.mime === 'application/xml';
+  const text = isText ? new TextDecoder('latin1').decode(o.bytes) : '';
+  // the station's view of the file: header fields, what is inside it and where a carved one came from
+  const row = (hdMine(hdUi.snap) ? hdUi.snap.station.objects : []).find(r => r.port === o.port && r.id === o.id && r.name === o.name);
   const f: [string, string][] = [['NAME', o.name || '-'], ['KIND', HD_KIND[o.kind] ?? o.kind], ['PORT', hdHex(o.port)], ['OBJECT ID', hdHex(o.id)], ['SIZE', `${o.size} bytes`], ['TYPE', o.mime], ['PROGRAM', o.program >= 0 ? `HD${o.program + 1}` : '-'], ['STATION', `${hdMhz(o.hz)} MHz`], ['RECEIVED', `${hdClock(o.ms)} · ${hdAgo(now - o.ms)}`]];
+  if (row) {
+    if (row.width) f.push(['PICTURE', `${row.width} × ${row.height}`]);
+    if (row.mimeHash) f.push(['MIME HASH', `${row.mimeHash.toString(16).padStart(8, '0')}${row.mimeName ? ` · ${row.mimeName}` : ''}`]);
+    if (row.expires) f.push(['EXPIRES', `${row.expires} UTC`]);
+    if (row.from) f.push(['FOUND', row.from]);
+    if (row.chunks?.length) f.push(['SEGMENTS', row.chunks.join(' · ')]);
+    for (const t of row.text ?? []) f.push([t.key.toUpperCase(), t.value]);
+    if (row.trailing) f.push(['AFTER THE END', `${row.trailing} bytes past the end marker`]);
+    for (const e of row.embedded ?? []) f.push(['INSIDE', `${e.type} at byte ${e.offset}, ${e.length} bytes${e.complete ? '' : ', cut short'}`]);
+  }
   return `<div class="hd-dh"><b>${esc(HD_KIND[o.kind] ?? 'FILE')}</b><button class="chip" data-hdsave="${esc(o.key)}">SAVE</button><button class="chip" data-hddo="close">✕</button></div>`
     + (o.mime.startsWith('image/') ? `<div class="hd-big"><img src="${o.url}" alt=""></div>` : '') + (text ? `<pre class="hd-text">${esc(text)}</pre>` : '')
+    + (!text && !o.mime.startsWith('image/') ? `<pre class="hd-text">${esc(hdHexDump(o.bytes))}</pre>` : '')
     + `<div class="mt-fields">${f.map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('')}</div>`;
 }
 /** The map's layers: every station's transmitter, the newest traffic tiles and radar image on their corners. */
@@ -6553,6 +6880,7 @@ function refreshHd(force = false): void {
   if (hdUi.hold) return;
   if (!force && now - hdUi.drawn < 240) { clearTimeout(hdUi.pending); hdUi.pending = window.setTimeout(() => refreshHd(true), 250); return; }
   hdUi.drawn = now;
+  hdVuStart();
   const m = hdUi.snap, wide = HD_WIDE.matches, view = hdUi.view;
   const head = q('#hd-head'); if (head) head.innerHTML = hdHead(m, now);
   const auto = q('#hd-auto'); if (auto) auto.classList.toggle('on', hdUi.auto);
@@ -9072,7 +9400,7 @@ function redraw(id: string): void {
     case 'cell': refreshList(id); refreshCell(true); break;
     case 'atsc': refreshList(id); refreshAtsc(true); break;
     case 'btle': refreshList(id); refreshBle(true); break;
-    case 'vdl2': case 'acars': refreshList(id); refreshAcars(true); break;
+    case 'vdl2': case 'acars': case 'hfdl': refreshList(id); refreshAcars(true); break;   // FORK: + hfdl
     default: refreshList(id);
   }
 }
@@ -9080,6 +9408,8 @@ function redraw(id: string): void {
  *  copy matters: vessels, stations, aircraft and devices are re-sent whole with every packet, so clearing only
  *  this side brought the entire list straight back with the next one. */
 function clearApp(id: string): void {
+  if (id === 'fpv') { fpvUi.seen.clear(); refreshFpv(); }   // FORK: analog FPV video
+  if (id === 'droneid') { droneLinks.links.clear(); droneUi.drones.clear(); droneUi.bursts = 0; droneUi.decoded = 0; droneUi.sel = ''; refreshDrone(); }   // FORK: DJI DroneID
   logs[id] = []; counts[id] = 0;
   switch (id) {
     case 'ais': state.aisTable = []; state.aisSel = 0; break;
@@ -9087,7 +9417,7 @@ function clearApp(id: string): void {
     case 'adsb': state.aircraft = []; state.frames = 0; state.adsbSel = ''; modeAc = []; break;   // FORK: + Mode A/C
     case 'devices': state.r433.heard = []; break;
     case 'btle': bleUi.tracker.clear(); bleUi.sel = ''; break;
-    case 'vdl2': case 'acars': acarsUis[id].planes.clear(); acarsUis[id].stats.clear(); acarsUis[id].vdl.clear(); acarsUis[id].sel = ''; break;
+    case 'vdl2': case 'acars': case 'hfdl': acarsUis[id].planes.clear(); acarsUis[id].stats.clear(); acarsUis[id].vdl.clear(); acarsUis[id].sel = ''; if (id === 'hfdl') hfdlHeard.clear(); break;   // FORK: + hfdl
     case 'psat': state.psat.frames = []; state.psat.heard = 0; state.psat.bad = 0; break;
     case 'ert': meters.snap = null; meters.sel = ''; break;
     case 'lora': loraUi.snap = null; loraUi.sel = ''; break;
@@ -9598,11 +9928,17 @@ function ensureWorker(): Worker {
         const was = typeof m.replaces === 'string' ? list.indexOf(m.replaces) : -1;
         if (was >= 0) list.splice(was, 1); else counts[id] = (counts[id] ?? 0) + 1;
         if (id === 'aprs') { if (was >= 0) aprsLogMs.splice(was, 1); aprsLogMs.unshift(Date.now()); if (aprsLogMs.length > 300) aprsLogMs.length = 300; }
-        list.unshift(m.line); if (list.length > 300) list.length = 300; refreshList(id); if (id === 'ais') refreshAis(); else if (id === 'aprs') refreshAprs(); else if (id === 'acars' || id === 'vdl2') onAcarsLine(m.line as string, id); else if (id === 'btle') refreshBle(); break; }
+        list.unshift(m.line); if (list.length > 300) list.length = 300; refreshList(id); if (id === 'ais') refreshAis(); else if (id === 'aprs') refreshAprs(); else if (id === 'acars' || id === 'vdl2' || id === 'hfdl') onAcarsLine(m.line as string, id); else if (id === 'btle') refreshBle(); break; }   // FORK: + hfdl
       case 'vdl2frame': onVdl2Frame(m.f as AvlcFrame); break;
+      case 'hfdl': onHfdl(m as unknown as { khz: number; snrDb: number; pdu: HfdlPdu }); break;   // FORK: HFDL
       case 'hdsnap': hdUi.snap = m as unknown as HdSnapMsg; hdRecord(hdUi.snap); refreshHd(); break;
       case 'hdobj': hdOnObject(m); break;
       case 'ble': onBleAdv(m as { pdu: number[]; db: number; ch: number }); break;
+      case 'droneid': onDroneId(m as unknown as { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }); break;   // FORK: DJI DroneID
+      case 'loraBurst': onLoraBurst(m.burst as LoraBurst); break;   // FORK: control-link fingerprints
+      case 'droneidStats': droneUi.bursts = m.bursts as number; droneUi.decoded = m.decoded as number; refreshDrone(); break;   // FORK
+      case 'fpvLook': onFpvLook(m as unknown as FpvSeen & { ch: string }); break;   // FORK: analog FPV video
+      case 'fpvField': onFpvField(m as unknown as { ch: string; width: number; lines: number; pixels: Uint8ClampedArray; standard: string }); break;   // FORK
       case 'rds': lastRds = m as typeof lastRds; drawRds(); break;
       case 'hd': lastHd = m as typeof lastHd; console.log('[hd]', JSON.stringify(m)); drawHd(); break;
       case 'same': onSameAlert(m); break;
@@ -9777,7 +10113,8 @@ async function ensureAudio(): Promise<void> {
   if (!audioCtx) {
     audioCtx = new AudioContext({ sampleRate: 48_000 });
     await audioCtx.audioWorklet.addModule('./audio-worklet.js');
-    const node = new AudioWorkletNode(audioCtx, 'mayhem-player', { outputChannelCount: [1] });
+    // 6 outputs where the device has them; the unused four stay silent and a stereo destination downmixes them away
+    const node = new AudioWorkletNode(audioCtx, 'mayhem-player', { outputChannelCount: [audioCtx.destination.maxChannelCount >= 6 ? 6 : 2] });
     muteGain = audioCtx.createGain(); muteGain.gain.value = state.muted ? 0 : 1;
     node.connect(muteGain); muteGain.connect(audioCtx.destination);
     void voiceRec.attach(audioCtx, node);   // FORK: voice recording taps the speaker audio before MUTE
@@ -9785,6 +10122,7 @@ async function ensureAudio(): Promise<void> {
     node.port.postMessage({ port: ch.port1 }, [ch.port1]);
     audioPort = ch.port2;
     if (worker) { worker.postMessage({ type: 'audioPort', port: audioPort }, [audioPort]); audioPort = null; }
+    hdApplySurround();
   }
   // A browser will not start audio until the page has been interacted with. When the radio comes up on its own
   // at start-up there has been no gesture yet, so a refusal here is expected and must not stop the receiver: the
@@ -10327,7 +10665,7 @@ function initShell(): void {
 /** Each app's card tag and title (the Android app's). */
 const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
   js8: ['JS8', 'HF MESSAGING'],
-  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'], subghz: ['SUB-GHZ', 'SENSORS · REMOTES · KEYS'],
+  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'], subghz: ['SUB-GHZ', 'SENSORS · REMOTES · KEYS'],
   ert: ['METERS', 'UTILITY METERS'], lora: ['MESH', 'MESH RADIO TEXT'], sondes: ['BALLOONS', 'WEATHER BALLOONS'], btle: ['BLUETOOTH', 'BLUETOOTH DEVICES'], adsb: ['AIRCRAFT', 'AIRCRAFT OVERHEAD'], ais: ['SHIPS', 'SHIPS NEARBY'], aprs: ['HAM MAP', 'STATIONS ON THE MAP'], uat: ['FLIGHT UAT', 'FLIGHT WEATHER · SMALL PLANES'],
   devices: ['DEVICES', 'KEYS · REMOTES · SENSORS'], spectrum: ['SPECTRUM', 'ANALYZER · ZERO SPAN'], analyzer: ['ANALYZER', 'CAPTURE · DEMOD · COMPARE'], capture: ['CAPTURE', 'RAW IQ TO FILE'], prowl: ['PROWL', 'HUNTING FOR VOICE'], lookingglass: ['GLASS', 'WIDEBAND SWEEP'],
   search: ['SEARCH', 'ACTIVE FREQUENCIES'], transmit: ['TX', 'IDLE'], troll: ['TROLL', 'IDLE'],
@@ -10340,7 +10678,7 @@ const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
 const APP_TECH: Partial<Record<AppId, string>> = {
   audio: 'WFM · NFM · AM · SSB · RDS', hd: 'NRSC-5 · IBOC · FM HYBRID', fleet: 'P25 · DMR · NXDN · TETRA · SMARTNET',
   pager: 'POCSAG · FLEX · REFLEX', lora: 'LORA · MESHTASTIC · MESHCORE · LORAWAN', adsb: 'ADS-B · MODE S · 1090 MHZ',
-  uat: 'UAT · FIS-B · 978 MHZ', acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', trains: 'EOT · HOT · PTC 220 MHZ',
+  uat: 'UAT · FIS-B · 978 MHZ', acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
   ais: 'AIS · 161.975 / 162.025 MHZ', cell: 'LTE · SIB · WEA · ETWS', devices: 'OOK · FSK · TPMS · Z-WAVE · 315–915 MHZ',
   subghz: 'OOK · FSK · 315–915 MHZ', js8: 'JS8 · 8-FSK · HF USB', ham: 'SSB · CW · FM · FT8 · SSTV',
   hamplus: 'FM · DMR · D-STAR · FUSION · P25 · NXDN · M17', cb: 'CB · 26.965–27.405 MHZ · AM · FM · SSB', aprs: 'APRS · AX.25 · 144.390 MHZ',

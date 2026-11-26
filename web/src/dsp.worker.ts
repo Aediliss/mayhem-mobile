@@ -3,6 +3,9 @@
  * once/sec RX-health line, WFM / NFM / AM / USB / LSB audio to the AudioWorklet, and feeds the active app's
  * IqProcessor (raw IQ + the NFM discriminator tap for the FM-borne packet modes).
  */
+import { DroneIdProcessor } from './dsp/droneid.js';   // FORK: DJI DroneID
+import { FpvProcessor } from './dsp/fpv.js';   // FORK: analog FPV video
+import { HfdlDecoder } from './dsp/hfdl/hfdl.js';   // FORK: HFDL
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -123,6 +126,9 @@ function loraPoolFor(r: number): WorkerPool | null {
   return loraPool.failed ? null : loraPool;
 }
 const btle = new BtleDecoder(emit);
+const droneid = new DroneIdProcessor(emit);   // FORK: DJI DroneID (dsp/droneid.ts)
+const fpv = new FpvProcessor(emit);   // FORK: analog FPV video (dsp/fpv.ts)
+const hfdl = new HfdlDecoder(emit);   // FORK: HFDL (dsp/hfdl/)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -168,7 +174,7 @@ let rdsOn = false; const rdsBuf = new Float32Array(8192); let rdsN = 0;
 // audio path's channel filter). Off unless the audio app asks; it costs a sideband's worth of filtering.
 const hd = new HdDetector(r => post({ type: 'hd', ...r }));
 let hdOn = false;
-/** The HD Radio app: Layer 1 to the station's data, on the raw IQ beside the WFM audio of the same station. */
+/** The HD Radio app: Layer 1 to the station's data and digital audio, on the raw IQ beside the WFM audio. */
 const hdApp = new HdProcessor(emit);
 /** HD AUTO's wide look is on: the demodulator rests (the span is many times the channel; only the spectrum is wanted). */
 let demodHold = false;
@@ -436,6 +442,7 @@ self.onmessage = (e: MessageEvent) => {
       }
       break;
     case 'btleChannel': btle.channel = m.ch as number; break;
+    case 'fpvTune': fpv.tune(m.ch as string, !!m.watch); break;   // FORK: analog FPV video
     case 'trainsBand': trains.band = m.band === 'PTC' ? 'PTC' : 'EOT'; break;
     case 'trainsClear': trains.clear(); break;
     case 'cell':
@@ -457,6 +464,8 @@ self.onmessage = (e: MessageEvent) => {
     case 'hd': hdOn = !!m.on; if (!hdOn) hd.reset(); break;
     // HD Radio AUTO is looking across the band at a wide rate: its decoder rests until the look is over
     case 'hdLook': hdApp.paused = demodHold = !!m.on; break;
+    case 'hdProgram': hdApp.audio.select(Number(m.n) & 7); break;
+    case 'hdSurround': hdApp.audio.setSurround(!!m.on && Number(m.channels) >= 6); break;
     case 'same': sameOn = !!m.on; if (!sameOn) { sameN = 0; sameRate = 0; } break;
     case 'pager': pager.select(m.which); break;
     case 'hunt': hunter.command(m.cmd as string, m.hz as number | undefined); break;
@@ -516,9 +525,12 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'ert': mesh.centerHz = centreHz; mesh.flush(); return meters;
     case 'lora': lora.setCenter(centreHz); lora.flush(); return lora;
     case 'btle': return btle;
+    case 'droneid': return droneid;   // FORK: DJI DroneID
+    case 'fpv': return fpv;   // FORK: analog FPV video
     case 'tpms': return tpms;
     case 'acars': return acars;
     case 'vdl2': vdl2.centerHz = centreHz; return vdl2;
+    case 'hfdl': hfdl.centerHz = centreHz; return hfdl;   // FORK: HFDL
     case 'sonde': sonde.setCenter(centreHz); return sonde;
     case 'uat': return uat;
     case 'hd': hdApp.centerHz = centreHz; hdApp.offsetHz = offsetHz; return hdApp;
@@ -752,6 +764,7 @@ function process(iq: Int8Array): void {
   if (p === lora) { lora.setCenter(centreHz); lora.scanner.pool = loraPoolFor(rate); }
   if (p === acars) { acars.centerHz = centreHz; acars.tunedHz = centreHz + offsetHz; }
   if (p === vdl2) vdl2.centerHz = centreHz;
+  if (p === hfdl) hfdl.centerHz = centreHz;   // FORK: HFDL
   if (p === trains) trains.centerHz = centreHz;
   if (p === fleet) fleet.centerHz = centreHz;
   if (p === cell) cell.centerHz = centreHz;
@@ -763,7 +776,15 @@ function process(iq: Int8Array): void {
 }
 
 function flushAudio(): void {
-  if (audioPort) { const chunk = audioBuf.slice(0, audioLen); audioPort.postMessage(chunk, [chunk.buffer]); }
+  if (audioPort) {
+    const chunk = audioBuf.slice(0, audioLen);
+    if (processor === hdApp) {
+      const o = hdApp.audio.output(chunk);
+      if (o.length === 2) audioPort.postMessage({ l: o[0], r: o[1] }, [o[0].buffer, o[1].buffer]);
+      else audioPort.postMessage({ ch: o }, o.map(x => x.buffer));
+    }
+    else audioPort.postMessage(chunk, [chunk.buffer]);
+  }
   audioLen = 0;
 }
 

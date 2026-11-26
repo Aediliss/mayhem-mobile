@@ -50,16 +50,20 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | Remote ID: BLE legacy (UUID 0xFFFA, message pack) → BT5 ext/coded → Wi-Fi beacon/NAN (ch 6); map with drone + operator | ASTM F3411, ASD-STAN prEN 4709-002; opendroneid-core-c | opendroneid-core-c Apache-2.0 ✔ |
-| [ ] | ★ | DJI DroneID (OcuSync 2.4/5.8 GHz OFDM): detect, demod, serial + drone/pilot/home GPS | proto17/dji_droneid; RUB-SysSec/DroneSecurity (NDSS '23 paper) | dji_droneid MIT ✔ · DroneSecurity AGPL-3.0 ✔ (prefer the paper / MIT code) |
-| [ ] | | FPV analog video detect at 5.8 GHz (raceband/A/B/E/F), NTSC/PAL frames if bandwidth allows | channel tables (public) | facts |
-| [ ] | | Digital FPV + control-link fingerprinting: DJI O3/O4, Walksnail, HDZero, ELRS, Crossfire | ExpressLRS source | check (ELRS is GPL-3.0 per memory — verify) |
+| [x] | ★ | Remote ID: BLE legacy (UUID 0xFFFA, message pack) · map with drone + operator | ASTM F3411, ASD-STAN prEN 4709-002; opendroneid-core-c | opendroneid-core-c Apache-2.0 ✔ |
+| [ ] | | Remote ID over Bluetooth 5 long range (AUX packets on data channels, LE Coded PHY) | ASTM F3411 | needs the LE Coded row and AUX following |
+| [ ] | | Remote ID over Wi-Fi beacon / NAN (2.4 GHz ch 6, 5.8 GHz) | ASTM F3411; IEEE 802.11 | needs an 802.11 receiver (Phase 9 Wi-Fi row) |
+| [x] | ★ | DJI DroneID (OcuSync 2.4 GHz OFDM): detect, demod, serial + drone/pilot/home GPS | proto17/dji_droneid; 3GPP TS 36.211 / 36.212 | dji_droneid MIT ✔ (file LICENSE) · turbofec GPL-3.0-or-later ✔ (one table row checked) · DroneSecurity not used |
+| [ ] | | DJI DroneID at 5.8 GHz, and the newer encrypted DroneID (detect only) | channel survey | needs recordings |
+| [x] | | FPV analog video detect at 5.8 GHz (raceband/A/B/E/F), NTSC/PAL frames if bandwidth allows | channel tables (public) | facts |
+| [x] | | Digital FPV + control-link fingerprinting: ExpressLRS by its published parameters; digital video measured as OFDM | ExpressLRS `src/src/common.cpp`, `src/lib/FHSS` | ExpressLRS GPL-3.0 ✔ (LICENSE) |
+| [ ] | | Naming digital FPV systems (DJI O3/O4, Walksnail, HDZero) and TBS Crossfire | — | no published air parameters or redistributable recordings: needs measurements |
 
 ## Phase 4 — Aviation
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl | GPL-3.0-or-later ✔ |
+| [x] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl (Tomasz Lemiech): hfdl.c, mpdu/lpdu/hfnpdu/acars.c, etc/systable.conf; liquid-dsp conventions checked against liquid-dsp 1.6 | GPL-3.0-or-later ✔ (spdu.c GPL-2.0-or-later ✔); libacars MIT ✔ (format only) |
 | [ ] | | CPDLC / ADS-C inside ACARS/VDL2/HFDL | libacars | MIT ✔ |
 | [ ] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium; iridium-toolkit | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README) |
 | [ ] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `vor_rx` | Mayhem GPL-3.0 ✔ |
@@ -524,3 +528,110 @@ for "or later" first.
   Hardware: Bluetooth app (AUTO on) while carrying, or travelling near, an AirTag: with its owner's phone nearby its card
   should read "with its owner … not following you" and stay quiet; one left separated from its owner for a while
   should read "separated" and alert after 20 minutes or 500 m.
+- **Phase 3 · Remote ID over Bluetooth** (`src/dsp/remoteid.ts`, `test/remoteid.test.ts`): ASTM F3411 / ASD-STAN EN
+  4709-002 messages, the layouts as opendroneid-core-c (Apache-2.0) encodes them, written from those definitions. The
+  Bluetooth app reads service data 0xFFFA (application code 0x0D, counter, one 25-byte message, or a Message Pack):
+  Basic ID (ID type, UA type, UAS ID), Location (status, direction, horizontal speed with its multiplier, vertical speed,
+  latitude / longitude, pressure and geodetic altitude, height and its reference, accuracies, time past the hour),
+  Authentication (noted), Self-ID, System (operator position and how it is known, area, EU category and class,
+  operator altitude), Operator ID; values the standard marks unknown are left out. Bluetooth 4 sends one message per
+  advertisement, so each drone's card puts its messages together. Drones are their own kind ("Drone (Remote ID)", not a
+  tracker); a map appears over the cards once a drone has a position: the drone (pointing its way, with its height),
+  its operator, and a line between them. Upstream touch points (FORK): `ble.ts` (import, the `drone` kind and label,
+  classify, `BleDevice.rid`, the messages read in `add`, the card rows), `main.ts` (the map element, the map, the drone
+  and operator markers and lines in `refreshBle`).
+  Tests prove: each message read back (both speed ranges, the heading past 180°, altitudes, accuracies, time, EU class);
+  unknown values left out; a bad pack and a foreign application code read nothing; a Message Pack; four advertisements
+  make one drone card with every field; a Remote ID advertisement through the BLE receiver over GFSK. Browser check
+  (Chromium): a recording in the Bluetooth app gives the drone card, the map with the drone and its operator joined by
+  a line, no page errors.
+  Not done (rows above): Bluetooth 5 long range (the drone's AUX packets on LE Coded), Wi-Fi beacon / NAN.
+  Hardware: Bluetooth app with a HackRF, AUTO on, near a drone that broadcasts Remote ID (most DJI and other drones sold
+  since 2023 in the US and EU broadcast it over Bluetooth 4 and Wi-Fi): a "Drone (Remote ID)" card with its serial number
+  and position, and the map with the drone and its pilot.
+- **Phase 3 · DJI DroneID** (`src/dsp/droneid.ts`, `src/dsp/lte-turbo.ts`, `test/droneid.test.ts`): a new Drones app
+  (HackRF, 2.4 GHz, 15.36 MS/s; APP_NEEDS keeps it off an RTL-SDR). The burst structure and frame layout after
+  proto17/dji_droneid (MIT): nine OFDM symbols on a 1024-point FFT, 600 carriers around DC, CPs 80 / 72 / … / 80,
+  Zadoff-Chu symbols 4 and 6 (roots 600, 147), symbol 1 the bare scrambler, six data symbols of QPSK scrambled by the
+  LTE Gold sequence (c_init 0x12345678), an LTE turbo code (K = 1408) rate-matched to 7200 bits, CRC-24A, and the frame
+  (serial, drone / pilot / home positions in radians × 1e7, height, altitude, velocities, yaw, app time, product type,
+  UUID, CRC-16). Written here: the LTE turbo code from TS 36.212 (QPP interleaver, encoder with trellis termination,
+  sub-block interleaving and circular-buffer rate matching, max-log-MAP decoder, 8 iterations; the K = 1408 QPP row
+  f1 = 43, f2 = 88 checked against turbofec), the Gold sequence from TS 36.211, and the receiver: a 3 dB energy trigger
+  on 256-sample blocks, timing by FFT correlation with symbol 4, the frequency offset from all nine cyclic prefixes
+  plus a whole-carrier search on symbol 4, the channel from both Zadoff-Chu symbols (smoothed over 9 carriers,
+  interpolated across the burst), channel-weighted soft QPSK, descrambling, de-matching, decoding, CRC-24A. The app:
+  the four known channels and AUTO (1.5 s each), one card per serial number (drone, pilot and home positions, height,
+  altitude, velocities, yaw as sent, sequence, the measured frequency offset, the frame CRC), and a map with the drone,
+  its pilot (joined by a line) and its home point. Upstream touch points (FORK): `main.ts` (AppId, APPS, open, render,
+  worker messages, EMPTY, CLEAR, the import, the Drones view in a FORK block), `radio.ts` (APP_NEEDS),
+  `dsp.worker.ts` (import, processor, makeProcessor).
+  Tests prove: CRC-24A's catalogue check value 0xCDE703; QPP(1408) a permutation with its first values; turbo +
+  rate matching round trip clean and at -1 dB; the frame CRC equals the reference's table (entries 1, 128, 255) and
+  initial value; the frame layout round trips; whole bursts decode at 25, 15, 8, 4 and 1 dB with frequency offsets of
+  0 to 40 kHz and fractional timing, the offset measured within 500 Hz; noise gives no bursts; a burst at -9 dB is seen
+  but gives no frame; the processor warns at the wrong rate. Browser check (Chromium): a recording in Drones gives
+  "1 DRONE · 3 FRAMES DECODED · 3 BURSTS SEEN", the card, and the map with drone, pilot and home, no page errors.
+  Not confirmed on air: no real DroneID recording was available (the reference does not publish its own, as it holds a
+  location); field units for height, altitude, velocity and yaw are not given by the reference, so they are shown as
+  sent; newer DJI models encrypt DroneID, and 5.8 GHz is not scanned (new row).
+  Hardware: Drones with a HackRF and a 2.4 GHz antenna near a DJI drone that sends DroneID in the clear (Mini 2,
+  Mavic Air 2 / 2S and others of that age): bursts should be counted within seconds; with AUTO on, frames should decode
+  and the card and map show the drone, its pilot and its home point. Check the drone's position against the pilot app.
+- **Phase 3 · analog FPV video** (`src/dsp/fpv.ts`, `test/fpv.test.ts`): a new FPV app (HackRF, 5.8 GHz, 20 MS/s). The
+  48 channels of bands A, B, E, F / IRC, R raceband and L lowband (published tables). On a channel: the FM
+  discriminator, smoothed over 0.2 µs (video is under 5 MHz); video is told by its line rate, the discriminator
+  correlating with itself 16 lines later (NTSC 63.556 µs and PAL 64 µs lines are 7 µs apart over 16, so the standards
+  are told apart) well above lags that are no whole line, and with itself one line later (which a tone whose period
+  happens to fit does not); the sync polarity from the averaged line's 4.7 µs extreme; the picture cut at each sync's
+  leading edge and sampled across the 52.6 µs active line, black at blanking, white at the brightest. The processor
+  looks at 20 ms of the channel about every 250 ms (dropping 50 ms after a retune) and sends the picture when watching.
+  The app: SCAN steps through all 48 channels (350 ms each) and turns the ones with video gold with their standard; a
+  tap watches one, in black and white on a canvas, with the standard, how clearly, the FM swing and the power.
+  Upstream touch points (FORK): `main.ts` (AppId, APPS, open, render, worker messages, EMPTY, CLEAR, the import, the FPV
+  view in a FORK block), `radio.ts` (APP_NEEDS), `dsp.worker.ts` (import, processor, makeProcessor, `fpvTune`).
+  Tests prove: the channel table; NTSC and PAL found and named in either polarity, 300 kHz off centre, at 30, 15 and
+  10 dB; the picture's eight bars rising black to white; noise, a 7 kHz FM tone and DJI DroneID OFDM are not video; the
+  processor's looks carry the channel and pictures come only when watching. Browser check (Chromium): a PAL recording
+  on R1 shows "PAL video · 98 %", R1 gold, and the bars on the canvas (23 … 255), no page errors.
+  Not done: colour (the chroma subcarrier is ignored: black and white only); one field per look, not a moving picture;
+  digital FPV is the next row.
+  Hardware: FPV with a HackRF and a 5.8 GHz antenna near a powered analog FPV transmitter (a quad's VTX, or a goggle
+  test pattern): SCAN should turn its channel gold with NTSC or PAL; tap it for the picture. Compare the channel with the
+  VTX's band and channel setting.
+- **Phase 3 · control links and digital video, by how they look** (`src/dsp/linkprint.ts`, `lookForOfdm` in
+  `src/dsp/fpv.ts`, `test/linkprint.test.ts`): nothing is decoded. A short-time spectrum (256 points) finds LoRa packets:
+  one tone sweeping linearly, frame after frame, its width the bandwidth and its least-squares slope per run
+  (bandwidth² / 2^SF) the spreading factor; a burst counts only when 70 % of its steps follow that slope or wrap, so
+  wideband bursts do not pass. Packets of one bandwidth and SF are one link, named after three packets, with its channels
+  and the shortest common gap between packets. A link is called "consistent with ExpressLRS" only where its published
+  air parameters fit (ExpressLRS GPL-3.0, its air-rate and FHSS tables): 812.5 kHz SF5-8 on the 2.4 GHz grid of 80 channels
+  from 2400.4 MHz, or 500 kHz SF5-9 on the FCC915 / EU868 / AU915 grids, the rate from the intervals that SF uses.
+  The Drones app runs it on its 2.4 GHz span and shows CONTROL LINKS. Digital video: when an FPV channel is not analog
+  video, the FFT autocorrelation over 2^16 samples finds OFDM's cyclic-prefix lag (the useful symbol time, so the carrier
+  spacing) and the spectrum its occupied width; the channel turns gold as DIG with those numbers. Upstream touch points
+  (FORK): `main.ts` (the `loraBurst` message, the link tracker and CONTROL LINKS line in the Drones view, CLEAR, the FPV
+  digital text and DIG chips), the Drones processor in `dsp/droneid.ts` runs the fingerprinter.
+  Tests prove: ExpressLRS 2.4 GHz at SF5 / 500 Hz, SF6 / 250 Hz and SF7 / 150 Hz named with their rates; ExpressLRS
+  FCC915 at SF7 / 100 Hz; a LoRa link off every grid found but not named; noise, DroneID OFDM bursts and analog FM video
+  give no LoRa packets; OFDM with DJI's numerology measured as 15 kHz carriers, 66.7 µs symbols, about 9 MHz; noise is
+  not OFDM. Browser check (Chromium): an ExpressLRS-like recording in Drones shows "consistent with ExpressLRS 2.4 GHz ·
+  SF6 · 812.5 kHz · 250 Hz"; an OFDM recording on R1 in FPV shows "digital (OFDM) · 11.9 MHz wide · 19.53 kHz carriers ·
+  51.2 µs symbols" and R1 DIG; no page errors.
+  Not done (new row): naming DJI O3/O4, Walksnail or HDZero, or TBS Crossfire: none publish their air parameters and no
+  redistributable recordings were found, so a name would be a guess. FLRC-mode ExpressLRS is not detected.
+  Hardware: Drones with a HackRF near a powered ExpressLRS 2.4 GHz receiver and its transmitter (bound, sticks live):
+  CONTROL LINKS should name ExpressLRS with the packet rate set in its Lua menu; FPV near a digital FPV system: its
+  channel should show DIG with its width and carrier spacing (worth noting down per system for a future fingerprint).
+- **HFDL** (`dsp/hfdl/`, `hfdl-ui.ts`, `test/hfdl.test.ts`): bursts at all eight rates (300/600/1200/1800 bps, single
+  and double slot) built by the test transmitter round-trip through noise, a frequency error and an unknown phase and
+  timing; 300 bps decodes at 3 dB SNR. The same bursts, written to a CF32 file, were decoded by dumphfdl 1.7 built from
+  source (all eight rates; squitter, ACARS with good CRC through libacars, performance report, logon), so the scrambler,
+  interleaver, code, constellations and sequences match the real thing, not only this decoder. The decoder takes every
+  published HFDL frequency in a 2 MS/s span (15 at 8.9 MHz) after one shared band stage; a burst heard on two channels
+  is kept once. Browser check: a 2 MS/s recording played through OPEN REC in real time gave both aircraft cards (one
+  with its position on the map from a performance report) and both ground stations. Not yet tested against a real
+  off-air recording (none redistributable found).
+  Hardware: HackRF (or an RTL-SDR in direct sampling / V4) with an outdoor wire, Flight Msgs → HFDL HF, band 8.9 by
+  night or 13 / 17 / 21 by day: squitters from ground stations within a few minutes, then aircraft ACARS; compare a few
+  messages with dumphfdl on the same recording (Capture it, then run dumphfdl over the .cs8).

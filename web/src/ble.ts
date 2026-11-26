@@ -12,6 +12,7 @@
 import { fmtDist } from './units.js';
 import { parseExtHeader, type ExtHeader } from './dsp/ble-ext.js';   // FORK: BLE 5 extended advertising
 import { DULT_UUID, ownerState, type OwnerState } from './ble-dult.js';   // FORK: a tracker's own word on its owner
+import { readRidServiceData, ridFields, type RidState } from './dsp/remoteid.js';   // FORK: drone Remote ID
 
 const PDU_TYPES = ['ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'ADV_EXT_IND'];   // FORK: + ADV_EXT_IND
 
@@ -116,12 +117,12 @@ const SERVICE_MAKERS: [number, string][] = [
 ];
 
 export type BleKind = 'airtag' | 'findmy' | 'tile' | 'smarttag' | 'findhub' | 'phone' | 'computer' | 'earbuds' | 'audio'
-  | 'watch' | 'ibeacon' | 'eddystone' | 'hid' | 'tv' | 'device' | 'dult';   // FORK: + dult
+  | 'watch' | 'ibeacon' | 'eddystone' | 'hid' | 'tv' | 'device' | 'dult' | 'drone';   // FORK: + dult, drone
 /** What each kind is called on a card. */
 export const KIND_LABEL: Record<BleKind, string> = {
   airtag: 'AirTag / Find My', findmy: 'Find My', tile: 'Tile', smarttag: 'SmartTag', findhub: 'Find Hub tag', phone: 'Phone',
   computer: 'Computer', earbuds: 'Earbuds', audio: 'Speaker', watch: 'Watch', ibeacon: 'iBeacon', eddystone: 'Eddystone',
-  hid: 'Keyboard / mouse', tv: 'TV / AirPlay', device: 'Device', dult: 'Tracker (DULT)',   // FORK: + dult
+  hid: 'Keyboard / mouse', tv: 'TV / AirPlay', device: 'Device', dult: 'Tracker (DULT)', drone: 'Drone (Remote ID)',   // FORK: + dult, drone
 };
 /** The kinds that exist to be carried and found: the ones a tracker alert is raised for. */
 export const TRACKER_KINDS: BleKind[] = ['airtag', 'findmy', 'tile', 'smarttag', 'findhub', 'dult'];   // FORK: + dult
@@ -212,6 +213,7 @@ export function classify(a: BleAdv): BleClass {
   }
   const all16 = [...a.uuids16, ...a.svc.map(s => s.uuid)];
   if (all16.includes(DULT_UUID)) return make('dult', 'DULT unwanted-tracking service');   // FORK: a tracker speaking the IETF DULT format
+  if (a.svc.some(x => x.uuid === 0xFFFA && x.data[0] === 0x0D)) return make('drone', 'ASTM F3411 Remote ID');   // FORK: drone Remote ID
   if (all16.some(u => u === 0xFEED || u === 0xFEEC || u === 0xFD84)) return make('tile', 'Tile service');
   if (all16.includes(0xFD5A)) return make('smarttag', 'Samsung SmartTag');
   const ak = appearanceKind(a.appearance);
@@ -243,6 +245,8 @@ export interface BleDevice {
   alert: string;
   /** FORK: what the tracker last said of its owner (ble-dult.ts): near, separated, or nothing. */
   owner?: OwnerState;
+  /** FORK: a drone's Remote ID, put together from its messages (dsp/remoteid.ts). */
+  rid?: RidState;
 }
 
 /** Great-circle distance in meters. */
@@ -287,6 +291,7 @@ export class BleTracker {
       d.movedM = Math.max(d.movedM, distM(d.firstPos, pos));
     }
     { const o = ownerState(a); if (o.state !== 'not stated' || !d.owner) d.owner = o.state; }   // FORK: what it says of its owner
+    for (const x of a.svc) if (x.uuid === 0xFFFA) readRidServiceData(x.data, d.rid ??= { types: [] });   // FORK: Remote ID, message by message
     d.fields = advFields(a, c, d);
     d.alert = trackerAlert(d);
     return d;
@@ -317,6 +322,7 @@ function advFields(a: BleAdv, c: BleClass, d: BleDevice): { name: string; value:
   if (a.uuids16.length) f.push({ name: 'Services', value: a.uuids16.map(u => `0x${hex4(u)}`).join(' ') });
   for (const s of a.svc) f.push({ name: `Service data 0x${hex4(s.uuid)}`, value: s.data.map(hex2).join(' ') || '—' });
   f.push(...c.extra);
+  if (d.rid) f.push(...ridFields(d.rid));   // FORK: the drone's Remote ID so far
   // FORK: a tracker's own word on its owner (ble-dult.ts)
   if (d.tracker) { const o = ownerState(a); f.push({ name: 'Owner', value: o.state === 'near owner' ? `with its owner (${o.how}): not following you` : o.state === 'separated' ? `separated from its owner (${o.how})${o.network !== undefined ? ` · network 0x${hex2(o.network)}` : ''}` : d.owner && d.owner !== 'not stated' ? `${d.owner} (last said)` : 'not stated: judged by time and distance' }); }
   f.push({ name: 'Packets', value: String(d.count) });
