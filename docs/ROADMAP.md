@@ -63,7 +63,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl | GPL-3.0-or-later ✔ |
+| [x] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl (Tomasz Lemiech): hfdl.c, mpdu/lpdu/hfnpdu/acars.c, etc/systable.conf; liquid-dsp conventions checked against liquid-dsp 1.6 | GPL-3.0-or-later ✔ (spdu.c GPL-2.0-or-later ✔); libacars MIT ✔ (format only) |
 | [ ] | | CPDLC / ADS-C inside ACARS/VDL2/HFDL | libacars | MIT ✔ |
 | [ ] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium; iridium-toolkit | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README) |
 | [ ] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `vor_rx` | Mayhem GPL-3.0 ✔ |
@@ -623,3 +623,15 @@ for "or later" first.
   Hardware: Drones with a HackRF near a powered ExpressLRS 2.4 GHz receiver and its transmitter (bound, sticks live):
   CONTROL LINKS should name ExpressLRS with the packet rate set in its Lua menu; FPV near a digital FPV system: its
   channel should show DIG with its width and carrier spacing (worth noting down per system for a future fingerprint).
+- **HFDL** (`dsp/hfdl/`, `hfdl-ui.ts`, `test/hfdl.test.ts`): bursts at all eight rates (300/600/1200/1800 bps, single
+  and double slot) built by the test transmitter round-trip through noise, a frequency error and an unknown phase and
+  timing; 300 bps decodes at 3 dB SNR. The same bursts, written to a CF32 file, were decoded by dumphfdl 1.7 built from
+  source (all eight rates; squitter, ACARS with good CRC through libacars, performance report, logon), so the scrambler,
+  interleaver, code, constellations and sequences match the real thing, not only this decoder. The decoder takes every
+  published HFDL frequency in a 2 MS/s span (15 at 8.9 MHz) after one shared band stage; a burst heard on two channels
+  is kept once. Browser check: a 2 MS/s recording played through OPEN REC in real time gave both aircraft cards (one
+  with its position on the map from a performance report) and both ground stations. Not yet tested against a real
+  off-air recording (none redistributable found).
+  Hardware: HackRF (or an RTL-SDR in direct sampling / V4) with an outdoor wire, Flight Msgs → HFDL HF, band 8.9 by
+  night or 13 / 17 / 21 by day: squitters from ground stations within a few minutes, then aircraft ACARS; compare a few
+  messages with dumphfdl on the same recording (Capture it, then run dumphfdl over the .cs8).

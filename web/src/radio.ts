@@ -135,6 +135,7 @@ export const APP_NEEDS: Record<string, AppNeeds> = {
   // Bluetooth advertising sits at 2.4 GHz, well past the top of an R82xx.
   btle: { freqHz: 2_402_000_000 },
   droneid: { freqHz: 2_444_500_000, rateHz: 15_360_000 },   // FORK: DJI DroneID: 2.4 GHz at 15.36 MS/s (a HackRF)
+  hfdl: { freqHz: 8_700_000 },   // FORK: HFDL is HF (a HackRF, or a dongle that can sample HF directly)
   fpv: { freqHz: 5_800_000_000, rateHz: 20_000_000 },   // FORK: analog FPV video: 5.8 GHz at 20 MS/s (a HackRF)
   transmit: { tx: true },
 };

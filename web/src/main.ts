@@ -13,6 +13,8 @@ import { Scope, WF_ICON, centredLabels, rangeLabels, rowToSpec } from './scope.j
 import { btleChannelFreq } from './dsp/btle.js';
 import { BleTracker, KIND_LABEL, parseAdv, type BleDevice } from './ble.js';
 import { AcarsPlanes, labelMeaning, normReg, parseAcarsLine, type AcarsMsg } from './acars-planes.js';
+import { HFDL_BANDS, HFDL_FREQS, type HfdlPdu } from './dsp/hfdl/pdu.js';   // FORK: HFDL
+import { HfdlHeard } from './hfdl-ui.js';   // FORK: HFDL
 import { AcarsStats, Vdl2Tracker, VDL2_CHANNELS, acarsFor, airlineOf, kindLabelOf, msgInsight, numChips, planeInsight, xidSummary, type Airport, type AvlcFrame, type MsgInsight, type PlaneInsight, type VdlAircraft, type VdlStation } from './acars-insight.js';
 import { ORBCOMM_CHANNELS, type OrbcommSat } from './dsp/orbcomm.js';
 import type { PacketFrame } from './dsp/g3ruh.js';
@@ -111,7 +113,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'vdl2' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, hfdl
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -125,6 +127,7 @@ const APPS: AppDef[] = [
   { id: 'acars', title: 'Flight Msgs', blurb: 'ACARS · VDL2', cat: 'Receive' },
   // VDL2 has no tile or bar key of its own: it is the 136.975 band of Flight Messages (see MERGED_INTO)
   { id: 'vdl2', title: 'Flight Msgs', blurb: 'VDL Mode 2 · 136.975 MHz', cat: 'Receive' },
+  { id: 'hfdl', title: 'Flight Msgs', blurb: 'HFDL · 3-22 MHz', cat: 'Receive' },   // FORK: HFDL
   { id: 'trains', title: 'Trains', blurb: 'EOT · PTC', cat: 'Receive' },
   { id: 'ais', title: 'Ships', blurb: 'AIS · 162 MHz', cat: 'Receive' },
   { id: 'cell', title: 'Cell', blurb: 'LTE alerts · cell info', cat: 'Receive' },
@@ -152,14 +155,14 @@ const APPS: AppDef[] = [
   { id: 'settings', title: 'Settings', blurb: 'theme · about', cat: 'Tools' },
 ];
 /** Apps folded into another app's tile and bar key: VDL2 is the second band of Flight Messages. */
-const MERGED_INTO: Partial<Record<AppId, AppId>> = { vdl2: 'acars' };
+const MERGED_INTO: Partial<Record<AppId, AppId>> = { vdl2: 'acars', hfdl: 'acars' };   // FORK: + hfdl
 const keyOf = (id: AppId | null) => id ? MERGED_INTO[id] ?? id : id;
 /** Whether the connected radio hides this app (an RTL-SDR hides TX and Troll; see app-visibility.ts). */
 const hiddenApp = (id: AppId | null | undefined) => appHidden(id, radio?.kind);
 const FLIGHT_MSGS_KEY = 'mm.flightmsgs.band';
 /** The tile and the bar key open Flight Messages on the band you used last. */
 function openPicked(id: AppId): void {
-  if (id === 'acars') { let b = 'acars'; try { b = localStorage.getItem(FLIGHT_MSGS_KEY) ?? 'acars'; } catch { /* no storage */ } open(b === 'vdl2' ? 'vdl2' : 'acars'); return; }
+  if (id === 'acars') { let b = 'acars'; try { b = localStorage.getItem(FLIGHT_MSGS_KEY) ?? 'acars'; } catch { /* no storage */ } open(b === 'vdl2' ? 'vdl2' : b === 'hfdl' ? 'hfdl' : 'acars'); return; }   // FORK: + hfdl
   open(id);
 }
 const RANGES: [string, number, number][] = [
@@ -1012,7 +1015,7 @@ function open(app: AppId | null): void {
   if ((app as string) === 'subghz' || (app as string) === 'tpms') app = 'devices';      // Sub-GHz and TPMS are part of Devices now
   if (hiddenApp(app)) app = null;                         // an app this radio hides (TX and Troll on an RTL-SDR) opens Home instead
   if (app === 'settings') { openSettings(); return; }
-  if (app === 'acars' || app === 'vdl2') { try { localStorage.setItem(FLIGHT_MSGS_KEY, app); } catch { /* no storage */ } }
+  if (app === 'acars' || app === 'vdl2' || app === 'hfdl') { try { localStorage.setItem(FLIGHT_MSGS_KEY, app); } catch { /* no storage */ } }   // FORK: + hfdl
   if (state.capturing) { worker?.postMessage({ type: 'capture', cmd: 'stop' }); state.capturing = false; }
   if (state.scanning && app !== 'audio') setScanning(false);
   if (state.prowl.on && app !== 'prowl') prowlStop();       // the hunt owns the receiver; anything else takes it back
@@ -1074,6 +1077,7 @@ function open(app: AppId | null): void {
     // none of them on the radio's DC spike; 131.550 is the one heard.
     case 'vdl2': configure('AM', 136_975_000, 2e6, 32, 32, false, 'vdl2'); state.viewLo = VDL2_SPAN_HZ; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); break;
     case 'acars': configure('AM', 131_550_000, 2e6, 32, 32, false, 'acars'); state.viewLo = ACARS_SPAN_HZ; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); break;
+    case 'hfdl': hfdlOpen(); break;   // FORK: HFDL
     case 'trains': trainsTune(); if (trainsUi.auto) trainsCycle(); break;
     case 'fleet': fleetOpen(); break;
     case 'hamplus': hpOpen(); break;
@@ -1109,7 +1113,7 @@ function open(app: AppId | null): void {
 const mapEmptySub = (what: string) => `${what}. ${state.home ? 'Centered on you.' : mapStart(null).standIn ? 'No location yet: allow it to center the map on you.' : 'Centered where you were last.'}`;
 function requestGeo(): void {
   if (!('geolocation' in navigator)) return;
-  navigator.geolocation.getCurrentPosition(p => { state.home = { lat: p.coords.latitude, lon: p.coords.longitude }; saveLastPos(state.home); geo?.setHome(state.home); geo?.recenter(state.home.lat, state.home.lon); if (state.app === 'ais') refreshAis(); else if (state.app === 'aprs') refreshAprs(); else if (state.app === 'adsb') refreshAdsb(); else if (state.app === 'acars' || state.app === 'vdl2') refreshAcars(true); worker?.postMessage({ type: 'geo', lat: p.coords.latitude, lon: p.coords.longitude }); log(`GPS reference ${p.coords.latitude.toFixed(3)},${p.coords.longitude.toFixed(3)} for single-frame CPR`); }, () => log('no GPS fix — ADS-B positions need even+odd frame pairs'), { maximumAge: 600_000, timeout: 8000 });
+  navigator.geolocation.getCurrentPosition(p => { state.home = { lat: p.coords.latitude, lon: p.coords.longitude }; saveLastPos(state.home); geo?.setHome(state.home); geo?.recenter(state.home.lat, state.home.lon); if (state.app === 'ais') refreshAis(); else if (state.app === 'aprs') refreshAprs(); else if (state.app === 'adsb') refreshAdsb(); else if (state.app === 'acars' || state.app === 'vdl2' || state.app === 'hfdl') refreshAcars(true); worker?.postMessage({ type: 'geo', lat: p.coords.latitude, lon: p.coords.longitude }); log(`GPS reference ${p.coords.latitude.toFixed(3)},${p.coords.longitude.toFixed(3)} for single-frame CPR`); }, () => log('no GPS fix — ADS-B positions need even+odd frame pairs'), { maximumAge: 600_000, timeout: 8000 });   // FORK: + hfdl
 }
 
 
@@ -1791,6 +1795,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   capture: ['capture', 'No captures yet', ['Tune to a signal and press ● REC', 'Keep it short: 2 Msps fills about 4 MB a second']],
   hd: ['hd', 'No HD stations yet', ['AUTO finds the stations across the FM band, then visits the strong ones from the bottom up until each fills in', 'Most big FM stations in the US are hybrid: name, songs, logos and album art come in within a minute or two', 'Each program (HD1 to HD8) plays its digital audio; HD1 plays the analog FM until its digital is ready']],
   vdl2: ['vdl2', 'Waiting for VDL2 messages', ['Every VDL2 channel from 136.10 to 136.975 MHz is decoded at once; 136.975 is the common one', 'Aircraft talk to ground stations every few minutes, more near an airport; an antenna that sees the sky hears them 200 miles out']],
+  hfdl: ['hfdl', 'Waiting for HFDL', ['Ground stations send a squitter every 32 seconds on each of their frequencies; aircraft answer when they have something to say', 'HF wants a long wire or a loop outside, away from the house; a band is often dead by day and alive at night (or the other way round)']],   // FORK: HFDL
   acars: ['acars', 'Waiting for ACARS messages', ['Aircraft send them every few minutes; 131.550 is the busiest US channel', 'Near an airport, or with an antenna that sees the sky, you hear aircraft up to 200 miles out']],
   fpv: ['fpv', 'No FPV video found yet', ['SCAN steps through the 48 channels of bands A, B, E, F, R and L; channels with video turn gold', 'Tap a channel to watch it: the picture is drawn from the sync pulses, in black and white', 'Needs a HackRF at 20 MS/s and a 5.8 GHz antenna; an RTL-SDR cannot reach 5.8 GHz']],   // FORK: analog FPV video
   droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
@@ -2043,6 +2048,7 @@ function render(app: AppId | null): void {
     case 'droneid': renderDroneId(view); break;   // FORK: DJI DroneID
     case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
+    case 'hfdl': renderAcars(view, 'hfdl'); break;   // FORK: HFDL
     case 'acars': renderAcars(view, 'acars'); break;
     case 'subghz': renderPacket(view, app); break;
     case 'devices': renderR433(view); break;
@@ -4235,9 +4241,9 @@ type AcarsView = 'cards' | 'map' | 'stats' | 'log';
 type AcarsUi = { planes: AcarsPlanes; stats: AcarsStats; vdl: Vdl2Tracker; view: AcarsView; sel: string; drawn: number; pending: number; timer: number };
 const newAcarsUi = (): AcarsUi => ({ planes: new AcarsPlanes(), stats: new AcarsStats(), vdl: new Vdl2Tracker(acLookup), view: 'cards', sel: '', drawn: 0, pending: 0, timer: 0 });
 /** ACARS and VDL2 share these screens (VDL2 carries ACARS messages), each with its own aircraft. */
-const acarsUis = { acars: newAcarsUi(), vdl2: newAcarsUi() };
+const acarsUis = { acars: newAcarsUi(), vdl2: newAcarsUi(), hfdl: newAcarsUi() };   // FORK: + hfdl
 type AcarsApp = keyof typeof acarsUis;
-const acarsApp = (): AcarsApp => state.app === 'vdl2' ? 'vdl2' : 'acars';
+const acarsApp = (): AcarsApp => state.app === 'vdl2' ? 'vdl2' : state.app === 'hfdl' ? 'hfdl' : 'acars';   // FORK: + hfdl
 /** The ACARS channels the presets offer (counted even before anything is heard on them). */
 const ACARS_CHANNELS = ['131.550', '131.525', '131.725', '131.450', '130.025'];
 /** An airport from the bundled list (loaded with the UAT one), for the message readers, the stations and the map. */
@@ -4270,7 +4276,7 @@ function acarsAdsbMatch(p: { icao: string; reg: string; flight: string; vdl?: Vd
 /** Where an aircraft is: only the newest position its own messages gave (the radio hears one band at a time, so
  *  nothing here comes from ADS-B). */
 function acWhere(r: AcRow): { lat: number; lon: number; ms: number } | null {
-  return r.ins.pos ? { lat: r.ins.pos.lat, lon: r.ins.pos.lon, ms: r.ins.posMs } : null;
+  return r.ins.pos ? { lat: r.ins.pos.lat, lon: r.ins.pos.lon, ms: r.ins.posMs } : state.app === 'hfdl' ? hfdlWhere(r) : null;   // FORK: HFDL position reports
 }
 const acTitle = (r: AcRow) => r.reg || r.flight || r.icao;
 const acChip = (text: string, cls = '') => `<span class="ac-chip ${cls}">${esc(text)}</span>`;
@@ -4361,17 +4367,18 @@ function renderAcars(view: HTMLElement, id: AcarsApp): void {
   view.innerHTML = `
     <section class="${visCls(id)}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
     <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. Nothing will decode here. A HackRF covers 1 MHz to 6 GHz.</div>` : ''}
-      <div class="ctlrow">${segHtml([['acars', 'ACARS 131'], ['vdl2', 'VDL2 136.975']].map(([k, t]) => `<button data-acband="${k}" class="${k === id ? 'on' : ''}">${t}</button>`))}</div>
-      ${vdl ? '' : presetHtml('CHANNEL · MHz', [['131.550 US', 131_550_000], ['131.525 EU', 131_525_000], ['131.725 EU2', 131_725_000], ['131.450 JP', 131_450_000], ['130.025', 130_025_000]])}
+      <div class="ctlrow">${segHtml([['acars', 'ACARS 131'], ['vdl2', 'VDL2 136.975'], ['hfdl', 'HFDL HF'] /* FORK: + hfdl */].map(([k, t]) => `<button data-acband="${k}" class="${k === id ? 'on' : ''}">${t}</button>`))}</div>
+      ${id === 'hfdl' /* FORK: HFDL bands */ ? hfdlBandsHtml() : vdl ? '' : presetHtml('CHANNEL · MHz', [['131.550 US', 131_550_000], ['131.525 EU', 131_525_000], ['131.725 EU2', 131_725_000], ['131.450 JP', 131_450_000], ['130.025', 130_025_000]])}
       <div class="ctlrow">${segHtml(['cards', 'map', 'stats', 'log'].map(v => `<button data-acview="${v}">${v.toUpperCase()}</button>`))}${pauseClearHtml(id)}</div>
       <div id="ac-stage" class="mt-stage"><div id="ac-cards" class="mt-cards"></div><div id="ac-map" class="panel map"></div><div id="ac-nopos" class="mt-nopos">no positions yet</div><div id="ac-unplaced" class="ac-unplaced"></div><div id="ac-stats" class="ac-stats"></div><div id="ac-detail" class="mt-detail" hidden></div></div>
       <div id="ac-log">${logHtml(id, 'listening…')}</div>
-      <div class="note about">${vdl
+      <div class="note about">${id === 'hfdl' /* FORK: HFDL */ ? HFDL_ABOUT : vdl
         ? 'VDL Mode 2, the digital link that carries most airline ACARS now: every channel from 136.10 to 136.975 MHz at once, each frame checked. One card per aircraft by its ICAO address (exact, so ADS-B links straight to it), ACARS or not, with its registration and flight once it sends ACARS; ground stations below, placed at the airport their XIDs name. MAP plots the aircraft where their own messages put them, with lines to the stations they work.'
         : 'One card per aircraft (by registration, else flight), each message read into plain words: out, off, on and in times, positions, weather, ATIS, free text, engine data. MAP plots them where their own messages put them. ADS-B links to the same aircraft when ADS-B has seen it (by its ICAO address, its registration or its flight).'}</div>
     </section>`;
   scope = attach(tunableScope('scope', 80, 70));
   qa<HTMLButtonElement>('[data-acband]', view).forEach(b => b.onclick = () => { if (b.dataset.acband !== id) open(b.dataset.acband as AcarsApp); });
+  qa<HTMLButtonElement>('[data-hfband]', view).forEach(b => b.onclick = () => hfdlSetBand(Number(b.dataset.hfband)));   // FORK: HFDL bands
   qa<HTMLButtonElement>('[data-acview]', view).forEach(b => b.onclick = () => { ui.view = b.dataset.acview as AcarsView; refreshAcars(true); if (ui.view === 'map') requestAnimationFrame(() => { geo?.invalidate(); geo?.fit(); }); });
   $('ac-unplaced').onclick = (e) => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-acp]'); if (c) { ui.sel = ui.sel === c.dataset.acp ? '' : c.dataset.acp!; refreshAcars(true); } };
   $('ac-cards').onclick = (e) => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-acp]'); if (c) { ui.sel = ui.sel === c.dataset.acp ? '' : c.dataset.acp!; refreshAcars(true); } };
@@ -4406,14 +4413,51 @@ function onVdl2Frame(f: AvlcFrame): void {
   acarsUis.vdl2.vdl.add({ ...f, ms: Date.now() });
   if (state.app === 'vdl2') refreshAcars();
 }
+// FORK: HFDL (dsp/hfdl/, hfdl-ui.ts): the band to tune, the ground stations heard, the positions aircraft report
+const hfdlHeard = new HfdlHeard();
+const HFDL_BAND_KEY = 'mm.hfdlBand';
+let hfdlBand = ((): number => { try { const v = localStorage.getItem(HFDL_BAND_KEY), n = v === null ? NaN : Number(v); return n >= 0 && n < HFDL_BANDS.length ? n : 5; } catch { return 5; } })();
+const HFDL_ABOUT = 'HFDL, the HF data link aircraft use over oceans and the poles: every published HFDL frequency in the band at once (300 to 1800 bps, each burst checked), from 16 ground stations around the world. ACARS inside gives the same aircraft cards as ACARS and VDL2; ground stations are listed below them with the frequencies their squitters say they use, and MAP plots the positions aircraft report. HF needs a HackRF (1 MHz to 6 GHz) or a dongle that samples HF directly (RTL-SDR Blog V3 direct sampling, V4), and an outdoor wire or loop.';
+function hfdlOpen(): void {
+  const b = HFDL_BANDS[hfdlBand];
+  configure('NONE', b.centreHz, 2e6, 32, 32, false, 'hfdl');
+}
+function hfdlSetBand(i: number): void {
+  if (!(i >= 0 && i < HFDL_BANDS.length) || i === hfdlBand) return;
+  hfdlBand = i; try { localStorage.setItem(HFDL_BAND_KEY, String(i)); } catch { /* no storage */ }
+  open('hfdl');
+}
+function hfdlBandsHtml(): string {
+  const c = HFDL_BANDS[hfdlBand].centreHz, reach = (radio ? state.rate : 2e6) / 2 - 20_000;
+  const on = HFDL_FREQS.filter(f => Math.abs(f + 1440 - c) < reach);
+  return `<div class="caption">HFDL BAND · MHz</div><div class="ctlrow">${segHtml(HFDL_BANDS.map((b, i) => `<button data-hfband="${i}" class="${i === hfdlBand ? 'on' : ''}">${esc(b.name)}</button>`))}</div>`
+    + `<div class="note">${on.length} HFDL frequencies here, all decoded at once: ${on.map(f => (f / 1e6).toFixed(3)).join(' · ')} MHz</div>`;
+}
+function hfdlWhere(r: { flight: string }): { lat: number; lon: number; ms: number } | null {
+  const p = hfdlHeard.posFor(r.flight); return p ? { lat: p.lat, lon: p.lon, ms: p.ms } : null;
+}
+function hfdlStationsHtml(now: number): string {
+  const l = hfdlHeard.list(); if (!l.length) return '';
+  return `<div class="caption ac-span">HFDL GROUND STATIONS · ${l.length}</div>` + l.map(g => {
+    const age = now - g.lastMs, live = age < 120_000;
+    return `<div class="mt-card ac-gs ${live ? '' : 'dim'}"><div class="mt-h"><span class="mt-id">${g.id}</span><span class="mt-k"><b>${esc(g.name.toUpperCase())}</b><small>${esc(g.freqs.length ? `on ${g.freqs.map(k => (k / 1000).toFixed(3)).join(' · ')} MHz` : 'its frequencies not heard yet')}</small></span><span class="mt-live ${live ? 'on' : ''}"><i></i>${live ? 'LIVE' : bleAgo(age)}</span></div>`
+      + `<div class="mt-clk"><b>${g.squitters}</b><small>SQUITTER${g.squitters === 1 ? '' : 'S'} · ${g.pdus} PDU${g.pdus === 1 ? '' : 'S'} · ${g.aircraft.size} AIRCRAFT</small><em>${[...g.heardOn].sort((a, b) => a - b).map(k => (k / 1000).toFixed(3)).join(' ')}</em></div>`
+      + `<div class="mt-hex">${g.snr !== null ? `heard itself at ${acSnr(Math.round(g.snr))}` : 'heard only through the aircraft working it'}</div></div>`;
+  }).join('');
+}
+function onHfdl(m: { khz: number; snrDb: number; pdu: HfdlPdu }): void {
+  hfdlHeard.add(m.pdu, m.khz, m.snrDb, Date.now());
+  if (state.app === 'hfdl') refreshAcars();
+}
+// FORK: end HFDL
 function refreshAcars(force = false): void {
-  if (state.app !== 'acars' && state.app !== 'vdl2') return;
+  if (state.app !== 'acars' && state.app !== 'vdl2' && state.app !== 'hfdl') return;   // FORK: + hfdl
   const id = acarsApp(), ui = acarsUis[id], vdl = id === 'vdl2';
   const now = Date.now();
   if (!force && now - ui.drawn < 240) { clearTimeout(ui.pending); ui.pending = window.setTimeout(() => refreshAcars(true), 250); return; }
   ui.drawn = now;
   const rows = acRows(ui, vdl), stations = vdl ? ui.vdl.stationList() : [];
-  const placed = rows.filter(r => acWhere(r)).length + stations.filter(g => g.airport && acLookup(g.airport)).length;
+  const placed = rows.filter(r => acWhere(r)).length + stations.filter(g => g.airport && acLookup(g.airport)).length + (id === 'hfdl' ? hfdlHeard.stations.size : 0);   // FORK: + HFDL stations
   qa<HTMLButtonElement>('[data-acview]').forEach(b => {
     const v = b.dataset.acview; b.classList.toggle('on', v === ui.view);
     b.textContent = v === 'cards' ? `AIRCRAFT ${rows.length}` : v === 'map' ? `MAP ${placed}` : v === 'stats' ? 'STATS' : `LOG ${counts[id] ?? 0}`;
@@ -4426,7 +4470,8 @@ function refreshAcars(force = false): void {
     const top = cards.scrollTop;
     const gs = vdl && (rows.length || stations.length)
       ? `<div class="caption ac-span">GROUND STATIONS · ${stations.length}</div>${stations.length ? stations.map(g => acStationCard(g, now, ui.sel)).join('') : '<div class="mt-hex ac-span">none heard yet</div>'}` : '';
-    cards.innerHTML = rows.length || stations.length ? rows.map(r => acarsCard(r, now, ui.sel)).join('') + gs : emptyState(id);
+    const hfGs = id === 'hfdl' ? hfdlStationsHtml(now) : '';   // FORK: HFDL ground stations
+    cards.innerHTML = rows.length || stations.length || hfGs ? rows.map(r => acarsCard(r, now, ui.sel)).join('') + gs + hfGs : emptyState(id);   // FORK: + hfGs
     cards.scrollTop = top;
   }
   if (ui.view === 'stats' && !paused.has(id)) statsEl.innerHTML = acStats(ui, vdl, rows, now);
@@ -4437,6 +4482,7 @@ function refreshAcars(force = false): void {
       const apt = g.airport ? acLookup(g.airport) : undefined; if (!apt) continue;
       items.push({ id: `G:${g.addr}`, lat: apt.lat, lon: apt.lon, label: `GS ${g.addr} · ${g.airport}`, kind: 'tower' }); at.set(g.addr, [apt.lat, apt.lon]);
     }
+    if (id === 'hfdl') for (const g of hfdlHeard.list()) items.push({ id: `H:${g.id}`, lat: g.lat, lon: g.lon, label: `HFDL ${g.name}`, kind: 'tower' });   // FORK: HFDL ground stations
     for (const r of rows) {
       const w = acWhere(r); if (!w) continue;
       const alt = r.ins.nums.altFt !== null ? ` · ${numChips({ ...r.ins.nums, kt: null, mach: '', hdg: null, fuel: '', eta: '' })[0]}` : '';
@@ -4700,11 +4746,11 @@ function trBrake(u: EotUnit): [string, 'red' | 'ok'] | null {
 /* Waterfalls that can be put away (the Android app's WATERFALL button). On a wide screen each starts shown; on a phone
  * BLE, ADS-B and Trains start without it (their bursts hardly show on it, and the cards or the map get the room), while
  * Meters, LoRa and ACARS keep it. A choice is remembered per app. */
-const WF_PHONE: Partial<Record<AppId, boolean>> = { hamplus: false, cb: false, hd: false, sondes: false, btle: false, adsb: false, trains: false, fleet: false, cell: false, atsc: false, ert: true, lora: true, acars: true, vdl2: true };
+const WF_PHONE: Partial<Record<AppId, boolean>> = { hamplus: false, cb: false, hd: false, sondes: false, btle: false, adsb: false, trains: false, fleet: false, cell: false, atsc: false, ert: true, lora: true, acars: true, vdl2: true, hfdl: true };   // FORK: + hfdl
 const WF_SVG = WF_ICON;
 /** The apps whose waterfall can be put away. The button is the scope's own (Scope.setHide, top left corner), wired
  *  for these apps in wireCommon, so no screen draws one of its own. */
-const WF_HIDE = new Set<AppId>(['adsb', 'uat', 'btle', 'acars', 'vdl2', 'ert', 'lora', 'sondes', 'trains', 'fleet', 'hd', 'cell', 'atsc']);
+const WF_HIDE = new Set<AppId>(['adsb', 'uat', 'btle', 'acars', 'vdl2', 'hfdl', 'ert', 'lora', 'sondes', 'trains', 'fleet', 'hd', 'cell', 'atsc']);   // FORK: + hfdl
 function wfShown(app: AppId): boolean {
   let v: string | null = null;
   try { v = localStorage.getItem('mm.wf.' + app); } catch { /* storage blocked */ }
@@ -9354,7 +9400,7 @@ function redraw(id: string): void {
     case 'cell': refreshList(id); refreshCell(true); break;
     case 'atsc': refreshList(id); refreshAtsc(true); break;
     case 'btle': refreshList(id); refreshBle(true); break;
-    case 'vdl2': case 'acars': refreshList(id); refreshAcars(true); break;
+    case 'vdl2': case 'acars': case 'hfdl': refreshList(id); refreshAcars(true); break;   // FORK: + hfdl
     default: refreshList(id);
   }
 }
@@ -9371,7 +9417,7 @@ function clearApp(id: string): void {
     case 'adsb': state.aircraft = []; state.frames = 0; state.adsbSel = ''; modeAc = []; break;   // FORK: + Mode A/C
     case 'devices': state.r433.heard = []; break;
     case 'btle': bleUi.tracker.clear(); bleUi.sel = ''; break;
-    case 'vdl2': case 'acars': acarsUis[id].planes.clear(); acarsUis[id].stats.clear(); acarsUis[id].vdl.clear(); acarsUis[id].sel = ''; break;
+    case 'vdl2': case 'acars': case 'hfdl': acarsUis[id].planes.clear(); acarsUis[id].stats.clear(); acarsUis[id].vdl.clear(); acarsUis[id].sel = ''; if (id === 'hfdl') hfdlHeard.clear(); break;   // FORK: + hfdl
     case 'psat': state.psat.frames = []; state.psat.heard = 0; state.psat.bad = 0; break;
     case 'ert': meters.snap = null; meters.sel = ''; break;
     case 'lora': loraUi.snap = null; loraUi.sel = ''; break;
@@ -9882,8 +9928,9 @@ function ensureWorker(): Worker {
         const was = typeof m.replaces === 'string' ? list.indexOf(m.replaces) : -1;
         if (was >= 0) list.splice(was, 1); else counts[id] = (counts[id] ?? 0) + 1;
         if (id === 'aprs') { if (was >= 0) aprsLogMs.splice(was, 1); aprsLogMs.unshift(Date.now()); if (aprsLogMs.length > 300) aprsLogMs.length = 300; }
-        list.unshift(m.line); if (list.length > 300) list.length = 300; refreshList(id); if (id === 'ais') refreshAis(); else if (id === 'aprs') refreshAprs(); else if (id === 'acars' || id === 'vdl2') onAcarsLine(m.line as string, id); else if (id === 'btle') refreshBle(); break; }
+        list.unshift(m.line); if (list.length > 300) list.length = 300; refreshList(id); if (id === 'ais') refreshAis(); else if (id === 'aprs') refreshAprs(); else if (id === 'acars' || id === 'vdl2' || id === 'hfdl') onAcarsLine(m.line as string, id); else if (id === 'btle') refreshBle(); break; }   // FORK: + hfdl
       case 'vdl2frame': onVdl2Frame(m.f as AvlcFrame); break;
+      case 'hfdl': onHfdl(m as unknown as { khz: number; snrDb: number; pdu: HfdlPdu }); break;   // FORK: HFDL
       case 'hdsnap': hdUi.snap = m as unknown as HdSnapMsg; hdRecord(hdUi.snap); refreshHd(); break;
       case 'hdobj': hdOnObject(m); break;
       case 'ble': onBleAdv(m as { pdu: number[]; db: number; ch: number }); break;
@@ -10618,7 +10665,7 @@ function initShell(): void {
 /** Each app's card tag and title (the Android app's). */
 const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
   js8: ['JS8', 'HF MESSAGING'],
-  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'], subghz: ['SUB-GHZ', 'SENSORS · REMOTES · KEYS'],
+  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'], subghz: ['SUB-GHZ', 'SENSORS · REMOTES · KEYS'],
   ert: ['METERS', 'UTILITY METERS'], lora: ['MESH', 'MESH RADIO TEXT'], sondes: ['BALLOONS', 'WEATHER BALLOONS'], btle: ['BLUETOOTH', 'BLUETOOTH DEVICES'], adsb: ['AIRCRAFT', 'AIRCRAFT OVERHEAD'], ais: ['SHIPS', 'SHIPS NEARBY'], aprs: ['HAM MAP', 'STATIONS ON THE MAP'], uat: ['FLIGHT UAT', 'FLIGHT WEATHER · SMALL PLANES'],
   devices: ['DEVICES', 'KEYS · REMOTES · SENSORS'], spectrum: ['SPECTRUM', 'ANALYZER · ZERO SPAN'], analyzer: ['ANALYZER', 'CAPTURE · DEMOD · COMPARE'], capture: ['CAPTURE', 'RAW IQ TO FILE'], prowl: ['PROWL', 'HUNTING FOR VOICE'], lookingglass: ['GLASS', 'WIDEBAND SWEEP'],
   search: ['SEARCH', 'ACTIVE FREQUENCIES'], transmit: ['TX', 'IDLE'], troll: ['TROLL', 'IDLE'],
@@ -10631,7 +10678,7 @@ const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
 const APP_TECH: Partial<Record<AppId, string>> = {
   audio: 'WFM · NFM · AM · SSB · RDS', hd: 'NRSC-5 · IBOC · FM HYBRID', fleet: 'P25 · DMR · NXDN · TETRA · SMARTNET',
   pager: 'POCSAG · FLEX · REFLEX', lora: 'LORA · MESHTASTIC · MESHCORE · LORAWAN', adsb: 'ADS-B · MODE S · 1090 MHZ',
-  uat: 'UAT · FIS-B · 978 MHZ', acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', trains: 'EOT · HOT · PTC 220 MHZ',
+  uat: 'UAT · FIS-B · 978 MHZ', acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
   ais: 'AIS · 161.975 / 162.025 MHZ', cell: 'LTE · SIB · WEA · ETWS', devices: 'OOK · FSK · TPMS · Z-WAVE · 315–915 MHZ',
   subghz: 'OOK · FSK · 315–915 MHZ', js8: 'JS8 · 8-FSK · HF USB', ham: 'SSB · CW · FM · FT8 · SSTV',
   hamplus: 'FM · DMR · D-STAR · FUSION · P25 · NXDN · M17', cb: 'CB · 26.965–27.405 MHZ · AM · FM · SSB', aprs: 'APRS · AX.25 · 144.390 MHZ',

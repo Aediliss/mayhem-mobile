@@ -5,6 +5,7 @@
  */
 import { DroneIdProcessor } from './dsp/droneid.js';   // FORK: DJI DroneID
 import { FpvProcessor } from './dsp/fpv.js';   // FORK: analog FPV video
+import { HfdlDecoder } from './dsp/hfdl/hfdl.js';   // FORK: HFDL
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -127,6 +128,7 @@ function loraPoolFor(r: number): WorkerPool | null {
 const btle = new BtleDecoder(emit);
 const droneid = new DroneIdProcessor(emit);   // FORK: DJI DroneID (dsp/droneid.ts)
 const fpv = new FpvProcessor(emit);   // FORK: analog FPV video (dsp/fpv.ts)
+const hfdl = new HfdlDecoder(emit);   // FORK: HFDL (dsp/hfdl/)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -528,6 +530,7 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'tpms': return tpms;
     case 'acars': return acars;
     case 'vdl2': vdl2.centerHz = centreHz; return vdl2;
+    case 'hfdl': hfdl.centerHz = centreHz; return hfdl;   // FORK: HFDL
     case 'sonde': sonde.setCenter(centreHz); return sonde;
     case 'uat': return uat;
     case 'hd': hdApp.centerHz = centreHz; hdApp.offsetHz = offsetHz; return hdApp;
@@ -761,6 +764,7 @@ function process(iq: Int8Array): void {
   if (p === lora) { lora.setCenter(centreHz); lora.scanner.pool = loraPoolFor(rate); }
   if (p === acars) { acars.centerHz = centreHz; acars.tunedHz = centreHz + offsetHz; }
   if (p === vdl2) vdl2.centerHz = centreHz;
+  if (p === hfdl) hfdl.centerHz = centreHz;   // FORK: HFDL
   if (p === trains) trains.centerHz = centreHz;
   if (p === fleet) fleet.centerHz = centreHz;
   if (p === cell) cell.centerHz = centreHz;
