@@ -50,7 +50,9 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | Remote ID: BLE legacy (UUID 0xFFFA, message pack) → BT5 ext/coded → Wi-Fi beacon/NAN (ch 6); map with drone + operator | ASTM F3411, ASD-STAN prEN 4709-002; opendroneid-core-c | opendroneid-core-c Apache-2.0 ✔ |
+| [x] | ★ | Remote ID: BLE legacy (UUID 0xFFFA, message pack) · map with drone + operator | ASTM F3411, ASD-STAN prEN 4709-002; opendroneid-core-c | opendroneid-core-c Apache-2.0 ✔ |
+| [ ] | | Remote ID over Bluetooth 5 long range (AUX packets on data channels, LE Coded PHY) | ASTM F3411 | needs the LE Coded row and AUX following |
+| [ ] | | Remote ID over Wi-Fi beacon / NAN (2.4 GHz ch 6, 5.8 GHz) | ASTM F3411; IEEE 802.11 | needs an 802.11 receiver (Phase 9 Wi-Fi row) |
 | [ ] | ★ | DJI DroneID (OcuSync 2.4/5.8 GHz OFDM): detect, demod, serial + drone/pilot/home GPS | proto17/dji_droneid; RUB-SysSec/DroneSecurity (NDSS '23 paper) | dji_droneid MIT ✔ · DroneSecurity AGPL-3.0 ✔ (prefer the paper / MIT code) |
 | [ ] | | FPV analog video detect at 5.8 GHz (raceband/A/B/E/F), NTSC/PAL frames if bandwidth allows | channel tables (public) | facts |
 | [ ] | | Digital FPV + control-link fingerprinting: DJI O3/O4, Walksnail, HDZero, ELRS, Crossfire | ExpressLRS source | check (ELRS is GPL-3.0 per memory — verify) |
@@ -524,3 +526,24 @@ for "or later" first.
   Hardware: Bluetooth app (AUTO on) while carrying, or travelling near, an AirTag: with its owner's phone nearby its card
   should read "with its owner … not following you" and stay quiet; one left separated from its owner for a while
   should read "separated" and alert after 20 minutes or 500 m.
+- **Phase 3 · Remote ID over Bluetooth** (`src/dsp/remoteid.ts`, `test/remoteid.test.ts`): ASTM F3411 / ASD-STAN EN
+  4709-002 messages, the layouts as opendroneid-core-c (Apache-2.0) encodes them, written from those definitions. The
+  Bluetooth app reads service data 0xFFFA (application code 0x0D, counter, one 25-byte message, or a Message Pack):
+  Basic ID (ID type, UA type, UAS ID), Location (status, direction, horizontal speed with its multiplier, vertical speed,
+  latitude / longitude, pressure and geodetic altitude, height and its reference, accuracies, time past the hour),
+  Authentication (noted), Self-ID, System (operator position and how it is known, area, EU category and class,
+  operator altitude), Operator ID; values the standard marks unknown are left out. Bluetooth 4 sends one message per
+  advertisement, so each drone's card puts its messages together. Drones are their own kind ("Drone (Remote ID)", not a
+  tracker); a map appears over the cards once a drone has a position: the drone (pointing its way, with its height),
+  its operator, and a line between them. Upstream touch points (FORK): `ble.ts` (import, the `drone` kind and label,
+  classify, `BleDevice.rid`, the messages read in `add`, the card rows), `main.ts` (the map element, the map, the drone
+  and operator markers and lines in `refreshBle`).
+  Tests prove: each message read back (both speed ranges, the heading past 180°, altitudes, accuracies, time, EU class);
+  unknown values left out; a bad pack and a foreign application code read nothing; a Message Pack; four advertisements
+  make one drone card with every field; a Remote ID advertisement through the BLE receiver over GFSK. Browser check
+  (Chromium): a recording in the Bluetooth app gives the drone card, the map with the drone and its operator joined by
+  a line, no page errors.
+  Not done (rows above): Bluetooth 5 long range (the drone's AUX packets on LE Coded), Wi-Fi beacon / NAN.
+  Hardware: Bluetooth app with a HackRF, AUTO on, near a drone that broadcasts Remote ID (most DJI and other drones sold
+  since 2023 in the US and EU broadcast it over Bluetooth 4 and Wi-Fi): a "Drone (Remote ID)" card with its serial number
+  and position, and the map with the drone and its pilot.

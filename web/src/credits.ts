@@ -69,4 +69,5 @@ export const CREDITS: [boolean, string][] = [
   [false, "LTR Standard and LTR Passport — word layouts and sync after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); both checks built from their generators"],
   [false, "DMR Connect Plus and Hytera XPT control blocks and short LC — field layouts after SDRTrunk by Dennis Sheirer (GPL-3.0-or-later); short LC codes built from ETSI TS 102 361-1"],
   [false, "Two-tone paging tables (Motorola Quick Call II, GE Type 99) and timings from Midian Electronics' tone signaling charts, cross-checked with the PGHscanner tone-out table"],
+  [false, "Drone Remote ID message layouts (ASTM F3411 / ASD-STAN EN 4709-002) as Open Drone ID's opendroneid-core-c encodes them (Apache-2.0)"],
 ];

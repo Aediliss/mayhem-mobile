@@ -4030,12 +4030,14 @@ function renderBle(view: HTMLElement): void {
     <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. Nothing will decode here. A HackRF covers 1 MHz to 6 GHz.</div>` : ''}
       <div class="row">${[37, 38, 39].map(ch => `<button class="chip" data-btle="${ch}">CH ${ch} · ${btleChannelFreq(ch) / 1e6}</button>`).join('')}<button class="chip" data-btleauto title="step through 37, 38 and 39">AUTO</button>${'' /* FORK: AUTO channel rotation */}</div>
       <div id="ble-alert" class="ble-warn big" hidden></div>
+      <div id="ble-map" class="panel map" hidden></div><!-- FORK: drones (Remote ID) and their operators -->
       <div class="ctlrow">${segHtml(['cards', 'log'].map(v => `<button data-bleview="${v}">${v.toUpperCase()}</button>`))}${pauseClearHtml('btle')}</div>
       <div id="ble-stage" class="mt-stage"><div id="ble-cards" class="mt-cards"></div><div id="ble-detail" class="mt-detail" hidden></div></div>
       <div id="ble-log">${logHtml('btle', 'listening…')}</div>
       <div class="note about">One card per device, by its address: the maker from its manufacturer ID, the type from what it advertises (Find My, Tile, SmartTag, Find Hub, iBeacon, Eddystone, Fast Pair, AirPods, phones, watches). A tracker that stays near you for 20 minutes, or is still there after you move 500 m (with location allowed), is flagged. Phones and tags change their random address every 15 minutes or so, so one phone can show up as several cards over time.</div>
     </section>`;
   scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  geo = new GeoMap($('ble-map'), { home: state.home, start: mapStart(state.home), fitPins: true, onPick: id => { bleUi.sel = id.replace(/^op:/, ''); refreshBle(true); }, log });   // FORK: drone map
   qa<HTMLButtonElement>('[data-btle]', view).forEach(b => b.onclick = () => { setBtleAuto(false); state.btleCh = Number(b.dataset.btle); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); tune(btleChannelFreq(state.btleCh)); refreshBtle(); });   // FORK: a channel picked stops AUTO
   qa<HTMLButtonElement>('[data-btleauto]', view).forEach(b => b.onclick = () => setBtleAuto(!btleAuto));   // FORK: AUTO
   qa<HTMLButtonElement>('[data-bleview]', view).forEach(b => b.onclick = () => { bleUi.view = b.dataset.bleview as typeof bleUi.view; refreshBle(true); });
@@ -4082,6 +4084,22 @@ function refreshBle(force = false): void {
   if (picked) { const top = det.scrollTop; det.innerHTML = bleDetail(picked, now); det.scrollTop = top; }
   if (alerts.length) setLamp(`${alerts.length} TRACKER${alerts.length === 1 ? '' : 'S'}`, 'red');
   else if (devs.length) setLamp(`${devs.length} DEVICE${devs.length === 1 ? '' : 'S'}`, 'ok');
+  // FORK: drones that sent their position (Remote ID): on the map with their operators, a line between each pair
+  { const mapEl = q('#ble-map'), drones = devs.filter(d => d.rid && (d.rid.lat !== undefined || d.rid.opLat !== undefined));
+    if (mapEl && geo) {
+      const was = mapEl.hidden; mapEl.hidden = !drones.length;
+      if (drones.length) {
+        const items: GeoItem[] = [];
+        for (const d of drones) {
+          const r = d.rid!, name = r.uasId || d.mac;
+          if (r.lat !== undefined) items.push({ id: d.mac, lat: r.lat, lon: r.lon!, heading: r.direction, label: `${name}${r.height !== undefined ? ` · ${Math.round(r.height)} m` : ''}`, kind: 'plane' });
+          if (r.opLat !== undefined) items.push({ id: `op:${d.mac}`, lat: r.opLat, lon: r.opLon!, label: `operator${r.operatorId ? ` ${r.operatorId}` : ''}`, kind: 'station' });
+        }
+        geo.update(items, bleUi.sel);
+        geo.setLines(drones.filter(d => d.rid!.lat !== undefined && d.rid!.opLat !== undefined).map(d => [[d.rid!.opLat!, d.rid!.opLon!], [d.rid!.lat!, d.rid!.lon!]]));
+        if (was) geo.invalidate();
+      }
+    } }
 }
 
 // ---- ACARS and VDL2: one card per aircraft (VDL2: by ICAO address, ACARS or not), a map, the activity, the log ----
