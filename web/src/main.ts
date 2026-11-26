@@ -24,6 +24,9 @@ import type { ZwLink, ZwNode } from './dsp/r433/zwave.js';
 import { CREDITS } from './credits.js';
 import { FileRadio, speedLabel } from './fileradio.js';   // FORK: play recordings (Phase 1)
 import { openIqSource } from './filesrc/open.js';   // FORK
+import { ExportBus, loadConfig } from './export/bus.js';   // FORK: decode export bus
+import { bindExportSettings, exportSettingsHtml } from './export/ui.js';   // FORK
+import type { WsCtor } from './export/sinks.js';   // FORK
 import { captureNamed, captureStarting, downloadSigmf, removeCaptureMeta } from './capture-sigmf.js';   // FORK: SigMF in Capture
 import { FORK_NAME, FORK_WORDMARK, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
 import { syncRows } from './list-rows.js';
@@ -217,6 +220,8 @@ const counts: Record<string, number> = {};
 const diag: string[] = [];
 let logFollow = true;   // stops when the reader scrolls up, resumes at the bottom
 let radio: Radio | null = null;
+// FORK: the decode export bus (Settings → EXPORT); off until switched on there
+const exportBus = new ExportBus(loadConfig(), { fetch: (u, i) => fetch(u, i), WebSocket: WebSocket as unknown as WsCtor });
 /** The USB device behind `radio`, so a detach event can tell whether it was the radio that left. */
 let radioDev: USBDevice | null = null;
 /** True from the start of connect() until its radio stops, so two bring-ups never race for one device. */
@@ -8763,7 +8768,7 @@ function renderSettings(view: HTMLElement): void {
   const over = settingsOver;
   const radioLine = radio ? (radio.kind === 'rtlsdr' || radio.kind === 'file' ? radio.label : `HackRF · ${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}`) : 'No radio attached';   // FORK: a recording names itself
   const appRows = thisAppRows(over);
-  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['log', 'LOG'], ['about', 'ABOUT']];
+  const jumps: [string, string][] = [...(appRows ? [['app', over ? appName(over) : 'APP'] as [string, string]] : []), ['radio', 'RADIO'], ['look', 'LOOK'], ['station', 'STATION'], ['tx', 'TRANSMIT'], ['how', 'HOW IT WORKS'], ['export', 'EXPORT'], ['log', 'LOG'], ['about', 'ABOUT']]   // FORK: + EXPORT;
   view.innerHTML = `
     <section class="controls settings-page">
     <input id="set-search" class="txin set-search" placeholder="Search settings" autocomplete="off" spellcheck="false">
@@ -8796,6 +8801,7 @@ function renderSettings(view: HTMLElement): void {
       <div class="kv"><span>macOS</span><span>nothing to install — just close any other SDR program that has the HackRF open</span></div>
       <div class="kv"><span>Linux</span><span>the udev rule from the hackrf package (53-hackrf.rules) grants access; replug after adding it</span></div>
       <div class="kv"><span>Keyboard</span><span>digits: wheel, click top/bottom, type · ← → tune · ↑ ↓ step size · M mode · X mute · S squelch · B bookmark · Space scan · A amp · G AGC · [ ] LNA · − = VGA · L log · Esc closes Settings, then goes home · mouse wheel over the waterfall tunes, Ctrl+wheel changes the step</span></div></div></section>
+    ${exportSettingsHtml(exportBus)}${'' /* FORK: Settings → EXPORT */}
     <section class="sset" id="sec-log"><div class="sset-h">LOG</div>${srow('Log', 'Everything the radio and the decoders reported, to read, save or share', '<button id="set-log" class="tog">OPEN</button>')}</section>
     <section class="sset" id="sec-about"><div class="sset-h">ABOUT</div>
     <div class="panel about">
@@ -8817,6 +8823,7 @@ function renderSettings(view: HTMLElement): void {
     <div class="sset-sub">CREDITS · drag to steer</div>
     <div class="panel credits" id="credits"><div class="credits-roll" id="credits-roll">${(() => { const inner = CREDITS.map(([h, t]) => h ? `<h4>${esc(t)}</h4>` : `<p>${esc(t)}</p>`).join(''); return `<div class="credits-copy">${inner}</div><div class="credits-copy" aria-hidden="true">${inner}</div>`; })()}</div></div>
     </section></section>`;
+  { const refresh = bindExportSettings(view, exportBus, log); const t = setInterval(() => { if (!document.getElementById('sec-export')) clearInterval(t); else refresh(); }, 1000); }   // FORK: EXPORT controls
   qa<HTMLInputElement>('[data-st]', view).forEach(i => i.oninput = () => { const k = i.dataset.st as keyof Station; const v = k === 'call' || k === 'grid' ? i.value.toUpperCase() : i.value; if (k === 'call' || k === 'grid') i.value = v; state.ham.station[k] = v; saveStation(); });
   qa<HTMLButtonElement>('[data-skin]', view).forEach(b => b.onclick = () => { applySkin(SKINS.find(s => s.id === b.dataset.skin)!); refreshSettings(); });
   const tg = q('#tx-toggle'); if (tg) tg.onclick = () => { tx.setEnabled(!tx.enabled); refreshSettings(); };
@@ -9501,6 +9508,7 @@ function esc(s: string): string { return s.replace(/[&<>]/g, c => ({ '&': '&amp;
 function ensureWorker(): Worker {
   if (worker) return worker;
   worker = new Worker('./build/dsp-worker.js', { type: 'module' });
+  exportBus.attach(worker, () => ({ app: state.app ?? 'home', centerHz: spanCenter() }));   // FORK: decode export bus
   (window as unknown as { mmFeed: (m: unknown) => void }).mmFeed = (m) => worker!.onmessage!({ data: m } as MessageEvent);   // support hook: inject a worker message
   (window as unknown as { mmWorker: (m: unknown) => void }).mmWorker = (m) => worker!.postMessage(m);                             // support hook: send the worker a message
   worker.onmessage = (e: MessageEvent) => {

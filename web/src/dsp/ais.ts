@@ -40,6 +40,7 @@ export class AisDecoder implements IqProcessor {
     if (f.length < 5 || !HdlcFramer.fcsOk(f)) return;
     const r = new BitReader(f);
     const dataBits = (f.length - 2) * 8;
+    this.emit({ type: 'aisRaw', bytes: Array.from(f.subarray(0, f.length - 2)), bits: dataBits });   // FORK: payload for the export bus (NMEA)
     const type = r.read(0, 6), mmsi = r.read(8, 30);
     const now = Date.now();
     let v = this.vessels.get(mmsi);

@@ -196,6 +196,7 @@ export class AprsDecoder implements IqProcessor {
     this.recent = this.recent.filter(r => this.clock - r.at <= window);
     if (this.recent.some(r => r.fcs === fcs)) return;
     this.recent.push({ fcs, at: this.clock });
+    this.emit({ type: 'ax25', bytes: Array.from(f.subarray(0, f.length - 2)) });   // FORK: frame for the export bus (TNC2 / KISS)
     this.onFrame(f);
   }
 

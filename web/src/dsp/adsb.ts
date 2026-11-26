@@ -85,6 +85,7 @@ export class AdsbDecoder implements IqProcessor {
       if (this.checksum(msg, LONG_BITS) !== 0) { this.dbg.fail++; j++; continue; }
       this.dbg.ok++;
       this.frames++;
+      this.emit({ type: 'modes', hex: Array.from(msg, b => b.toString(16).padStart(2, '0')).join('') });   // FORK: raw frame for the export bus (Beast)
       this.decode(msg, batch, nowMs);
       j += (LONG_BITS + PREAMBLE) * 2;
     }

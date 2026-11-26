@@ -30,7 +30,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | **Test harness**: `web/test/lib/iq.ts` grown into tones, FSK/GFSK, OOK/ASK, PSK, AWGN at a set SNR, `.cu8/.cs8/.cs16` writers | own code | — |
 | [x] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
 | [x] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
-| [ ] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
+| [ ] | | **Decode export bus** (in progress: all but MQTT done): JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [ ] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
 | [ ] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
 | [ ] | | **Analyzer protocol library** export/import JSON | `analyzer-store.ts` | in-repo |
@@ -170,3 +170,15 @@ for "or later" first.
   `python -c "import sigmf; sigmf.sigmffile.fromfile('X.sigmf').validate()"`.
   Hardware: record 30 s of a busy channel in Capture with a HackRF (or H4M in HackRF mode), with location allowed;
   download SigMF; open it in inspectrum or `sigmf` tools: frequency, rate, time, hw and position should match.
+- **Phase 1 · export bus, part A** (`web/src/export/`, `test/export.test.ts`): Settings → EXPORT (off by default):
+  JSON-lines log with download, webhook (batched JSON POST, retry with backoff), WebSocket stream in one of JSONL,
+  SBS, Beast, NMEA !AIVDM, TNC2, KISS or rtl_433 JSON. Events come from the worker's existing messages, plus three
+  one-line raw-frame emits (ADS-B `modes`, AIS `aisRaw`, APRS `ax25`). Tests prove: NMEA checksums of published
+  sentences (gpsd's AIVDM examples: *5C, *1C, *25); a published sentence → bytes → the real `AisDecoder` (MMSI
+  477553000) → the identical sentence; long messages split ≤82 chars and reassemble; Beast framing and 0x1a escape;
+  SBS 22-field lines and change-only updates; TNC2 incl. digipeater `*`; KISS escapes; rtl_433 time/field order;
+  table rows reported only when they change; webhook batching and retry; WebSocket buffering until connected; an
+  APRS packet decoded from IQ leaves as TNC2 text and a KISS frame. Browser check (Chromium): EXPORT on, settings
+  survive reload, the APRS recording played in Ham Map → a local WebSocket server receives the three TNC2 lines, a
+  local CORS webhook one POST of 9 events, and DOWNLOAD gives the same 9 as JSON lines.
+  Beast timestamps are 0 (no sample clock), so the Beast output suits readsb/tar1090 but not MLAT.
