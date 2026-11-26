@@ -64,7 +64,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl (Tomasz Lemiech): hfdl.c, mpdu/lpdu/hfnpdu/acars.c, etc/systable.conf; liquid-dsp conventions checked against liquid-dsp 1.6 | GPL-3.0-or-later ✔ (spdu.c GPL-2.0-or-later ✔); libacars MIT ✔ (format only) |
-| [ ] | | CPDLC / ADS-C inside ACARS/VDL2/HFDL | libacars | MIT ✔ |
+| [x] | | ADS-C (and the ARINC 622 envelope: CPDLC named) inside ACARS/VDL2/HFDL | libacars (Tomasz Lemiech): arinc.c, adsc.c, acars.c | MIT ✔ |
+| [ ] | | CPDLC message bodies (FANS-1/A, ASN.1 PER: clearances, requests, free text) | libacars (asn1/ generated from the FANS-1/A ASN.1) | MIT ✔ |
 | [ ] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium; iridium-toolkit | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README) |
 | [ ] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `vor_rx` | Mayhem GPL-3.0 ✔ |
 | [ ] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) | JAERO | MIT ✔ |
@@ -635,3 +636,13 @@ for "or later" first.
   Hardware: HackRF (or an RTL-SDR in direct sampling / V4) with an outdoor wire, Flight Msgs → HFDL HF, band 8.9 by
   night or 13 / 17 / 21 by day: squitters from ground stations within a few minutes, then aircraft ACARS; compare a few
   messages with dumphfdl on the same recording (Capture it, then run dumphfdl over the .cs8).
+- **ADS-C / ARINC 622** (`dsp/arinc622.ts`, hook in `acars-insight.ts`, `test/arinc622.test.ts`): the envelope (ground
+  address, IMI, registration, hex payload, CRC-16) and every ADS-C tag libacars reads, downlink and uplink. Messages
+  built here were decoded by libacars 2.2 itself (built from source); the tests hold the values it printed (position to
+  1e-6°, altitude, time past the hour, track, speeds, flight ID, contract number and reporting interval, meteo, airframe
+  ID) and libacars found every CRC good. In Flight Msgs an ADS-C report is kind ADS-C, its position goes on the map and
+  its altitude, speed and track on the card (checked in Chromium). CPDLC is only named (connect request, confirm,
+  disconnect, message): its body is ASN.1 PER and is the next row.
+  Hardware: ADS-C is mostly oceanic and polar, so HFDL (Flight Msgs → HFDL HF) is where to hear it; also VDL2 near
+  airports with FANS-equipped long-haul traffic. Look for cards with an ADS-C chip and compare with dumphfdl / dumpvdl2
+  on the same recording.

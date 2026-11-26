@@ -72,5 +72,6 @@ export const CREDITS: [boolean, string][] = [
   [false, "Drone Remote ID message layouts (ASTM F3411 / ASD-STAN EN 4709-002) as Open Drone ID's opendroneid-core-c encodes them (Apache-2.0)"],
   [false, "DJI DroneID burst structure and frame layout after proto17/dji_droneid by David Protzman (MIT); LTE turbo code written from 3GPP TS 36.212, one table row checked against turbofec by Tom Tsou (GPL-3.0)"],
   [false, "HFDL physical layer, PDUs and ground-station table ported from dumphfdl by Tomasz Lemiech (GPL-3.0-or-later); ACARS framing as libacars reads it (MIT)"],
+  [false, "ARINC 622 envelope and ADS-C (ARINC 745) reports and contract requests ported from libacars by Tomasz Lemiech (MIT)"],
   [false, "ExpressLRS air parameters (LoRa bandwidths, spreading factors, packet rates, hop grids) from the ExpressLRS project (GPL-3.0)"],
 ];
