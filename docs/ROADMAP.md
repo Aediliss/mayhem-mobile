@@ -53,7 +53,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | Remote ID: BLE legacy (UUID 0xFFFA, message pack) · map with drone + operator | ASTM F3411, ASD-STAN prEN 4709-002; opendroneid-core-c | opendroneid-core-c Apache-2.0 ✔ |
 | [ ] | | Remote ID over Bluetooth 5 long range (AUX packets on data channels, LE Coded PHY) | ASTM F3411 | needs the LE Coded row and AUX following |
 | [ ] | | Remote ID over Wi-Fi beacon / NAN (2.4 GHz ch 6, 5.8 GHz) | ASTM F3411; IEEE 802.11 | needs an 802.11 receiver (Phase 9 Wi-Fi row) |
-| [ ] | ★ | DJI DroneID (OcuSync 2.4/5.8 GHz OFDM): detect, demod, serial + drone/pilot/home GPS | proto17/dji_droneid; RUB-SysSec/DroneSecurity (NDSS '23 paper) | dji_droneid MIT ✔ · DroneSecurity AGPL-3.0 ✔ (prefer the paper / MIT code) |
+| [x] | ★ | DJI DroneID (OcuSync 2.4 GHz OFDM): detect, demod, serial + drone/pilot/home GPS | proto17/dji_droneid; 3GPP TS 36.211 / 36.212 | dji_droneid MIT ✔ (file LICENSE) · turbofec GPL-3.0-or-later ✔ (one table row checked) · DroneSecurity not used |
+| [ ] | | DJI DroneID at 5.8 GHz, and the newer encrypted DroneID (detect only) | channel survey | needs recordings |
 | [ ] | | FPV analog video detect at 5.8 GHz (raceband/A/B/E/F), NTSC/PAL frames if bandwidth allows | channel tables (public) | facts |
 | [ ] | | Digital FPV + control-link fingerprinting: DJI O3/O4, Walksnail, HDZero, ELRS, Crossfire | ExpressLRS source | check (ELRS is GPL-3.0 per memory — verify) |
 
@@ -547,3 +548,32 @@ for "or later" first.
   Hardware: Bluetooth app with a HackRF, AUTO on, near a drone that broadcasts Remote ID (most DJI and other drones sold
   since 2023 in the US and EU broadcast it over Bluetooth 4 and Wi-Fi): a "Drone (Remote ID)" card with its serial number
   and position, and the map with the drone and its pilot.
+- **Phase 3 · DJI DroneID** (`src/dsp/droneid.ts`, `src/dsp/lte-turbo.ts`, `test/droneid.test.ts`): a new Drones app
+  (HackRF, 2.4 GHz, 15.36 MS/s; APP_NEEDS keeps it off an RTL-SDR). The burst structure and frame layout after
+  proto17/dji_droneid (MIT): nine OFDM symbols on a 1024-point FFT, 600 carriers around DC, CPs 80 / 72 / … / 80,
+  Zadoff-Chu symbols 4 and 6 (roots 600, 147), symbol 1 the bare scrambler, six data symbols of QPSK scrambled by the
+  LTE Gold sequence (c_init 0x12345678), an LTE turbo code (K = 1408) rate-matched to 7200 bits, CRC-24A, and the frame
+  (serial, drone / pilot / home positions in radians × 1e7, height, altitude, velocities, yaw, app time, product type,
+  UUID, CRC-16). Written here: the LTE turbo code from TS 36.212 (QPP interleaver, encoder with trellis termination,
+  sub-block interleaving and circular-buffer rate matching, max-log-MAP decoder, 8 iterations; the K = 1408 QPP row
+  f1 = 43, f2 = 88 checked against turbofec), the Gold sequence from TS 36.211, and the receiver: a 3 dB energy trigger
+  on 256-sample blocks, timing by FFT correlation with symbol 4, the frequency offset from all nine cyclic prefixes
+  plus a whole-carrier search on symbol 4, the channel from both Zadoff-Chu symbols (smoothed over 9 carriers,
+  interpolated across the burst), channel-weighted soft QPSK, descrambling, de-matching, decoding, CRC-24A. The app:
+  the four known channels and AUTO (1.5 s each), one card per serial number (drone, pilot and home positions, height,
+  altitude, velocities, yaw as sent, sequence, the measured frequency offset, the frame CRC), and a map with the drone,
+  its pilot (joined by a line) and its home point. Upstream touch points (FORK): `main.ts` (AppId, APPS, open, render,
+  worker messages, EMPTY, CLEAR, the import, the Drones view in a FORK block), `radio.ts` (APP_NEEDS),
+  `dsp.worker.ts` (import, processor, makeProcessor).
+  Tests prove: CRC-24A's catalogue check value 0xCDE703; QPP(1408) a permutation with its first values; turbo +
+  rate matching round trip clean and at -1 dB; the frame CRC equals the reference's table (entries 1, 128, 255) and
+  initial value; the frame layout round trips; whole bursts decode at 25, 15, 8, 4 and 1 dB with frequency offsets of
+  0 to 40 kHz and fractional timing, the offset measured within 500 Hz; noise gives no bursts; a burst at -9 dB is seen
+  but gives no frame; the processor warns at the wrong rate. Browser check (Chromium): a recording in Drones gives
+  "1 DRONE · 3 FRAMES DECODED · 3 BURSTS SEEN", the card, and the map with drone, pilot and home, no page errors.
+  Not confirmed on air: no real DroneID recording was available (the reference does not publish its own, as it holds a
+  location); field units for height, altitude, velocity and yaw are not given by the reference, so they are shown as
+  sent; newer DJI models encrypt DroneID, and 5.8 GHz is not scanned (new row).
+  Hardware: Drones with a HackRF and a 2.4 GHz antenna near a DJI drone that sends DroneID in the clear (Mini 2,
+  Mavic Air 2 / 2S and others of that age): bursts should be counted within seconds; with AUTO on, frames should decode
+  and the card and map show the drone, its pilot and its home point. Check the drone's position against the pilot app.

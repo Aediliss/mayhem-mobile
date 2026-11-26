@@ -3,6 +3,7 @@
  * once/sec RX-health line, WFM / NFM / AM / USB / LSB audio to the AudioWorklet, and feeds the active app's
  * IqProcessor (raw IQ + the NFM discriminator tap for the FM-borne packet modes).
  */
+import { DroneIdProcessor } from './dsp/droneid.js';   // FORK: DJI DroneID
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -123,6 +124,7 @@ function loraPoolFor(r: number): WorkerPool | null {
   return loraPool.failed ? null : loraPool;
 }
 const btle = new BtleDecoder(emit);
+const droneid = new DroneIdProcessor(emit);   // FORK: DJI DroneID (dsp/droneid.ts)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -518,6 +520,7 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'ert': mesh.centerHz = centreHz; mesh.flush(); return meters;
     case 'lora': lora.setCenter(centreHz); lora.flush(); return lora;
     case 'btle': return btle;
+    case 'droneid': return droneid;   // FORK: DJI DroneID
     case 'tpms': return tpms;
     case 'acars': return acars;
     case 'vdl2': vdl2.centerHz = centreHz; return vdl2;

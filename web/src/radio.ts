@@ -134,6 +134,7 @@ export const APP_NEEDS: Record<string, AppNeeds> = {
   // dongle HAM opens on 146.520 instead of being dimmed (hamOpen in main.ts).
   // Bluetooth advertising sits at 2.4 GHz, well past the top of an R82xx.
   btle: { freqHz: 2_402_000_000 },
+  droneid: { freqHz: 2_444_500_000, rateHz: 15_360_000 },   // FORK: DJI DroneID: 2.4 GHz at 15.36 MS/s (a HackRF)
   transmit: { tx: true },
 };
 

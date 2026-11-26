@@ -45,6 +45,7 @@ import type { Burst } from './dsp/analyzer/capture.js';
 import { Tx, type SigMode } from './tx.js';
 import * as Apps from './tx-apps.js';
 import type { Aircraft } from './dsp/adsb.js';
+import type { DroneIdFrame } from './dsp/droneid.js';   // FORK: DJI DroneID
 import type { AcTrack } from './dsp/modeac.js';   // FORK: Mode A/C
 /** FORK: Mode A/C codes heard as tracks (the worker's latest list). */
 let modeAc: AcTrack[] = [];
@@ -108,7 +109,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'vdl2' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'vdl2' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -133,6 +134,7 @@ const APPS: AppDef[] = [
   { id: 'aprs', title: 'Ham Map', blurb: 'APRS · FT8 · JS8', cat: 'Receive' },
   { id: 'ert', title: 'Utility Meters', blurb: 'ERT · Gridstream · 802.15.4g', cat: 'Receive' },
   { id: 'btle', title: 'Bluetooth', blurb: 'BLE advertising · 2.4 GHz', cat: 'Receive' },
+  { id: 'droneid', title: 'Drones', blurb: 'DJI DroneID · 2.4 GHz', cat: 'Receive' },   // FORK: DJI DroneID
   { id: 'sat', title: 'Satellites', blurb: 'track and decode', cat: 'Receive' },
   { id: 'sondes', title: 'Weather Balloons', blurb: 'radiosondes · 400–406 MHz', cat: 'Receive' },
   { id: 'atsc', title: 'TV', blurb: 'ATSC · guide · pictures', cat: 'Receive' },
@@ -1063,6 +1065,7 @@ function open(app: AppId | null): void {
     case 'lora': loraOpen(); break;
     case 'sondes': sondesOpen(); break;
     case 'btle': configure('NONE', btleChannelFreq(state.btleCh), 2e6, 32, 40, true, 'btle'); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); break;
+    case 'droneid': configure('NONE', droneUi.freq, 15.36e6, 32, 40, true, 'droneid'); break;   // FORK: DJI DroneID at 15.36 MS/s
     // The span is centred on 130.8 MHz: every US ACARS channel (130.025-131.550) is inside it and decoded at once,
     // none of them on the radio's DC spike; 131.550 is the one heard.
     case 'vdl2': configure('AM', 136_975_000, 2e6, 32, 32, false, 'vdl2'); state.viewLo = VDL2_SPAN_HZ; if (radio) radio.targetFreqHz = state.viewLo; sendOffset(); break;
@@ -1785,6 +1788,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   hd: ['hd', 'No HD stations yet', ['AUTO finds the stations across the FM band, then visits the strong ones from the bottom up until each fills in', 'Most big FM stations in the US are hybrid: name, songs, logos and album art come in within a minute or two', 'Each program (HD1 to HD8) plays its digital audio; HD1 plays the analog FM until its digital is ready']],
   vdl2: ['vdl2', 'Waiting for VDL2 messages', ['Every VDL2 channel from 136.10 to 136.975 MHz is decoded at once; 136.975 is the common one', 'Aircraft talk to ground stations every few minutes, more near an airport; an antenna that sees the sky hears them 200 miles out']],
   acars: ['acars', 'Waiting for ACARS messages', ['Aircraft send them every few minutes; 131.550 is the busiest US channel', 'Near an airport, or with an antenna that sees the sky, you hear aircraft up to 200 miles out']],
+  droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   btle: ['btle', 'Waiting for BLE advertisements', ['Phones, earbuds and watches advertise several times a second: start on CH 37', 'BLE is low power: hold the radio within a few meters of a device']],
   lora: ['lora', 'No nodes yet', ['Meshtastic nodes beacon about every 15 minutes: leave it running', 'AREA picks where you are; a wider SPAN (20 MHz on a HackRF) holds more of its channels']],
   sondes: ['sondes', 'No weather balloons yet', ['Weather services launch around 00:00 and 12:00 UTC; a sonde climbs for about 90 minutes and is heard 200+ miles out', 'Every type is decoded on its own: leave it running and they show up']],
@@ -2031,6 +2035,7 @@ function render(app: AppId | null): void {
     case 'cell': renderCell(view); break;
     case 'atsc': renderAtsc(view); break;
     case 'btle': renderBle(view); break;
+    case 'droneid': renderDroneId(view); break;   // FORK: DJI DroneID
     case 'vdl2': renderAcars(view, 'vdl2'); break;
     case 'acars': renderAcars(view, 'acars'); break;
     case 'subghz': renderPacket(view, app); break;
@@ -4023,6 +4028,67 @@ function bleDetail(d: BleDevice, now: number): string {
     + `<div class="mt-fields">${[...d.fields, ...more].map(f => `<div><b>${esc(f.name)}</b><span>${esc(f.value)}</span></div>`).join('')}</div>`
     + `<div class="caption">RAW ADVERTISEMENTS · newest first · ${d.history.length} kept</div><div class="ble-raw">${rows}</div>`;
 }
+// FORK: ------------------------------------------------------------------------------- Drones (DJI DroneID)
+/** Where DJI drones have been heard sending DroneID (proto17/dji_droneid); AUTO steps through them. */
+const DRONEID_FREQS = [2_414_500_000, 2_429_500_000, 2_444_500_000, 2_459_500_000];
+const droneUi = { drones: new Map<string, { f: DroneIdFrame; first: number; last: number; n: number; cfo: number }>(), bursts: 0, decoded: 0, freq: DRONEID_FREQS[2], auto: false, timer: 0, sel: '' };
+function renderDroneId(view: HTMLElement): void {
+  const why = radio ? blockedBecause(APP_NEEDS.droneid, radio.limits) : '';
+  view.innerHTML = `
+    <section class="${visCls('droneid')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}. A HackRF covers 2.4 GHz at 15.36 MS/s.</div>` : ''}
+      <div class="row">${DRONEID_FREQS.map(f => `<button class="chip" data-dji="${f}">${(f / 1e6).toFixed(1)}</button>`).join('')}<button class="chip" data-djiauto title="step through the channels">AUTO</button></div>
+      <div id="dji-stats" class="caption"></div>
+      <div id="dji-map" class="panel map" hidden></div>
+      <div id="dji-cards"></div>
+      <div id="dji-log">${logHtml('droneid', 'listening…')}</div>
+      <div class="note about">DJI DroneID, receive only: the burst a DJI drone sends about every 600 ms (10 MHz of OFDM at 2.4 GHz) with its serial number, its position, height and speed, and where its pilot and its home point are. Decoded here from the air: the burst is found by its Zadoff-Chu symbols, corrected for frequency, equalized, descrambled and turbo decoded, and kept only when both of its checks pass. Newer DJI models encrypt it and are not shown. Needs a HackRF at 15.36 MS/s. Height, altitude, speeds and yaw are shown as the drone sends them.</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  geo = new GeoMap($('dji-map'), { home: state.home, start: mapStart(state.home), fitPins: true, onPick: id => { droneUi.sel = id.replace(/^(pilot|home):/, ''); refreshDrone(); }, log });
+  const pick = (f: number) => { droneUi.freq = f; tune(f); refreshDrone(); };
+  qa<HTMLButtonElement>('[data-dji]', view).forEach(b => b.onclick = () => { setDroneAuto(false); pick(Number(b.dataset.dji)); });
+  qa<HTMLButtonElement>('[data-djiauto]', view).forEach(b => b.onclick = () => setDroneAuto(!droneUi.auto));
+  refreshList('droneid'); refreshDrone();
+}
+function setDroneAuto(on: boolean): void {
+  droneUi.auto = on; if (droneUi.timer) { clearInterval(droneUi.timer); droneUi.timer = 0; }
+  if (on) droneUi.timer = window.setInterval(() => {
+    if (state.app !== 'droneid') { setDroneAuto(false); return; }
+    droneUi.freq = DRONEID_FREQS[(DRONEID_FREQS.indexOf(droneUi.freq) + 1) % DRONEID_FREQS.length]; tune(droneUi.freq); refreshDrone();
+  }, 1500);
+  refreshDrone();
+}
+function onDroneId(m: { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }): void {
+  const f = m.frame, key = f.serial || 'unknown', now = Date.now(), d = droneUi.drones.get(key);
+  if (d) { d.f = f; d.last = now; d.n++; d.cfo = m.cfoHz; } else droneUi.drones.set(key, { f, first: now, last: now, n: 1, cfo: m.cfoHz });
+  droneUi.bursts = m.bursts; droneUi.decoded = m.decoded;
+  if (state.app === 'droneid') refreshDrone();
+}
+function refreshDrone(): void {
+  if (state.app !== 'droneid') return;
+  qa('[data-dji]').forEach(b => b.classList.toggle('on', Number(b.dataset.dji) === droneUi.freq)); qa('[data-djiauto]').forEach(b => b.classList.toggle('on', droneUi.auto));
+  const st = q('#dji-stats'); if (st) st.textContent = `${droneUi.drones.size} DRONE${droneUi.drones.size === 1 ? '' : 'S'} · ${droneUi.decoded} FRAMES DECODED · ${droneUi.bursts} BURSTS SEEN`;
+  const now = Date.now(), list = [...droneUi.drones.entries()].sort((a, b) => b[1].last - a[1].last);
+  const pos = (lat?: number, lon?: number) => lat !== undefined && lon !== undefined ? `${lat.toFixed(6)}, ${lon.toFixed(6)}` : 'not sent';
+  const cards = q('#dji-cards');
+  if (cards) cards.innerHTML = list.length ? list.map(([k, d]) => { const f = d.f; return `<div class="panel ${droneUi.sel === k ? 'gold' : ''}" data-djisel="${esc(k)}" style="margin-top:6px">`
+    + `<div class="kv"><span><b>${esc(f.serial || 'no serial')}</b></span><span>${agoShort(now - d.last)} ago · ${d.n} frame${d.n === 1 ? '' : 's'} · product type ${f.productType}</span></div>`
+    + [['Drone', pos(f.lat, f.lon)], ['Height · altitude', `${f.height} · ${f.altitude} (as sent)`], ['Velocity N · E · up', `${f.vNorth} · ${f.vEast} · ${f.vUp} (as sent)`], ['Yaw', `${f.yaw} (as sent)`],
+      ['Pilot', pos(f.pilotLat, f.pilotLon)], ['Home point', pos(f.homeLat, f.homeLon)], ['Sequence', `${f.seq} · state 0x${f.state.toString(16).padStart(4, '0')}${f.uuid ? ` · UUID ${esc(f.uuid)}` : ''}`], ['Received', `${(d.cfo / 1000).toFixed(1)} kHz off · frame CRC ${f.crcOk ? 'good' : 'bad'}`]]
+      .map(([a, b]) => `<div class="kv"><span>${a}</span><span>${esc(b)}</span></div>`).join('') + '</div>'; }).join('') : emptyState('droneid');
+  qa<HTMLElement>('[data-djisel]').forEach(el => el.onclick = () => { droneUi.sel = droneUi.sel === el.dataset.djisel ? '' : el.dataset.djisel!; refreshDrone(); });
+  const mapEl = q('#dji-map'), items: GeoItem[] = [], lines: [[number, number], [number, number]][] = [];
+  for (const [k, d] of list) {
+    const f = d.f;
+    if (f.lat !== undefined) items.push({ id: k, lat: f.lat, lon: f.lon!, label: `${f.serial || 'drone'} · ${f.height}`, kind: 'plane' });
+    if (f.pilotLat !== undefined && f.pilotLon !== undefined) { items.push({ id: `pilot:${k}`, lat: f.pilotLat, lon: f.pilotLon, label: 'pilot', kind: 'station' }); if (f.lat !== undefined) lines.push([[f.pilotLat, f.pilotLon], [f.lat, f.lon!]]); }
+    if (f.homeLat !== undefined && f.homeLon !== undefined) items.push({ id: `home:${k}`, lat: f.homeLat, lon: f.homeLon, label: 'home', kind: 'landing' });
+  }
+  if (mapEl && geo) { const was = mapEl.hidden; mapEl.hidden = !items.length; if (items.length) { geo.update(items, droneUi.sel); geo.setLines(lines); if (was) geo.invalidate(); } }
+}
+// FORK: end of Drones
+
 function renderBle(view: HTMLElement): void {
   const why = radio ? blockedBecause(APP_NEEDS.btle, radio.limits) : '';
   view.innerHTML = `
@@ -9234,6 +9300,7 @@ function redraw(id: string): void {
  *  copy matters: vessels, stations, aircraft and devices are re-sent whole with every packet, so clearing only
  *  this side brought the entire list straight back with the next one. */
 function clearApp(id: string): void {
+  if (id === 'droneid') { droneUi.drones.clear(); droneUi.bursts = 0; droneUi.decoded = 0; droneUi.sel = ''; refreshDrone(); }   // FORK: DJI DroneID
   logs[id] = []; counts[id] = 0;
   switch (id) {
     case 'ais': state.aisTable = []; state.aisSel = 0; break;
@@ -9757,6 +9824,8 @@ function ensureWorker(): Worker {
       case 'hdsnap': hdUi.snap = m as unknown as HdSnapMsg; hdRecord(hdUi.snap); refreshHd(); break;
       case 'hdobj': hdOnObject(m); break;
       case 'ble': onBleAdv(m as { pdu: number[]; db: number; ch: number }); break;
+      case 'droneid': onDroneId(m as unknown as { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }); break;   // FORK: DJI DroneID
+      case 'droneidStats': droneUi.bursts = m.bursts as number; droneUi.decoded = m.decoded as number; refreshDrone(); break;   // FORK
       case 'rds': lastRds = m as typeof lastRds; drawRds(); break;
       case 'hd': lastHd = m as typeof lastHd; console.log('[hd]', JSON.stringify(m)); drawHd(); break;
       case 'same': onSameAlert(m); break;
