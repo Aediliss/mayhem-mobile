@@ -3,11 +3,11 @@ name: Web
 # FORK: this fork is web-only. Upstream's Android, Play and release workflows are removed here; when an upstream
 # merge brings one back (modify/delete conflict), resolve it with `git rm` (see CLAUDE.md).
 #
-# Every PR and every push: npm run check, build and test. Pushes to main also deploy web/ to this fork's GitHub
+# Every PR and every push to main: npm run check, build and test. Pushes to main also deploy web/ to this fork's GitHub
 # Pages. One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
 on:
   push:
-    branches: [ '**' ]
+    branches: [ main ]   # other branches are covered by their pull request; no duplicate runs
   pull_request:
   workflow_dispatch:
 

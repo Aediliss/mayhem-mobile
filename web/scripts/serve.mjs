@@ -2,7 +2,7 @@
 // usage: node scripts/serve.mjs [port]   (serves the web/ folder; run `npm run build` first)
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -18,7 +18,9 @@ createServer(async (req, res) => {
     let path = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
     if (path.endsWith('/')) path += 'index.html';
     const file = normalize(join(root, path));
-    if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
+    // inside root only: a plain prefix test would let ../web-private through, since it starts with "web"
+    const rel = relative(root, file);
+    if (rel.startsWith('..') || isAbsolute(rel)) { res.writeHead(403).end(); return; }
     if (!(await stat(file)).isFile()) throw new Error('not a file');
     res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' });
     res.end(await readFile(file));
