@@ -28,7 +28,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | **Test harness**: `web/test/lib/iq.ts` grown into tones, FSK/GFSK, OOK/ASK, PSK, AWGN at a set SNR, `.cu8/.cs8/.cs16` writers | own code | — |
-| [ ] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
+| [x] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
 | [ ] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
 | [ ] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [ ] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
@@ -140,3 +140,16 @@ for "or later" first.
   transmitter written from the Core Spec (whitening, CRC-24) round-trips through the existing `BtleDecoder` on
   channels 37/38/39, including at 15 dB SNR; wrong-channel whitening, a flipped bit and pure noise decode nothing.
   Hardware: none needed for this item.
+- **Phase 1 · FileRadio** (`web/src/fileradio.ts`, `web/src/filesrc/`, `test/fileradio.test.ts`): a recording plays as a
+  radio through the same `{type:'iq'}` worker path. Formats: `.cs8/.c8`, `.cu8`, `.cs16/.c16`, `.cf32/.cfile/.raw`
+  (gqrx), WAV IQ (8/16-bit, float; SDR#/HDSDR `auxi` centre frequency), Mayhem `.C8/.C16` + `.TXT`, SigMF (ci8, cu8,
+  ci16_le/be, cf32_le/be). Metadata order: SigMF meta, `.txt` sidecar, WAV header, file name (rtl_433, this app,
+  gqrx, SDR#, HDSDR naming); asks for the rate if nothing gives it. 16-bit and float are scaled to ~16 counts RMS int8.
+  Pacing 1×/2×/4×/8×/MAX with worker acks (`iqAck`, ≤3 buffers in flight). A digital LO honours any tune inside the
+  recording's span, so apps that park their LO off the channel (Ham Map, Ships: +250 kHz) still decode.
+  Tests prove: an APRS packet recorded in each of the six container types decodes when played; real-time playback
+  of 0.5 s takes 0.43–0.9 s and 8× under 0.25 s; the digital LO makes a centre-recorded packet decode in Ham Map's
+  +250 kHz setup, and without it nothing decodes. Browser check (headless Chromium, real worker, desktop and phone
+  widths): OPEN REC → a 5 s `.c8` + `.txt` → all three packets in Ham Map's log, playback strip shown and removed.
+  Hardware: none needed to play files. Real-recording check: record in Capture (HackRF or H4M in HackRF mode) on a
+  busy channel, download the `.c8` + `.txt`, OPEN REC both in the matching app; the same packets should decode.

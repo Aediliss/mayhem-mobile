@@ -3234,3 +3234,7 @@ main#view.view:is(.hamplus, .cb).hpwide { display: grid; grid-template-columns: 
 .hm-layers > .chip.hm-js8 > i, .hm-mode.hm-js8 { background: #ffb74d; }
 .hm-layers > .chip.on > i { box-shadow: 0 0 0 1.5px #05080a; }
 .hm-mode { display: inline-block; min-width: 3.4em; margin-right: 6px; padding: 0 4px; border-radius: 4px; background: var(--accent); color: #05080a; font-size: 10px; text-align: center; vertical-align: 1px; }
+
+/* FORK: the recording playback strip (fileradio.ts) wears the no-radio strip's shape in the accent colour */
+#playbar { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#playbar > i { background: var(--accent); }

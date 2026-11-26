@@ -25,7 +25,8 @@ All three of check / build / test must pass before an item is marked done. CI: `
 - `src/radio.ts`: the `Radio` interface (`open/run/stop/setGain`, `limits`, `caps`, `targetFreqHz/targetRateHz`,
   events `onIq(Int8Array)`, `onLog`, `onStatus`). Drivers: `hackrf.ts` (HackRF / Pro / PortaPack in HackRF mode),
   `rtlsdr.ts`. Both deliver **signed int8 interleaved IQ**. `APP_NEEDS` + `blockedBecause()` grey out apps a radio
-  can't do. A `FileRadio` (Phase 1) implements this same interface.
+  can't do. `fileradio.ts` (kind `'file'`) plays recordings through the same interface; formats and metadata in
+  `src/filesrc/`. OPEN REC lives in the no-radio strip (`#rm-openrec`); `#playbar` shows while a file plays.
 - `src/dsp/`: one decoder per file or folder. `src/credits.ts`: the credits roll.
 
 ## Pattern: a decoder (DSP side)

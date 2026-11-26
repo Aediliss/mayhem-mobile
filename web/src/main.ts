@@ -22,6 +22,8 @@ import { GEOSCAN_SATS } from './dsp/geoscan.js';
 import type { HeardDevice, R433Data, R433Protocol, R433Report } from './dsp/r433/index.js';
 import type { ZwLink, ZwNode } from './dsp/r433/zwave.js';
 import { CREDITS } from './credits.js';
+import { FileRadio, speedLabel } from './fileradio.js';   // FORK: play recordings (Phase 1)
+import { openIqSource } from './filesrc/open.js';   // FORK
 import { FORK_NAME, FORK_WORDMARK, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
 import { syncRows } from './list-rows.js';
 import { r433Measure, r433Value } from './devices-fmt.js';
@@ -9810,6 +9812,56 @@ async function connect(dev?: USBDevice): Promise<void> {
  * string, no PortaPack, no gain rescaling, and a rate that has to be pulled inside what the dongle will do
  * before the first buffer rather than after.
  */
+// FORK: OPEN REC in the no-radio strip. Picks a recording and plays it through the same IQ path as a radio
+// (fileradio.ts); while it plays, the playback strip (#playbar) shows progress and has speed / pause / stop.
+function parseHzAnswer(s: string): number {
+  const m = /^\s*([\d.]+)\s*([kmg]?)/i.exec(s);
+  return m ? Number(m[1]) * ({ '': 1, k: 1e3, m: 1e6, g: 1e9 } as Record<string, number>)[m[2].toLowerCase()] : NaN;
+}
+async function openRecording(): Promise<void> {
+  if (radio?.running || connecting) { log('Disconnect the radio before playing a recording.'); return; }
+  const input = document.createElement('input');
+  input.type = 'file'; input.multiple = true;
+  input.accept = '.cs8,.c8,.cu8,.cs16,.c16,.cf32,.fc32,.cfile,.raw,.wav,.sigmf-meta,.sigmf-data,.txt';
+  const files = await new Promise<File[]>(res => { input.onchange = () => res(Array.from(input.files ?? [])); input.click(); });
+  if (!files.length) return;
+  connecting = true;
+  const bar = $('playbar'), text = $('pb-text'), speed = $<HTMLButtonElement>('pb-speed'), pause = $<HTMLButtonElement>('pb-pause');
+  try {
+    const src = await openIqSource(files, async (what, name) => {
+      const a = prompt(what === 'rate' ? `${name}: sample rate? (e.g. 2M, 2400k, 250000)` : `${name}: centre frequency? (e.g. 433.92M; blank if unknown)`, what === 'rate' ? '2M' : '');
+      if (a === null) return what === 'rate' ? null : 0;
+      const v = parseHzAnswer(a); return Number.isFinite(v) && v > 0 ? v : 0;
+    });
+    await ensureAudio();
+    const w = ensureWorker();
+    const r = new FileRadio(src, w, { onLog: log, onStatus: s => { text.textContent = s; state.board = r.label; state.firmware = ''; setStatus(s, true); if (!state.app) $('sub').textContent = r.label; } });
+    radio = r; radioDev = null; state.board = r.label; state.biast = false;
+    if (state.rate !== r.rate) { state.rate = r.rate; worker?.postMessage({ type: 'config', rate: state.rate }); }
+    // the plain receiver (and the launcher) show the recording where it was made; fixed-band apps keep their own dial
+    if ((!state.app || state.app === 'audio' || state.app === 'capture') && r.centerHz) { state.freq = state.viewLo = r.centerHz; worker?.postMessage({ type: 'config', centreHz: r.centerHz }); }
+    r.targetFreqHz = spanCenter();   // the app's LO: inside the recording's span the player's digital LO follows it
+    refreshLauncherLimits();
+    refreshReadout();
+    await r.open();
+    speed.textContent = speedLabel(r.speed); pause.textContent = 'PAUSE'; text.textContent = r.statusLine();
+    speed.onclick = () => { speed.textContent = speedLabel(r.cycleSpeed()); text.textContent = r.statusLine(); };
+    pause.onclick = () => { r.paused = !r.paused; pause.textContent = r.paused ? 'PLAY' : 'PAUSE'; text.textContent = r.statusLine(); };
+    $('pb-stop').onclick = () => r.stop();
+    bar.hidden = false;
+    connecting = false;
+    await r.run();
+  } catch (e) {
+    const err = e as Error;
+    if (err.message !== 'cancelled') { log(`recording: ${err.message}`); setStatus(`recording: ${err.message}`, false); }
+  } finally {
+    connecting = false;
+    bar.hidden = true;
+    if (radio instanceof FileRadio) { log(`recording: ${radio.position >= radio.src.samples ? 'finished' : 'stopped'} ${radio.src.name}`); radio = null; state.board = ''; setStatus('no radio', false); refreshLauncherLimits(); }
+  }
+}
+// FORK: end of OPEN REC
+
 async function connectRtl(d: USBDevice, events: { onIq: (b: Int8Array) => void; onLog: (l: string) => void }): Promise<void> {
   const btn = $<HTMLButtonElement>('connect');
   const r = new RtlSdr(d, {
@@ -10038,7 +10090,7 @@ function enterFullscreen(): void {
   void document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 }
 /** Taps that open a chooser (the USB picker, a file) keep their gesture: full screen waits for the next tap. */
-const FS_SKIP = '#connect, #set-connect, #rm-connect, #rp-connect, #an-imp, #log-import, input[type=file], #fs-toggle';
+const FS_SKIP = '#rm-openrec, #connect, #set-connect, #rm-connect, #rp-connect, #an-imp, #log-import, input[type=file], #fs-toggle';   // FORK: #rm-openrec opens a file picker
 /** Full screen was taken once this visit, or the app already runs full screen as an installed app. */
 let fsTaken = false;
 function initFullscreen(): void {
@@ -10405,6 +10457,7 @@ function init(): void {
   $<HTMLButtonElement>('connect').disabled = !supported;
   if (!supported) setStatus('WebUSB not available in this browser', false);
   $('connect').onclick = () => connect();
+  $('rm-openrec').onclick = () => void openRecording();   // FORK: play a recording
   $('mute').onclick = toggleMute;
   $('home').onclick = () => { closeSettings(); if (state.app) open(null); };
   $('brand').onclick = () => { closeSettings(); if (state.app) open(null); };

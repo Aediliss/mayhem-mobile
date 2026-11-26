@@ -395,10 +395,10 @@ self.onmessage = (e: MessageEvent) => {
       const b = new Int8Array(m.buf as ArrayBuffer);
       // only LoRa queues (its channels catch up in bursts); every other app processes each buffer as it arrives,
       // exactly as before the queue existed
-      if (processor !== lora && queue.length === 0) { process(b); break; }
+      if (processor !== lora && queue.length === 0) { process(b); if (m.ack) post({ type: 'iqAck' }); break; }   // FORK: ack paces fileradio.ts
       const cap = Math.max(8, Math.min(QUEUE_MAX, Math.ceil(0.2 * rate * 2 / Math.max(b.length, 1))));
       while (queue.length >= cap) queue.shift();
-      queue.push(b); armDrain(); break;
+      queue.push(b); armDrain(); if (m.ack) post({ type: 'iqAck' }); break;   // FORK: ack paces fileradio.ts
     }
     case 'config':
       if (processor === lora && typeof m.rate === 'number' && m.rate !== rate) dropQueued();
