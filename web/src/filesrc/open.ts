@@ -2,6 +2,7 @@
  * FORK: turn the files a person picked into one IQ source: which file holds the samples, which one describes them,
  * and what the description says. Works on anything Blob-like with a name, so Node tests can use it too.
  */
+import { tarEntries } from '../sigmf.js';
 import { baseOf, BYTES_PER_SAMPLE, chooseScale, extOf, hintsFromName, parseSigmfMeta, parseTxtSidecar, parseWavHeader, type IqMeta } from './formats.js';
 
 export interface NamedBlob { readonly name: string; readonly size: number; slice(start?: number, end?: number): Blob }
@@ -30,8 +31,25 @@ function sidecarFor(data: NamedBlob, files: NamedBlob[], ext: string): NamedBlob
   return all.find(f => baseOf(f.name).toLowerCase() === baseOf(data.name).toLowerCase()) ?? (all.length === 1 ? all[0] : undefined);
 }
 
+/** A part of a Blob that keeps a name (an entry inside a .sigmf archive). */
+function namedSlice(b: NamedBlob, name: string, start: number, size: number): NamedBlob {
+  const part = b.slice(start, start + size);
+  return { name, size, slice: (s?: number, e?: number) => part.slice(s, e) };
+}
+
+/** A .sigmf archive (tar) → its .sigmf-meta and .sigmf-data entries as files of their own. */
+async function unpackArchive(a: NamedBlob): Promise<NamedBlob[]> {
+  const entries = await tarEntries(a.slice() as Blob);
+  const meta = entries.find(e => /\.sigmf-meta$/i.test(e.name)), data = entries.find(e => /\.sigmf-data$/i.test(e.name));
+  if (!meta || !data) throw new Error(`"${a.name}" is not a SigMF archive (no .sigmf-meta + .sigmf-data inside)`);
+  const leaf = (n: string) => n.replace(/^.*\//, '');
+  return [namedSlice(a, leaf(meta.name), meta.offset, meta.size), namedSlice(a, leaf(data.name), data.offset, data.size)];
+}
+
 export async function openIqSource(files: NamedBlob[], ask?: Ask): Promise<IqSource> {
   if (!files.length) throw new Error('no file chosen');
+  const archive = files.find(f => /\.sigmf$/i.test(f.name));
+  if (archive) files = await unpackArchive(archive);
   const metaFile = files.find(f => /\.sigmf-meta$/i.test(f.name));
   let data: NamedBlob, meta: IqMeta;
   if (metaFile || files.some(f => /\.sigmf-data$/i.test(f.name))) {

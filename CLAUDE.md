@@ -27,6 +27,8 @@ All three of check / build / test must pass before an item is marked done. CI: `
   `rtlsdr.ts`. Both deliver **signed int8 interleaved IQ**. `APP_NEEDS` + `blockedBecause()` grey out apps a radio
   can't do. `fileradio.ts` (kind `'file'`) plays recordings through the same interface; formats and metadata in
   `src/filesrc/`. OPEN REC lives in the no-radio strip (`#rm-openrec`); `#playbar` shows while a file plays.
+- Capture: upstream's worker recorder writes `.c8` + `.txt`; `capture-sigmf.ts` adds `.sigmf-meta` and the `.sigmf`
+  archive download from the page (`sigmf.ts` builds both).
 - `src/dsp/`: one decoder per file or folder. `src/credits.ts`: the credits roll.
 
 ## Pattern: a decoder (DSP side)

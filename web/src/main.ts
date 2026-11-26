@@ -24,6 +24,7 @@ import type { ZwLink, ZwNode } from './dsp/r433/zwave.js';
 import { CREDITS } from './credits.js';
 import { FileRadio, speedLabel } from './fileradio.js';   // FORK: play recordings (Phase 1)
 import { openIqSource } from './filesrc/open.js';   // FORK
+import { captureNamed, captureStarting, downloadSigmf, removeCaptureMeta } from './capture-sigmf.js';   // FORK: SigMF in Capture
 import { FORK_NAME, FORK_WORDMARK, FORK_REPO, FORK_REPO_LABEL, UPSTREAM_REPO, UPSTREAM_REPO_LABEL } from './fork.js';   // FORK: build identity
 import { syncRows } from './list-rows.js';
 import { r433Measure, r433Value } from './devices-fmt.js';
@@ -8717,14 +8718,20 @@ function renderCapture(view: HTMLElement): void {
     <section class="visual">${readoutHtml()}<div id="scope" class="panel short"></div></section>
     <section class="controls">
       ${stepHtml([1e6, 1e5, 1e4])}
-      <div class="caption">RECORD · signed 8-bit I/Q (.c8) + .txt sidecar, stored in the browser</div>
+      <div class="caption">RECORD · signed 8-bit I/Q (.c8) + .txt sidecar + SigMF metadata, stored in the browser${'' /* FORK */}</div>
       <div class="row"><button id="rec" class="chip">● REC</button><span id="rec-info" class="info"></span></div>
       <div class="caption">CAPTURES · tap to download, ✕ to delete</div><div id="captures" class="panel list">${emptyState('capture')}</div>
     </section>`;
   scope = attach(tunableScope('scope', 80, 70));
   $('rec').onclick = () => {
     if (state.capturing) worker?.postMessage({ type: 'capture', cmd: 'stop' });
-    else worker?.postMessage({ type: 'capture', cmd: 'start', freq: state.freq, rate: state.rate });
+    else {
+      // FORK: the centre is the radio's LO (spanCenter), not the channel slid to inside the span; and SigMF details
+      captureStarting({ centerHz: spanCenter(), rate: state.rate, datetime: new Date().toISOString(), app: 'Capture', recorder: `${FORK_NAME} ${versionText}`,
+        radio: radio ? (radio.kind === 'hackrf' ? `${state.board || 'HackRF'}${state.firmware ? ' · fw ' + state.firmware : ''}` : radio.label) : 'none',
+        gain: { lna: state.lna, vga: state.vga, amp: state.amp, agc: state.agc }, gps: state.home ?? undefined });
+      worker?.postMessage({ type: 'capture', cmd: 'start', freq: spanCenter(), rate: state.rate });
+    }
   };
   refreshCapture();
 }
@@ -9482,9 +9489,10 @@ function refreshCapture(): void {
   const b = q('#rec'), info = q('#rec-info'), el = q('#captures');
   if (b) { b.textContent = state.capturing ? '■ STOP' : '● REC'; b.classList.toggle('rec', state.capturing); }
   if (info) info.textContent = state.capturing ? `${(state.captureBytes / 1e6).toFixed(1)} MB · ${state.captureName}` : `${state.rate / 1e6} Msps · ${(state.rate * 2 / 1e6).toFixed(1)} MB/s`;
-  if (el) el.innerHTML = state.captures.length ? state.captures.map((f, i) => `<div class="li row2 ${i % 2 ? 'alt' : ''}"><span class="tap" data-dl="${f.name}">${f.name}  ${(f.size / 1e6).toFixed(1)} MB</span><button class="link" data-del="${f.name}">✕</button></div>`).join('') : emptyState('capture');
+  if (el) el.innerHTML = state.captures.length ? state.captures.map((f, i) => `<div class="li row2 ${i % 2 ? 'alt' : ''}"><span class="tap" data-dl="${f.name}">${f.name}  ${(f.size / 1e6).toFixed(1)} MB</span>${'' /* FORK: SigMF download */}<button class="link" data-dlsigmf="${f.name}" title="Download as one .sigmf archive">SigMF</button><button class="link" data-del="${f.name}">✕</button></div>`).join('') : emptyState('capture');
   qa<HTMLElement>('[data-dl]').forEach(d => d.onclick = () => worker?.postMessage({ type: 'capture', cmd: 'get', name: d.dataset.dl }));
-  qa<HTMLElement>('[data-del]').forEach(d => d.onclick = () => worker?.postMessage({ type: 'capture', cmd: 'remove', name: d.dataset.del }));
+  qa<HTMLElement>('[data-del]').forEach(d => d.onclick = () => { void removeCaptureMeta(d.dataset.del!); worker?.postMessage({ type: 'capture', cmd: 'remove', name: d.dataset.del }); });   // FORK: + its .sigmf-meta
+  qa<HTMLElement>('[data-dlsigmf]').forEach(d => d.onclick = () => void downloadSigmf(d.dataset.dlsigmf!, `${FORK_NAME} ${versionText}`, log));   // FORK
 }
 function esc(s: string): string { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!)); }
 
@@ -9675,7 +9683,8 @@ function ensureWorker(): Worker {
         }
         refreshSweepCard(0, m.sweeps); refreshHits(); break;
       }
-      case 'capture': state.capturing = m.recording; state.captureName = m.name; state.captureBytes = m.bytes; refreshCapture(); break;
+      case 'capture': if (m.recording && m.name !== state.captureName) void captureNamed(m.name as string, log);   // FORK: SigMF beside the .c8
+        state.capturing = m.recording; state.captureName = m.name; state.captureBytes = m.bytes; refreshCapture(); break;
       case 'captures': state.captures = m.files; refreshCapture(); break;
       case 'captureFile': { const f = m.file as File; const url = URL.createObjectURL(f); const a = document.createElement('a'); a.href = url; a.download = m.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60_000); if (m.sidecar) { const b = new Blob([m.sidecar], { type: 'text/plain' }); const u2 = URL.createObjectURL(b); const a2 = document.createElement('a'); a2.href = u2; a2.download = (m.name as string).replace(/\.c8$/, '.txt'); setTimeout(() => { a2.click(); setTimeout(() => URL.revokeObjectURL(u2), 60_000); }, 500); } break; }
     }
@@ -9822,7 +9831,7 @@ async function openRecording(): Promise<void> {
   if (radio?.running || connecting) { log('Disconnect the radio before playing a recording.'); return; }
   const input = document.createElement('input');
   input.type = 'file'; input.multiple = true;
-  input.accept = '.cs8,.c8,.cu8,.cs16,.c16,.cf32,.fc32,.cfile,.raw,.wav,.sigmf-meta,.sigmf-data,.txt';
+  input.accept = '.sigmf,.cs8,.c8,.cu8,.cs16,.c16,.cf32,.fc32,.cfile,.raw,.wav,.sigmf-meta,.sigmf-data,.txt';
   const files = await new Promise<File[]>(res => { input.onchange = () => res(Array.from(input.files ?? [])); input.click(); });
   if (!files.length) return;
   connecting = true;

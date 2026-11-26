@@ -29,7 +29,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 |---|---|---|---|---|
 | [x] | ★ | **Test harness**: `web/test/lib/iq.ts` grown into tones, FSK/GFSK, OOK/ASK, PSK, AWGN at a set SNR, `.cu8/.cs8/.cs16` writers | own code | — |
 | [x] | ★ | **File source** `FileRadio`: `.c8/.cs8`, `.cu8`, `.cs16`, `.wav` IQ, Mayhem `.C8/.C16` + `.txt`, SigMF; real-time or as-fast-as-possible; Capture → replay round trip. UI: an "Open recording…" button beside CONNECT (approved 2026-11-26); WebUSB claiming untouched | SigMF spec (sigmf.org) | spec, CC-BY-SA-4.0 text (implementing it is fine) |
-| [ ] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
+| [x] | ★ | **SigMF recording** from Capture: frequency, rate, datetime, gain, radio, app, GPS | SigMF core spec v1.x | spec |
 | [ ] | | **Decode export bus**: JSON-lines + download, webhook, MQTT/WebSocket (+ HA discovery), Beast/SBS, NMEA, APRS-IS text/KISS, rtl_433 JSON. Off by default; Settings | Beast/SBS formats (readsb docs), rtl_433 JSON field names | readsb GPL-3.0 ✔ (code); formats are facts |
 | [ ] | | **Audio-in source** (mic/line-in/discriminator) for FT8, RTTY, PSK, SSTV, APRS, POCSAG/FLEX, SAME, ACARS | upstream `mic-worklet.js` | in-repo |
 | [ ] | | **Voice recording** to WAV with TG/unit/time metadata (Dispatch, Repeaters, Prowl) | WAV `LIST/INFO` chunks | spec |
@@ -153,3 +153,20 @@ for "or later" first.
   widths): OPEN REC → a 5 s `.c8` + `.txt` → all three packets in Ham Map's log, playback strip shown and removed.
   Hardware: none needed to play files. Real-recording check: record in Capture (HackRF or H4M in HackRF mode) on a
   busy channel, download the `.c8` + `.txt`, OPEN REC both in the matching app; the same packets should decode.
+- **Phase 1 · SigMF in Capture** (`web/src/sigmf.ts`, `web/src/capture-sigmf.ts`, `test/sigmf.test.ts`): REC writes
+  `<name>.sigmf-meta` (SigMF 1.0: ci8, sample rate, centre, ISO datetime, `core:hw` radio, `core:recorder`,
+  `core:geolocation` when the page has a fix, gain/AGC/amp and app under a declared `madmobile` extension) beside
+  upstream's `.c8` + `.txt`, without touching the worker's recorder. Each capture row gains a **SigMF** download: one
+  `.sigmf` archive (ustar, assembled lazily so big captures are not copied); captures from before this rebuild their
+  metadata from the `.txt`. OPEN REC reads `.sigmf` archives. Also fixed (upstream bug): REC recorded the channel
+  (`state.freq`) as the centre; it now records the radio's LO (`spanCenter()`), so a capture made after sliding the
+  channel inside the span replays at the right frequency.
+  Tests prove: the metadata fields and GeoJSON order; GNU tar 1.35 lists the archive and extracts both files byte for
+  byte; a `.sigmf` archive plays and decodes; upstream's real `IqRecorder` (against an in-memory OPFS) records IQ
+  that plays back and decodes both as `.c8` + `.txt` and as `.sigmf`. Browser check (headless Chromium, real OPFS):
+  OPEN REC a file in Capture, REC, SigMF download, OPEN REC that archive in Ham Map → all three packets decode.
+  Not done here: validating against the official `sigmf` Python validator (installing it was blocked in this
+  environment). To check locally: `pip install sigmf`, then
+  `python -c "import sigmf; sigmf.sigmffile.fromfile('X.sigmf').validate()"`.
+  Hardware: record 30 s of a busy channel in Capture with a HackRF (or H4M in HackRF mode), with location allowed;
+  download SigMF; open it in inspectrum or `sigmf` tools: frequency, rate, time, hw and position should match.
