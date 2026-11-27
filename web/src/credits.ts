@@ -75,6 +75,7 @@ export const CREDITS: [boolean, string][] = [
   [false, "ARINC 622 envelope and ADS-C (ARINC 745) reports and contract requests ported from libacars by Tomasz Lemiech (MIT)"],
   [false, "FANS-1/A CPDLC message set and wording from libacars by Tomasz Lemiech (MIT); unaligned PER as the asn1c runtime by Lev Walkin decodes it (BSD-2-Clause)"],
   [false, "Iridium burst demodulation after gr-iridium (GPL-3.0-or-later; its prbs15 test recording used as a test fixture); frame classification, BCH, ring alerts, broadcasts and IDA/SBD/ACARS reassembly after iridium-toolkit by Sec & schneider (BSD-2-Clause)"],
+  [false, "ADS-L packets, scrambling, CRC and Traffic/Status payloads written from EASA's ADS-L 4 SRD-860 specification (Issue 2; open for implementation); OGN tracker sync word from the OGN wiki (CC BY-SA 3.0)"],
   [false, "VOR bearing as PortaPack Mayhem's proc_vor_rx measures it (GPL-3.0); ILS, ident and DME from ICAO Annex 10 signal parameters"],
   [false, "ExpressLRS air parameters (LoRa bandwidths, spreading factors, packet rates, hop grids) from the ExpressLRS project (GPL-3.0)"],
 ];

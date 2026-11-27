@@ -142,6 +142,7 @@ export const APP_NEEDS: Record<string, AppNeeds> = {
   btle: { freqHz: 2_402_000_000 },
   droneid: { freqHz: 2_444_500_000, rateHz: 15_360_000 },   // FORK: DJI DroneID: 2.4 GHz at 15.36 MS/s (a HackRF)
   navaid: { freqHz: 113_900_000 },   // FORK: Navaids (VOR/ILS at VHF, glide path 329-335 MHz, DME 962-1213 MHz: any radio here reaches them)
+  adsl: { freqHz: 868_300_000 },   // FORK: ADS-L (868.2/868.4 MHz: any radio here reaches it)
   iridium: { freqHz: 1_625_800_000 },   // FORK: Iridium (an RTL-SDR reaches the ring-alert span; the whole band needs a HackRF at 10 MS/s)
   hfdl: { freqHz: 8_700_000 },   // FORK: HFDL is HF (a HackRF, or a dongle that can sample HF directly)
   fpv: { freqHz: 5_800_000_000, rateHz: 20_000_000 },   // FORK: analog FPV video: 5.8 GHz at 20 MS/s (a HackRF)

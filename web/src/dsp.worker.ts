@@ -8,6 +8,7 @@ import { FpvProcessor } from './dsp/fpv.js';   // FORK: analog FPV video
 import { HfdlDecoder } from './dsp/hfdl/hfdl.js';   // FORK: HFDL
 import { IridiumDecoder } from './dsp/iridium/iridium.js';   // FORK: Iridium
 import { NavaidProcessor } from './dsp/navaid.js';   // FORK: Navaids
+import { AdslDecoder } from './dsp/adsl/adsl.js';   // FORK: ADS-L
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -136,6 +137,7 @@ const fpv = new FpvProcessor(emit);   // FORK: analog FPV video (dsp/fpv.ts)
 const hfdl = new HfdlDecoder(emit);   // FORK: HFDL (dsp/hfdl/)
 const iridium = new IridiumDecoder(emit);   // FORK: Iridium (dsp/iridium/)
 const navaid = new NavaidProcessor(emit);   // FORK: Navaids (dsp/navaid.ts)
+const adsl = new AdslDecoder(emit);   // FORK: ADS-L (dsp/adsl/)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -560,6 +562,7 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'vdl2': vdl2.centerHz = centreHz; return vdl2;
     case 'hfdl': hfdl.centerHz = centreHz; return hfdl;   // FORK: HFDL
     case 'iridium': iridium.centerHz = centreHz; return iridium;   // FORK: Iridium
+    case 'adsl': adsl.centerHz = centreHz; return adsl;   // FORK: ADS-L
     case 'navaid': navaid.centerHz = centreHz; navaid.tunedHz = centreHz + offsetHz; return navaid;   // FORK: Navaids
     case 'sonde': sonde.setCenter(centreHz); return sonde;
     case 'uat': return uat;
@@ -800,6 +803,7 @@ function process(iq: Int8Array): void {
   if (p === vdl2) vdl2.centerHz = centreHz;
   if (p === hfdl) hfdl.centerHz = centreHz;   // FORK: HFDL
   if (p === iridium) iridium.centerHz = centreHz;   // FORK: Iridium
+  if (p === adsl) adsl.centerHz = centreHz;   // FORK: ADS-L
   if (p === trains) trains.centerHz = centreHz;
   if (p === fleet) fleet.centerHz = centreHz;
   if (p === cell) cell.centerHz = centreHz;

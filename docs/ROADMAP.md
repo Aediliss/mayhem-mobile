@@ -70,7 +70,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `proc_vor_rx` (the VOR bearing); ICAO Annex 10 Vol. I signal parameters (ILS, idents, DME); LOC/GS/DME pairing checked against the FAA/RadioReference table | Mayhem GPL-3.0 ✔ · ICAO and FAA: facts (frequencies, tones, depths) only |
 | [x] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) — **done upstream**: the Satcom app (0.9.76, dsp/lband/: Inmarsat-C NCS EGC, Aero P-channel 600/1200 bps ACARS to Flight Msgs; the UI says an LNA and patch are needed) | upstream | — |
 | [ ] | | Inmarsat Aero 10.5 kbps P-channel (OQPSK) and the T/R burst channels (aircraft → ground) | JAERO | MIT ✔ |
-| [ ] | | FLARM / OGN receive | OGN docs, published decoders | check |
+| [x] | | FLARM / OGN receive — as **ADS-L** (the Gliders app): both M-band channels (868.2/868.4 MHz) at once; Traffic (position, altitude, speed, climb, track, category, emergency) and Status payloads; OGN tracker packets counted, not read; FLARM's own protocol not read | EASA ADS-L 4 SRD-860 Issue 2 (1 Dec 2025, ED Decision 2022/024/R): physical layer, packet, XXTEA key-0 scrambling, CRC-24, payloads; OGN wiki (OGN sync word) | EASA spec: "open to any interested party for implementation" (A.3), written from the spec, no code ported ✔ · OGN wiki CC BY-SA 3.0 (a fact: the sync word) ✔ · FLARM air protocol: closed and obfuscated, decrypting it may be unlawful in the EU ✘ (not read) · OGN tracker firmware (pjalocha, glidernet): no license ✘ (not used; OGN's LDPC code and whitening are not published, so OGN packets are counted only) |
 | [ ] | | MLAT feeder (Beast over WebSocket) via export bus | Beast format | facts |
 
 ## Phase 5 — Marine and emergency
@@ -684,3 +684,23 @@ for "or later" first.
   P-channel ACARS at 600/1200 bps. Nothing duplicated here. The fork's ARINC 622 reader applies to its ACARS lines
   ("SAT"), so ADS-C and CPDLC over Inmarsat read in words in Flight Msgs (test: arinc622.test.ts, "over Inmarsat too").
   Left as a new row: the 10.5 kbps OQPSK P-channel and the T/R bursts, which upstream does not read.
+- **FLARM / OGN → ADS-L** (`dsp/adsl/`, new app "Gliders", `test/adsl.test.ts`): ADS-L written from EASA's ADS-L 4
+  SRD-860 Issue 2 (the spec says it "is open to any interested party for implementation"). Both M-band channels
+  (868.2 and 868.4 MHz) from one 2 MS/s span at 868.3: each mixed down, low-passed to ~4 samples a chip, FM
+  discriminator, Manchester bits as second chip minus first (a carrier offset cancels), the sync word 0x72 0x4B
+  searched at every sample, length byte, CRC-24, XXTEA (key 0, 6 rounds) undone; Traffic and Status payloads read
+  field for field. Tests: the spec's bit-packing example and every exponential-encoding table row (altitude, ground
+  speed, vertical rate); the CRC-24 checks a real ADS-B frame's parity (8D4840D6…576098, so it is the Mode-S code the
+  spec names); XXTEA matches the standard zero-key test vector; Traffic/Status built and read back; end to end, three
+  packets on both channels (two overlapping in time, one with a 12 kHz crystal error) through noise; a damaged packet,
+  a reserved key and noise give nothing; an OGN tracker's sync is counted. Sensitivity on synthetic packets: 39/40 at
+  0 dB SNR across the 2 MHz span (about 9 dB in the channel), 19/40 at −3 dB. In Chromium a 2 MS/s recording played
+  through OPEN REC gave both aircraft on the map, the emergency pulsing, and the status ("also FLARM, ADS-B · Mode S")
+  on the card. Not read: FLARM's own protocol (closed and obfuscated; decrypting it may be unlawful in the EU), OGN
+  tracker packets (their LDPC code and whitening are unpublished; the firmware has no license), FEC (Reed-Solomon)
+  packets and the O-band (869.525 MHz, PilotAware-compatible LDR and the HDR uplinks), and the secure signature
+  (not checked). Note: the spec's XXTEA table says num_data_words 6, but its own text and packet layout give 5 (the
+  20-byte ADS-L data of a Traffic packet, length 0x18); 5 is used. Not yet checked against a real off-air recording.
+  Hardware (Europe): any radio here, 868 MHz antenna outside, near a gliding site on a soaring day; open Gliders: aircraft
+  with newer FLARMs, OGN trackers or SkyEcho-type devices appear on the map within seconds. Compare positions with
+  glidernet.org's live map (OGN ground stations receive ADS-L too).

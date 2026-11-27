@@ -52,6 +52,8 @@ import * as Apps from './tx-apps.js';
 import { squawkMeaning, type Aircraft } from './dsp/adsb.js';
 import type { DroneIdFrame } from './dsp/droneid.js';   // FORK: DJI DroneID
 import { IRIDIUM_SPANS, type IridiumFrame } from './dsp/iridium/frames.js';   // FORK: Iridium
+import { ADSL_CENTRE_HZ, ADSL_RATE } from './dsp/adsl/adsl.js';   // FORK: ADS-L (Gliders)
+import { ADSL_CATEGORY, ADSL_EMERGENCY, ADSL_STATE, amtName, econList, type AdslPacket } from './dsp/adsl/frame.js';   // FORK: ADS-L (Gliders)
 import { dmeFor, navKind, pairedIls, type NavaidMsg } from './dsp/navaid.js';   // FORK: Navaids (pure helpers; the processor lives in the worker)
 import { LinkTracker, type LoraBurst } from './dsp/linkprint.js';   // FORK: control-link fingerprints
 import { FPV_CHANNELS, type FpvLook, type OfdmLook } from './dsp/fpv.js';   // FORK: analog FPV video
@@ -123,7 +125,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, iridium, navaid, hfdl
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'adsl' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, iridium, navaid, adsl, hfdl
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -153,6 +155,7 @@ const APPS: AppDef[] = [
   { id: 'droneid', title: 'Drones', blurb: 'DJI DroneID · 2.4 GHz', cat: 'Receive' },   // FORK: DJI DroneID
   { id: 'iridium', title: 'Iridium', blurb: 'Satellites · ring alerts · ACARS · 1.6 GHz', cat: 'Receive' },   // FORK: Iridium
   { id: 'navaid', title: 'Navaids', blurb: 'VOR radial · ILS · DME · idents', cat: 'Receive' },   // FORK: Navaids
+  { id: 'adsl', title: 'Gliders', blurb: 'ADS-L traffic · 868 MHz (Europe)', cat: 'Receive' },   // FORK: ADS-L
   { id: 'fpv', title: 'FPV', blurb: 'Analog FPV video · 5.8 GHz', cat: 'Receive' },   // FORK: analog FPV video
   { id: 'sat', title: 'Satellites', blurb: 'track and decode', cat: 'Receive' },
   { id: 'satcom', title: 'Satcom', blurb: 'Inmarsat · EGC · Aero ACARS', cat: 'Receive' },
@@ -1098,6 +1101,7 @@ function open(app: AppId | null): void {
     case 'btle': configure('NONE', btleChannelFreq(state.btleCh), 2e6, 32, 40, true, 'btle'); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); break;
     case 'droneid': configure('NONE', droneUi.freq, 15.36e6, 32, 40, true, 'droneid'); break;   // FORK: DJI DroneID at 15.36 MS/s
     case 'navaid': navOpen(); break;   // FORK: Navaids
+    case 'adsl': configure('NONE', ADSL_CENTRE_HZ, ADSL_RATE, 32, 32, true, 'adsl'); break;   // FORK: ADS-L, both M-band channels at once
     case 'iridium': { const sp = IRIDIUM_SPANS[iriUi.span]; configure('NONE', sp.centreHz, sp.rateHz, 32, 32, true, 'iridium'); break; }   // FORK: Iridium
     case 'fpv': configure('NONE', fpvUi.hz, 20e6, 24, 30, true, 'fpv'); worker?.postMessage({ type: 'fpvTune', ch: fpvUi.ch, watch: true }); break;   // FORK: analog FPV video at 20 MS/s
     // The span is centred on 130.8 MHz: every US ACARS channel (130.025-131.550) is inside it and decoded at once,
@@ -1852,6 +1856,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   fpv: ['fpv', 'No FPV video found yet', ['SCAN steps through the 48 channels of bands A, B, E, F, R and L; channels with video turn gold', 'Tap a channel to watch it: the picture is drawn from the sync pulses, in black and white', 'Needs a HackRF at 20 MS/s and a 5.8 GHz antenna; an RTL-SDR cannot reach 5.8 GHz']],   // FORK: analog FPV video
   droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   iridium: ['iridium', 'No Iridium satellites heard yet', ['Ring alerts come several times a second from every Iridium satellite in view: an antenna that sees the sky (a patch or an active GPS-style antenna outside) hears them within a minute', 'The whole band (10 MS/s) needs a HackRF and a fast computer; an RTL-SDR covers the ring-alert span at 2 MS/s']],   // FORK: Iridium
+  adsl: ['adsl', 'No ADS-L aircraft heard yet', ['ADS-L is a European standard: gliders, light aircraft, paragliders and drones with a newer FLARM, an OGN tracker, SkyEcho or similar send it on 868.2 and 868.4 MHz; outside Europe expect silence', 'They send once a second at 25 mW: an 868 MHz antenna with a view of the sky, near a gliding site, hears them tens of kilometers out']],   // FORK: ADS-L
   navaid: ['navaid', 'Tune a VOR, localizer, glide path or DME', ['VORs are on 108.00-117.95 MHz (the chart or a flight app gives the nearest one); a VOR within line of sight comes in strong even on a short antenna', 'An ILS localizer is on 108.10-111.95 (odd tenths) at an airport with instrument approaches; its glide path and DME are paired with it: the buttons tune them']],   // FORK: Navaids
   btle: ['btle', 'Waiting for BLE advertisements', ['Phones, earbuds and watches advertise several times a second: start on CH 37', 'BLE is low power: hold the radio within a few meters of a device']],
   lora: ['lora', 'No nodes yet', ['Meshtastic nodes beacon about every 15 minutes: leave it running', 'AREA picks where you are; a wider SPAN (20 MHz on a HackRF) holds more of its channels']],
@@ -2107,6 +2112,7 @@ function render(app: AppId | null): void {
     case 'droneid': renderDroneId(view); break;   // FORK: DJI DroneID
     case 'iridium': renderIridium(view); break;   // FORK: Iridium
     case 'navaid': renderNavaid(view); break;   // FORK: Navaids
+    case 'adsl': renderAdsl(view); break;   // FORK: ADS-L
     case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
     case 'hfdl': renderAcars(view, 'hfdl'); break;   // FORK: HFDL
@@ -4239,6 +4245,63 @@ function refreshIridium(): void {
   }
 }
 // FORK: end Iridium
+
+// FORK: ------------------------------------------------------------------------------------- ADS-L (dsp/adsl/)
+interface AdslAc { key: string; p: AdslPacket; first: number; last: number; n: number; mhz: Set<number>; levelDb: number; lat?: number; lon?: number; fixAt: number; econTx?: number; xpdr?: number }
+const adslUi = { ac: new Map<string, AdslAc>(), packets: 0, ogn: 0, sel: '' };
+const adslKey = (p: AdslPacket) => `${amtName(p.amt)} ${p.addr.toString(16).toUpperCase().padStart(6, '0')}`;
+function adslAlt(m: number): string { return U.units() === 'imperial' ? `${Math.round(m / U.M_PER_FT).toLocaleString()} ft` : `${Math.round(m).toLocaleString()} m`; }
+function adslSpeed(ms: number): string { return U.units() === 'imperial' ? `${Math.round(ms * 1.943844)} kt` : `${Math.round(ms * 3.6)} km/h`; }
+function adslClimb(ms: number): string { const v = U.units() === 'imperial' ? `${Math.round(ms * 196.8504 / 10) * 10} ft/min` : `${ms.toFixed(1)} m/s`; return ms > 0 ? `+${v}` : v; }
+function renderAdsl(view: HTMLElement): void {
+  const why = radio ? blockedBecause(APP_NEEDS.adsl, radio.limits) : '';
+  view.innerHTML = `
+    <section class="${visCls('adsl')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">${why ? `<div class="note warn">${esc(radio!.label)} cannot receive this: ${esc(why)}.</div>` : ''}
+      <div id="adsl-stats" class="caption"></div>
+      <div id="adsl-map" class="panel map"></div>
+      <div id="adsl-cards"></div>
+      <div id="adsl-log">${logHtml('adsl', 'listening…')}</div>
+      <div class="note about">ADS-L, receive only: EASA's open e-conspicuity standard (ADS-L 4 SRD-860), read from the published specification. Both M-band channels, 868.2 and 868.4 MHz, are heard at once (2-GFSK, 100 000 chips a second, Manchester). Each aircraft's position, altitude, speed, climb, track, category and emergency status, with the status messages that say what else it carries (FLARM, ADS-B, a transponder). FLARM's own protocol is closed and is not read: a FLARM that also sends ADS-L shows up here. OGN tracker packets are counted, not read. Used in Europe; any radio here reaches 868 MHz.</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  geo = new GeoMap($('adsl-map'), { home: state.home, start: mapStart(state.home), steady: true, declutter: true, onPick: id => { adslUi.sel = adslUi.sel === id ? '' : id; refreshAdsl(); }, log });
+  $('adsl-cards').onclick = e => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-adsl]'); if (c) { adslUi.sel = adslUi.sel === c.dataset.adsl ? '' : c.dataset.adsl!; refreshAdsl(); } };
+  refreshList('adsl'); refreshAdsl();
+}
+function onAdsl(p: AdslPacket, mhz: number, levelDb: number): void {
+  adslUi.packets++;
+  if (p.type < 0) return;
+  const key = adslKey(p), now = Date.now(), a = adslUi.ac.get(key) ?? { key, p, first: now, last: now, n: 0, mhz: new Set<number>(), levelDb, fixAt: 0 };
+  a.last = now; a.n++; a.mhz.add(mhz); a.levelDb = levelDb;
+  if (p.traffic) { a.p = p; if (p.traffic.lat !== undefined) { a.lat = p.traffic.lat; a.lon = p.traffic.lon; a.fixAt = now; } }
+  if (p.status) { a.econTx = p.status.econTx; a.xpdr = p.status.xpdr; }
+  adslUi.ac.set(key, a);
+  if (state.app === 'adsl') refreshAdsl();
+}
+function refreshAdsl(): void {
+  if (state.app !== 'adsl') return;
+  const now = Date.now(), ac = [...adslUi.ac.values()].sort((a, b) => b.last - a.last);
+  const st = q('#adsl-stats');
+  if (st) st.textContent = `${adslUi.packets} PACKET${adslUi.packets === 1 ? '' : 'S'} · ${ac.length} AIRCRAFT${adslUi.ogn ? ` · ${adslUi.ogn} OGN TRACKER PACKET${adslUi.ogn === 1 ? '' : 'S'} (NOT READ)` : ''}`;
+  const cards = q('#adsl-cards');
+  if (cards) cards.innerHTML = ac.length ? ac.map(a => {
+    const t = a.p.traffic, age = now - a.last, live = age < 30_000, emer = t ? ADSL_EMERGENCY[t.emergency] : '';
+    const what = t ? (ADSL_CATEGORY[t.category] ?? `category ${t.category}`) : 'status only';
+    const nums = t ? [t.altM !== undefined ? adslAlt(t.altM) : '', t.speedMs !== undefined ? adslSpeed(t.speedMs) : '', t.trackDeg !== undefined ? `${Math.round(t.trackDeg)}°` : '', t.climbMs !== undefined ? adslClimb(t.climbMs) : '', ADSL_STATE[t.state] ?? ''].filter(Boolean).join(' · ') : '';
+    const also = [a.econTx ? `also ${econList(a.econTx)}` : '', a.xpdr ? (a.xpdr === 2 ? 'Mode S' : 'Mode C') : '', a.p.relay ? 'relayed' : ''].filter(Boolean).join(' · ');
+    return `<div class="mt-card ${adslUi.sel === a.key ? 'sel' : ''} ${live ? '' : 'dim'}" data-adsl="${esc(a.key)}"><div class="mt-h"><span class="mt-id">${esc(a.key)}</span><span class="mt-k"><b>${esc(emer || what.toUpperCase())}</b><small>${esc(a.lat !== undefined ? `${a.lat.toFixed(4)}, ${a.lon!.toFixed(4)}` : 'no position')}${also ? ` · ${esc(also)}` : ''}</small></span><span class="mt-live ${live ? 'on' : ''}"><i></i>${live ? 'LIVE' : bleAgo(age)}</span></div>`
+      + `<div class="mt-clk"><b>${a.n}</b><small>${esc(nums || 'no position report yet')}</small><em>${a.levelDb.toFixed(0)} dB</em></div></div>`;
+  }).join('') : emptyState('adsl');
+  if (geo) {
+    const items: GeoItem[] = ac.filter(a => a.lat !== undefined && now - a.fixAt < 600_000).map(a => {
+      const t = a.p.traffic;
+      return { id: a.key, lat: a.lat!, lon: a.lon!, heading: t?.trackDeg, label: `${a.key}${t?.altM !== undefined ? ` · ${adslAlt(t.altM)}` : ''}`, kind: 'plane' as const, cls: t && ADSL_EMERGENCY[t.emergency] ? 'talk' : undefined };
+    });
+    geo.update(items, adslUi.sel);
+  }
+}
+// FORK: end ADS-L
 // FORK: ------------------------------------------------------------------------------- Drones (DJI DroneID)
 /** Where DJI drones have been heard sending DroneID (proto17/dji_droneid); AUTO steps through them. */
 const DRONEID_FREQS = [2_414_500_000, 2_429_500_000, 2_444_500_000, 2_459_500_000];
@@ -10071,6 +10134,7 @@ function redraw(id: string): void {
  *  this side brought the entire list straight back with the next one. */
 function clearApp(id: string): void {
   if (id === 'fpv') { fpvUi.seen.clear(); refreshFpv(); }   // FORK: analog FPV video
+  if (id === 'adsl') { adslUi.ac.clear(); adslUi.packets = 0; adslUi.sel = ''; refreshAdsl(); }   // FORK: ADS-L
   if (id === 'iridium') { iriUi.sats.clear(); iriUi.counts = {}; iriUi.time = 0; iriUi.sel = ''; refreshIridium(); }   // FORK: Iridium
   if (id === 'droneid') { droneLinks.links.clear(); droneUi.drones.clear(); droneUi.bursts = 0; droneUi.decoded = 0; droneUi.sel = ''; refreshDrone(); }   // FORK: DJI DroneID
   logs[id] = []; counts[id] = 0;
@@ -10619,6 +10683,8 @@ function ensureWorker(): Worker {
       case 'ble': onBleAdv(m as { pdu: number[]; db: number; ch: number }); break;
       case 'droneid': onDroneId(m as unknown as { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }); break;   // FORK: DJI DroneID
       case 'navaid': onNavaid(m as unknown as NavaidMsg); break;   // FORK: Navaids
+      case 'adsl': onAdsl(m.p as AdslPacket, m.mhz as number, m.levelDb as number); break;   // FORK: ADS-L
+      case 'adslStats': if (adslUi.ogn !== m.ogn) { adslUi.ogn = m.ogn as number; refreshAdsl(); } break;   // FORK: ADS-L (packets are counted as they arrive)
       case 'iridiumFrame': onIridiumFrame(m.f as IridiumFrame & { levelDb: number }); break;   // FORK: Iridium
       case 'iridiumStats': iriUi.counts = m.counts as Record<string, number>; iriUi.detected = m.detected as number; iriUi.demodulated = m.demodulated as number; refreshIridium(); break;   // FORK: Iridium
       case 'loraBurst': onLoraBurst(m.burst as LoraBurst); break;   // FORK: control-link fingerprints
@@ -11375,7 +11441,7 @@ function initShell(): void {
 /** Each app's card tag and title (the Android app's). */
 const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
   js8: ['JS8', 'HF MESSAGING'],
-  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], gmrs: ['GMRS', 'ALL 30 CHANNELS · MURS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], iridium: ['IRIDIUM', 'SATELLITES · RING ALERTS'] /* FORK */, navaid: ['NAVAIDS', 'VOR · ILS · DME'] /* FORK */, hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'],
+  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], gmrs: ['GMRS', 'ALL 30 CHANNELS · MURS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], iridium: ['IRIDIUM', 'SATELLITES · RING ALERTS'] /* FORK */, navaid: ['NAVAIDS', 'VOR · ILS · DME'] /* FORK */, adsl: ['GLIDERS', 'ADS-L TRAFFIC'] /* FORK */, hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'],
   ert: ['METERS', 'UTILITY METERS'], lora: ['MESH', 'MESH RADIO TEXT'], sondes: ['BALLOONS', 'WEATHER BALLOONS'], btle: ['BLUETOOTH', 'BLUETOOTH DEVICES'], adsb: ['AIRCRAFT', 'AIRCRAFT OVERHEAD'], ais: ['SHIPS', 'SHIPS NEARBY'], aprs: ['HAM MAP', 'STATIONS ON THE MAP'], uat: ['FLIGHT UAT', 'FLIGHT WEATHER · SMALL PLANES'],
   devices: ['DEVICES', 'KEYS · REMOTES · SENSORS'], spectrum: ['SPECTRUM', 'ANALYZER · ZERO SPAN'], analyzer: ['ANALYZER', 'CAPTURE · DEMOD · COMPARE'], capture: ['CAPTURE', 'RAW IQ TO FILE'], prowl: ['PROWL', 'HUNTING FOR VOICE'], lookingglass: ['GLASS', 'WIDEBAND SWEEP'],
   search: ['SEARCH', 'ACTIVE FREQUENCIES'], transmit: ['TX', 'IDLE'], troll: ['TROLL', 'IDLE'],
@@ -11388,7 +11454,7 @@ const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
 const APP_TECH: Partial<Record<AppId, string>> = {
   audio: 'WFM · NFM · AM · SSB · RDS', hd: 'NRSC-5 · IBOC · FM HYBRID', fleet: 'P25 · DMR · NXDN · TETRA · SMARTNET',
   pager: 'POCSAG · FLEX · REFLEX', lora: 'LORA · MESHTASTIC · MESHCORE · LORAWAN', adsb: 'ADS-B · MODE S · 1090 MHZ',
-  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
+  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, adsl: 'ADS-L · 868.2 / 868.4 MHZ' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
   ais: 'AIS · 161.975 / 162.025 MHZ', satcom: 'INMARSAT · STD-C EGC · AERO · L-BAND', cell: 'LTE · SIB · WEA · ETWS', devices: 'OOK · FSK · TPMS · Z-WAVE · 315–915 MHZ',
   js8: 'JS8 · 8-FSK · HF USB', ham: 'SSB · CW · FM · FT8 · SSTV',
   hamplus: 'FM · DMR · D-STAR · FUSION · P25 · NXDN · M17', cb: 'CB · 26.965–27.405 MHZ · AM · FM · SSB', gmrs: 'GMRS · FRS · MURS · NFM · CTCSS · DCS', aprs: 'APRS · AX.25 · 144.390 MHZ',
