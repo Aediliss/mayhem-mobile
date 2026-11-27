@@ -81,8 +81,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 |---|---|---|---|---|
 | [x] | ★ | Marine DSC ch 70 (156.525 MHz, 1200 Bd FSK); link MMSIs to Ships | ITU-R M.493-16 (12/2023): Annex 1 (ten-bit code, time diversity, phasing, format specifiers, call tables A1-4.x, Table A1-5 channels, ECC) | ITU-R recommendation: implemented from the spec, no code ported ✔ |
 | [x] | ★ | EPIRB/PLB/ELT 406 MHz (BCH, hex ID, country, protocol, position) + 121.5 MHz homing | Mayhem `epirb_rx` (external/epirb_rx: beacon.hpp, location.cpp, BEACON.RES; baseband/proc_epirb: the signal) and its sdcard/EPIRB/BEACONS.TXT reference frames; C/S T.001 bit layout; ICAO 121.5 homer sweep (≥700 Hz within 1600–300 Hz, 2–4 Hz) | Mayhem's EPIRB files: GPL-2.0-or-later (Frederic Borry, ADRASEC 31) ✔ — checked in each file's header |
-| [ ] | | NAVTEX / SITOR-B (518/490 kHz) | ITU-R M.540, M.625 | spec |
-| [ ] | | Inmarsat-C EGC / SafetyNET | JAERO / scytale-c | JAERO MIT ✔ · scytale-c check |
+| [x] | | NAVTEX / SITOR-B (518/490 kHz), both at once | ITU-R M.625-4 (mode B: 7-unit code Table 1, Table 2 phasing signals, §4 time diversity and phasing), M.540-2 (ZCZC B1B2B3B4 … NNNN) | ITU-R recommendations: implemented from the specs, no code ported ✔ |
+| [x] | | Inmarsat-C EGC / SafetyNET — **done upstream**: the Satcom app's EGC mode (0.9.76, dsp/lband/stdc.ts: NCS TDM, EGC messages with priority, service and area) | upstream | — |
 
 ## Phase 6 — Public safety trunking (extends Dispatch)
 
@@ -820,3 +820,18 @@ for "or later" first.
   (a self-test burst): near a marina, airfield or outdoor shop you may catch one; a real alert is shown in red. 121.5:
   an ELT's homer is heard for miles from an aircraft; FAA guidance puts ELT tests in the first five minutes of the hour
   (in the US): turn for the highest level to find it.
+- **NAVTEX** (`dsp/navtex.ts`, new app "NAVTEX", `test/navtex.test.ts`): written from ITU-R M.625-4 and M.540-2. The
+  radio at 1 MHz and 2 MS/s holds 490 and 518 kHz together; each channel mixed down, a boxcar then a FIR to 2 kHz, FM
+  discriminator less its slow mean (the carrier error), a 100 Bd bit clock; character sync from two phasing pairs
+  (phasing signal 2 in DX, α in RX); every DX signal paired with its RX copy two slots on and the good one kept
+  (four B and three Y; both good but different: mutilated; phasing 2 against α during phasing is phasing); letters and
+  figures (figure-case D, F, G, H, J print nothing); a message from an error-free ZCZC B1B2B3B4 to NNNN, ended early by
+  two idle α or too many mutilated signals; repeats of the same B1-B4 counted, not shown twice (serial 00 always).
+  Tests: the code table (32 distinct signals, constant ratio); a message read back from bits; one bit hit in every
+  third DX signal read from the RX copies; the same signal hit in both copies of the preamble gives no message; end to
+  end, two messages at once on 518 and 490 kHz as 100 Bd FSK through noise with carrier errors of +40 and −25 Hz; noise
+  gives nothing. In Chromium a 2 MS/s recording at 1 MHz through OPEN REC: the 518 kHz message on its card. No
+  off-air recording yet.
+  Hardware: a HackRF (518 kHz is under its rated 1 MHz floor: strong stations only; an upconverter or an HF-sampling
+  RTL-SDR does better) with a long wire outside; NAVTEX stations send in their own ten-minute slots every four hours,
+  carrying far at night; check messages against the station's published schedule (B1 letter) or another NAVTEX decoder.
