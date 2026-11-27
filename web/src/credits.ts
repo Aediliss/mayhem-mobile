@@ -78,6 +78,7 @@ export const CREDITS: [boolean, string][] = [
   [false, "ADS-L packets, scrambling, CRC and Traffic/Status payloads written from EASA's ADS-L 4 SRD-860 specification (Issue 2; open for implementation); OGN tracker sync word from the OGN wiki (CC BY-SA 3.0)"],
   [false, "Inmarsat Aero 10.5 kbps P-channel (OQPSK, framing, interleaver, code, scrambler, signal units, ACARS) and R/T bursts (10.5k OQPSK, 600/1200 MSK) after JAERO by Jonathan Olds (MIT); its 10.5k, 10.5k burst and 1200 bps burst sample recordings used as test fixtures"],
   [false, "FT4 after ft8_lib by Kārlis Goba (MIT: the FT4 sync blocks, Gray map, scrambling sequence and decoding approach; its encoder used to check ours)"],
+  [false, "WSPR after WSJT-X's wsprd by Joe Taylor K1JT and Steven Franke K9AN (GPL-3.0-or-later: sync vector, code, interleaving, message packing, search); hash: lookup3 by Bob Jenkins (public domain); test recording: WSJT-X's samples"],
   [false, "NAVTEX written from ITU-R M.625-4 (SITOR mode B: the 7-unit code, time diversity, phasing) and M.540-2 (the NAVTEX format)"],
   [false, "406 MHz beacon frames (Cospas-Sarsat first generation: protocols, BCH, locations, IDs) ported from PortaPack Mayhem's EPIRB receiver by Frederic Borry, ADRASEC 31 (GPL-2.0-or-later); its list of reference beacon frames used in the tests"],
   [false, "Marine DSC written from ITU-R M.493-16 (the ten-bit code, time diversity, phasing, call formats, ECC)"],

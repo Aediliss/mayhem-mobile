@@ -103,7 +103,9 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | FT4 (reuses FT8's LDPC, OSD, CRC and unpacking) in Ham Radio → DIGITAL | ft8_lib (constants.c FT4 Costas/Gray/XOR, encode.c ft4_encode, decode.c ft4 sync and symbols); its C encoder run to give the test vectors | ft8_lib MIT ✔ (LICENSE, Kārlis Goba) |
-| [ ] | ★ | WSPR (+ optional WSPRnet spots, off by default), JT65/JT9/Q65/FST4/FST4W, MSK144 | WSJT-X | check (GPL-3.0 expected; verify from the source tarball's COPYING) |
+| [x] | ★ | WSPR-2 in Ham Radio → DIGITAL (2-minute beacons: call, grid, dBm, SNR, DT, drift) | WSJT-X lib/wsprd (wsprd.c, wsprd_utils.c, wsprsim_utils.c); its wsprsim built and run for the test vectors | WSJT-X GPL-3.0 ✔ (COPYING is GPLv3; wsprd.c, wsprd_utils.c and nhash.c say GPL v3 or later). fano.c (Phil Karn, 1994) carries no licence line, so the sequential decoder is written here from the textbook stack algorithm instead; nhash is lookup3 (Bob Jenkins, public domain) |
+| [ ] | | WSPRnet spot upload (off by default; needs the STATION call and grid, and Settings' "nothing is sent anywhere else" text changed) | WSJT-X WSPRNet.cpp (form fields to check) | GPL-3.0 ✔ |
+| [ ] | ★ | JT65/JT9/Q65/FST4/FST4W, MSK144 | WSJT-X | GPL-3.0 ✔ (COPYING checked for WSPR) |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
@@ -850,3 +852,23 @@ for "or later" first.
   No off-air recording yet.
   Hardware: a HackRF (or an HF-capable RTL-SDR) on an FT4 frequency (20 m 14.080 MHz USB is the busiest; 40 m 7.0475)
   with a wire antenna, during contests most of all: decodes every 7.5 s; compare with WSJT-X on the same audio.
+- **WSPR** (`dsp/ham/wspr.ts`; FORK edits in the worker (its own decoder, outside AUTO; its spots go to FT8's list
+  with the drift after the message) and main.ts (the DIGITAL tile; FT8's panel follows the mode: caption, 120 s
+  countdown, WSPR's dial frequencies, its own empty text, tap-to-log takes the first word as the call), `test/wspr.test.ts`,
+  `test/fixtures/wsjtx-wspr-150426_0918-375sps.ci16`): after wsprd (GPL-3.0). USB audio mixed down from 1500 Hz to a
+  375 Hz complex baseband; half-symbol-step spectra give candidates within ±110 Hz; a coarse search over frequency,
+  start and drift on the spectra, then wsprd's fine searches on the samples; soft bits from each symbol's two
+  allowed tones; a stack sequential decoder (written here) over the K=32 code; the message must end in the 31 zero tail
+  bits and unpack to a valid call, grid and power. Decodes 115 s into each even minute, from the slot's first 114 s.
+  Tests: five messages (types 1, 2 and 3) pack to the same data bytes and all 162 channel symbols as WSJT-X's wsprsim
+  (built and run here); unpacking gives each back, a hashed call shows once heard in full; the decoder corrects noisy soft symbols
+  (at least 10 hard errors, checked) and gives up on noise; three stations in a slot (one drifting 2 Hz, the weakest −26 dB in 2500 Hz) decode
+  with their frequency (±1 Hz) and DT (±0.3 s); noise alone gives nothing; the live path (48 kHz pushed as it comes,
+  the clock stubbed) decodes at the end of its slot; WSJT-X's real off-air sample (samples/WSPR/150426_0918.wav) gives
+  seven stations (NM7J DM26, WD4LHT EL89, ND6P DM04, W3HH EL89, W5BIT EL09, DJ6OL JO52, KI7CI DM09). Synthetic threshold
+  (6 runs each): every one at −28 dB, 4/6 at −29, 1/6 at −30; no false decodes; a slot takes well under a second.
+  Not done: wsprd's multi-symbol detection, its signal subtraction (second pass) and OSD, so the deepest decodes are
+  wsprd's; Ham Map spots for WSPR; WSPRnet upload (its own row). In Chromium: Ham Radio → DIGITAL → WSPR shows the
+  WSPR caption, countdown and the twelve dials.
+  Hardware: a HackRF (or an HF-capable RTL-SDR) with a wire antenna on 20 m (14.0956 MHz USB) or 40 m by day, 80 m by
+  night: spots every two minutes; compare with WSJT-X on the same audio, or with wsprnet.org's spot list for the band.

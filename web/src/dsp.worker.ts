@@ -65,6 +65,7 @@ import { GeoscanDecoder } from './dsp/geoscan.js';
 import { CwDecoder, RttyDecoder, Psk31Decoder, type DigitalDecoder } from './dsp/ham/digital.js';
 import { Ft8Decoder } from './dsp/ham/ft8.js';
 import { Ft4Decoder } from './dsp/ham/ft4.js';   // FORK: FT4
+import { WsprDecoder } from './dsp/ham/wspr.js';   // FORK: WSPR
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
 import { loadJsc } from './dsp/js8/varicode.js';
 import { DmrDecoder } from './dsp/ham/dmr.js';
@@ -241,6 +242,11 @@ let digiMode = 'off', digiWinner = '';
 for (const d of digiAll) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase() || (digiMode === 'auto' && (digiWinner === d.name || d.name === 'FT8' || d.name === 'FT4' /* FORK */ || d.name === 'SSTV'))) post({ type: 'digi', from: d.name, text: t, meta }); };
 ft8.onDecodes = (list, slot) => post({ type: 'ft8', list, slot });
 ft4.onDecodes = (list, slot) => post({ type: 'ft8', list, slot, mode: 'FT4' });   // FORK: FT4 shares FT8's list
+// FORK: WSPR (2-minute slots; not in AUTO), its spots in FT8's list with the drift after the message
+const wspr = new WsprDecoder();
+wspr.onText = (t, meta) => { if (digiMode === 'wspr') post({ type: 'digi', from: 'WSPR', text: t, meta }); };
+wspr.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'WSPR', slot, list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.drift ? `${d.text} · drift ${d.drift > 0 ? '+' : ''}${d.drift} Hz` : d.text })) });
+// FORK: end WSPR
 // JS8: the whole passband at every speed, on the HAM receiver's USB audio while the JS8 app is open
 const js8 = new Js8Decoder();
 let js8On = false, js8WfAt = 0;
@@ -306,7 +312,7 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   if (typeof opts.pitch === 'number') cw.setPitch(opts.pitch);
   if (typeof opts.pskHz === 'number') psk.setCenter(opts.pskHz);
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
-  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
+  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] /* FORK: WSPR */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();
   ham.digital = wanted;
 }
@@ -325,7 +331,7 @@ setInterval(() => {
     if (autoSettled !== was) { applyTaps(); if (!autoSettled) dmr.reset(); }
   } else { autoSettled = false; autoCarrierSince = 0; }
   if (ham.digital.length === 0 && !dv) return;
-  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' /* FORK */ && d.confidence > best.confidence) best = d;
+  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' /* FORK */ && d.confidence > best.confidence) best = d;
   if (digiMode === 'auto') digiWinner = dv?.locked ? 'DMR' : best && best.confidence > 0.35 ? best.name : '';
   const conf: [string, number][] = ham.digital.map(d => [d.name, Math.round(d.confidence * 100)]);
   if (dv) conf.push(['DMR', dv.locked ? 100 : 0]);
