@@ -84,3 +84,63 @@ test('a real recording (JAERO\'s 10.5k sample): every signal unit checks, three 
   assert.deepEqual([d.app, d.gsAddr, d.crcOk], ['adsc', 'PIKCPYA', true]);
   assert.equal(arinc622Summary(d).summary, 'ADS-C from PIKCPYA: periodic contract request #6 every 832 s + flight id, predicted route, earth reference data, meteo data');
 });
+
+// ---- the R and T channels (aircraft → ground bursts)
+
+/** A short downlink split into R-channel units: sequence indicator / bytes, Q/ref with the user-data flag, AES, GES, data. */
+function rUnits(aes: number, ges: number, q: number, ref: number, data: number[]): number[][] {
+  const total = Math.ceil(data.length / 11), seqs = [[1], [2, 3], [4, 5, 6]][total - 1], out: number[][] = [];
+  for (let i = 0; i < total; i++) {
+    const part = data.slice(11 * i, 11 * i + 11);
+    out.push([(seqs[i] << 4) | part.length, (q << 4) | 0x08 | ref, aes >> 16, (aes >> 8) & 255, aes & 255, ges, ...part]);
+  }
+  return out;
+}
+
+test('R and T packets: built, read back from soft bits with the right column count; a flipped bit fails', async () => {
+  const { buildRt, decodeRt, rPacket, tPacket, RtReader } = await import('../src/dsp/aero105/burst.js');
+  const { SuReader } = await import('../src/dsp/aero105/frame.js');
+  const soft = (bits: Uint8Array, extra = 0) => { const s = new Float32Array(bits.length + extra); bits.forEach((b, i) => { s[i] = b ? 1 : -1; }); return s; };
+  // a short ACARS downlink (≤ 33 bytes) in three R packets
+  const odd = (c: number) => { let n = 0; for (let i = 0; i < 7; i++) n += (c >> i) & 1; return n % 2 === 0 ? c | 0x80 : c; };
+  const su = new SuReader(), lines: string[] = []; su.hz = 1_646_015_000; su.onAcars = l => lines.push(l);
+  const rt = new RtReader(su);
+  // a T packet: header and the same 0x71 / 0xC0 units as the P channel, here a downlink with text
+  const units = acarsSus(0xA1B2C3, 0x82, 2, 6, 'N512UA', 'H1', 'B', 'M01AUA0901POS N4030.0W07015.0').map(u => u.slice(0, 10));
+  const tb = tPacket(0xA1B2C3, 0x82, units.map(u => signalUnit(u)));
+  const cols = 5 + 3 * (units.length - 1), t = decodeRt(soft(buildRt(tb, cols), 300))!;
+  assert.ok(t && t.kind === 'T' && t.aes === 0xA1B2C3 && t.ges === 0x82 && t.units.length === units.length);
+  rt.packet(t);
+  assert.deepEqual(lines, ['SAT 1646.015 ↓ N512UA  H1  blk B  ack NAK  #M01A UA0901\nPOS N4030.0W07015.0']);
+  // R packets: a signalling unit is counted and not read; user data comes back together across three
+  const r1 = decodeRt(soft(buildRt(rPacket([0x22, 0x01, 0xA1, 0xB2, 0xC3, 0x82]), 5)))!;
+  assert.equal(r1.kind, 'R');
+  const body = [0xFF, 0xFF, 0x01, ...[..."2", ...'.N512UA', '\x15', ...'Q0', '2', '\x02', ...'M02AUA0901HI', '\x03'].map(c => odd(c.charCodeAt(0))), 0x00, 0x00, 0x7F];
+  for (const u of rUnits(0xA1B2C3, 0x82, 1, 3, body.slice(0, 33))) { const p = decodeRt(soft(buildRt(rPacket(u), 5)))!; assert.equal(p.kind, 'R'); rt.packet(p); }
+  rt.packet(r1);
+  assert.equal(rt.stats.rPackets, 4);
+  assert.equal(lines[1], 'SAT 1646.015 ↓ N512UA  Q0  blk 2  ack NAK  #M02A UA0901\nHI');
+  // one coded bit in eight wrong is mended by the code (a stretch would be too: the interleaver spreads it); one in three is not
+  const mended = buildRt(tb, cols); for (let i = 0; i < mended.length; i += 8) mended[i] ^= 1;
+  assert.equal(decodeRt(soft(mended))?.kind, 'T');
+  const bad = buildRt(tb, cols); for (let i = 0; i < bad.length; i += 3) bad[i] ^= 1;
+  assert.equal(decodeRt(soft(bad)), null);
+});
+
+// fixtures/jaero-aero10k5-bursts-16000sps.cs8: two bursts (0.7 s and 0.65 s) from JAERO's samples/10.5k_burst_sample.mp3
+// (MIT), turned into complex baseband and brought to 16 kS/s.
+test('real bursts (JAERO\'s 10.5k burst sample): two T packets, an ADS-C report from D-AIHV and a position from F-OFDF', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { Aero105 } = await import('../src/dsp/aero105/aero105.js');
+  const { parseAcarsLine } = await import('../src/acars-planes.js');
+  const { msgInsight } = await import('../src/acars-insight.js');
+  const iq = new Int8Array(readFileSync(new URL('../test/fixtures/jaero-aero10k5-bursts-16000sps.cs8', import.meta.url)));
+  const a = new Aero105(), lines: string[] = []; a.hz = 1_646_000_000; a.onAcars = l => lines.push(l);
+  for (let o = 0; o < iq.length; o += 16384) a.onIq(iq.subarray(o, o + 16384), 16_000, 0);
+  assert.deepEqual([a.stats.bursts, a.stats.tPackets, a.stats.badBursts], [2, 2, 0]);
+  assert.deepEqual(lines.map(l => l.split('\n')[0]), ['SAT 1646.000 ↓ D-AIHV  B6  blk 8  ack NAK  #J31A LH0424', 'SAT 1646.000 ↓ F-OFDF  H1  blk 7  ack NAK  #F37A TX0542']);
+  const [ads, pos] = lines.map(l => msgInsight(parseAcarsLine(l, 0)!));
+  // ADS-C (its own CRC checks): Lufthansa 424 over the North Atlantic at FL360, a waypoint change at 51°N 30°W
+  assert.equal(ads.kind, 'adsc'); assert.ok(Math.abs(ads.pos!.lat - 51.0013) < 1e-3 && Math.abs(ads.pos!.lon + 30.0054) < 1e-3); assert.equal(ads.nums.altFt, 36000);
+  assert.equal(pos.kind, 'pos'); assert.ok(Math.abs(pos.pos!.lat - 46.855) < 1e-3 && Math.abs(pos.pos!.lon + 22.2317) < 1e-3);
+});

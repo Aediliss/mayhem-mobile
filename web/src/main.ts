@@ -4983,7 +4983,7 @@ function renderSatcom(view: HTMLElement): void {
         : '<div class="caption">TAP A CARRIER · 1545 TO 1555 MHZ</div>'}
       <div id="sc-stats" class="health"></div>
       ${egc ? `${countRowHtml('satcom', '0 MESSAGES')}<div id="sc-msgs" class="cl-alerts"></div>` : logHtml('satcom', 'listening…')}
-      <div class="note about">Inmarsat on L-band, receive only. EGC decodes the broadcasts every Inmarsat-C ship terminal hears on its region's NCS carrier: SafetyNET (NAVAREA and coastal warnings, weather, distress relays, search and rescue) and FleetNET, with the priority and the area each is meant for. Encrypted messages are flagged and not decoded. AERO decodes the ACARS that ground stations send to aircraft on a P-channel; each message also shows in Flight Msgs, marked SATCOM.${'' /* FORK */} AERO 10.5K reads the busier 10 500 bps OQPSK P-channels (after JAERO), where CPDLC and ADS-C to oceanic flights are common. Needs an L-band patch antenna and an LNA.</div>
+      <div class="note about">Inmarsat on L-band, receive only. EGC decodes the broadcasts every Inmarsat-C ship terminal hears on its region's NCS carrier: SafetyNET (NAVAREA and coastal warnings, weather, distress relays, search and rescue) and FleetNET, with the priority and the area each is meant for. Encrypted messages are flagged and not decoded. AERO decodes the ACARS that ground stations send to aircraft on a P-channel; each message also shows in Flight Msgs, marked SATCOM.${'' /* FORK */} AERO 10.5K reads the busier 10 500 bps OQPSK P-channels (after JAERO), where CPDLC and ADS-C to oceanic flights are common, and the bursts aircraft send back on R/T channels (those go up at 1.6 GHz: heard from aircraft nearby, or from the satellite's C-band feeder link with a dish). Needs an L-band patch antenna and an LNA.</div>
     </section>`;
   scope = attach(tunableScope('scope', 80, 70));
   qa<HTMLButtonElement>('[data-scmode]', view).forEach(b => b.onclick = () => satcomSetMode(b.dataset.scmode as SatcomMode));
@@ -5004,7 +5004,7 @@ function refreshSatcom(): void {
     const f = s?.egc, a = s?.aero;
     const utc = f && f.frameNo >= 0 ? ` · FRAME ${f.frameNo} (${new Date(f.frameNo * 8640).toISOString().slice(11, 19)} UTC)` : '';
     st.textContent = egc ? `${carrier} · ${f?.frames ?? 0} FRAMES · ${f?.packets ?? 0} PACKETS${f?.badPackets ? ` · ${f.badPackets} BAD` : ''}${utc}`
-      : `${carrier} · ${a?.frames ?? 0} FRAMES · ${a?.units ?? 0} SIGNAL UNITS${a?.badUnits ? ` · ${a.badUnits} BAD` : ''}${a && a.ges >= 0 ? ` · GES ${a.ges}` : ''}`;
+      : `${carrier} · ${a?.frames ?? 0} FRAMES · ${a?.units ?? 0} SIGNAL UNITS${a?.badUnits ? ` · ${a.badUnits} BAD` : ''}${a && a.ges >= 0 ? ` · GES ${a.ges}` : ''}${a && 'bursts' in a && (a as { bursts: number }).bursts ? ` · ${(a as { bursts: number }).bursts} BURSTS` : ''}`;   // FORK: + Aero 10.5k bursts
   }
   if (!egc || paused.has('satcom')) return;
   const msgs = s?.messages ?? [];

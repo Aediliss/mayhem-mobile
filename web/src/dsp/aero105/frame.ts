@@ -25,6 +25,11 @@ export function deinterleave(block: ArrayLike<number>, out: Float32Array): void 
   let k = 0;
   for (let j = 0; j < COLS; j++) for (let i = 0; i < ROWS; i++) out[k++] = block[depermute[i] * COLS + j];
 }
+/** The same with any number of columns (the R/T channels' blocks, 5 + 3k columns). */
+export function deinterleaveCols(block: ArrayLike<number>, cols: number, out: Float32Array): void {
+  let k = 0;
+  for (let j = 0; j < cols; j++) for (let i = 0; i < ROWS; i++) out[k++] = block[depermute[i] * cols + j];
+}
 export function interleave(coded: ArrayLike<number>, out: Float32Array | Uint8Array): void {
   let k = 0;
   for (let j = 0; j < COLS; j++) for (let i = 0; i < ROWS; i++) out[depermute[i] * COLS + j] = coded[k++];
@@ -47,11 +52,12 @@ export class ConvEncoder {
 const OUT0 = new Uint8Array(2 * NSTATES), OUT1 = new Uint8Array(2 * NSTATES);
 for (let s = 0; s < NSTATES; s++) for (let b = 0; b < 2; b++) { const r = (s << 1) | b; OUT0[2 * s + b] = parity(r & POLY0); OUT1[2 * s + b] = parity(r & POLY1); }
 /**
- * Soft Viterbi over `pairs` coded pairs (soft > 0 = 1), starting from any state, ending in the best one. Returns the
+ * Soft Viterbi over `pairs` coded pairs (soft > 0 = 1), starting from any state (or state 0), ending in the best one. Returns the
  * decoded bits and the share of hard coded bits the chosen path disagrees with.
  */
-export function viterbi(soft: Float32Array, pairs: number): { bits: Uint8Array; ber: number } {
+export function viterbi(soft: Float32Array, pairs: number, fromZero = false): { bits: Uint8Array; ber: number } {
   let m = new Float64Array(NSTATES), m2 = new Float64Array(NSTATES);
+  if (fromZero) { m.fill(-1e9); m[0] = 0; }   // a burst's coder starts from zero
   const from = new Uint8Array(pairs * NSTATES);   // the predecessor's dropped (oldest) bit
   for (let t = 0; t < pairs; t++) {
     const a = soft[2 * t], b = soft[2 * t + 1];
@@ -127,7 +133,8 @@ export class SuReader {
       this.unit(Array.from(d.subarray(at, at + 10)));
     }
   }
-  private unit(b: number[]): void {
+  /** One signal unit's ten bytes (P or T channel); `down` when it came from an aircraft. */
+  unit(b: number[], down = false): void {
     const t = b[0];
     if (t === 0x71) {
       for (const x of this.isus) x.age++;
@@ -146,16 +153,26 @@ export class SuReader {
     if (it.left > 0) { it.data.push(...b.slice(2, 10)); return; }
     it.data.push(...b.slice(2, 2 + it.last));
     this.isus = this.isus.filter(x => x !== it);
-    this.acars(it);
+    this.acars(it, down);
   }
-  private acars(it: Isu): void {
+  /** An ISU's user data (from the P/T channel's units or the R channel's), read as ACARS when it is. */
+  acars(it: { aes: number; data: number[] }, down = false): void {
     const u = it.data;
     if (it.aes === 0 || u.length <= 16 || u[0] !== 0xFF || u[1] !== 0xFF || (u[15] !== 0x83 && u[15] !== 0x02)) return;
     // the registration and the text carry odd parity: a unit that slipped through with a wrong byte is dropped
     for (let k = 4; k < 11; k++) if (!oddOk(u[k])) return;
     if (u[15] === 0x02) for (let k = 16; k < u.length - 4; k++) if (!oddOk(u[k])) return;
-    const line = acarsLine((this.hz / 1e6).toFixed(3), u.slice(3));
+    let line = acarsLine((this.hz / 1e6).toFixed(3), u.slice(3));
     if (!line) return;
+    if (down) {
+      // upstream's line is written for uplinks; a downlink's text opens with its message number (4) and flight (6)
+      const nl = line.indexOf('\n'), head0 = (nl < 0 ? line : line.slice(0, nl)).replace(' ↑ ', ' ↓ '), body = nl < 0 ? '' : line.slice(nl + 1);
+      if (body.length >= 10) {
+        const tag = `  #${body.slice(0, 4)} ${body.slice(4, 10).trim() || '-'}`, mi = head0.indexOf('  mode ');
+        const head = mi < 0 ? head0 + tag : head0.slice(0, mi) + tag + head0.slice(mi), rest = body.slice(10).trim();
+        line = rest ? `${head}\n${rest}` : head;
+      } else line = body ? `${head0}\n${body}` : head0;
+    }
     this.stats.messages++;
     this.onAcars?.(line, it.aes);
   }
