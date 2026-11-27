@@ -102,7 +102,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | FT4 (reuse FT8 LDPC/unpack), WSPR (+ optional WSPRnet spots, off by default), JT65/JT9/Q65/FST4/FST4W, MSK144 | WSJT-X | check (GPL-3.0 expected; verify from the source tarball's COPYING) |
+| [x] | ★ | FT4 (reuses FT8's LDPC, OSD, CRC and unpacking) in Ham Radio → DIGITAL | ft8_lib (constants.c FT4 Costas/Gray/XOR, encode.c ft4_encode, decode.c ft4 sync and symbols); its C encoder run to give the test vectors | ft8_lib MIT ✔ (LICENSE, Kārlis Goba) |
+| [ ] | ★ | WSPR (+ optional WSPRnet spots, off by default), JT65/JT9/Q65/FST4/FST4W, MSK144 | WSJT-X | check (GPL-3.0 expected; verify from the source tarball's COPYING) |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
@@ -835,3 +836,17 @@ for "or later" first.
   Hardware: a HackRF (518 kHz is under its rated 1 MHz floor: strong stations only; an upconverter or an HF-sampling
   RTL-SDR does better) with a long wire outside; NAVTEX stations send in their own ten-minute slots every four hours,
   carrying far at night; check messages against the station's published schedule (B1 letter) or another NAVTEX decoder.
+- **FT4** (`dsp/ham/ft4.ts`, FORK edits in `dsp/ham/ft8.ts` (one method and one export: the shared code, CRC,
+  LLR scaling, resampler and unpacking), the worker and main.ts (the DIGITAL tile; FT8's panel follows the mode:
+  caption, 7.5 s countdown, FT4's dial frequencies), `test/ft4.test.ts`): after ft8_lib (MIT). Audio at 10 2/3 kHz (a
+  symbol is 512 samples), a two-symbol Hann window every half symbol, half-tone bins in dB; candidates from the four
+  Costas blocks (each tone against its symbol's other three); the 87 data symbols' four tone levels give two
+  likelihoods each (Gray map); FT8's belief propagation, then OSD when BP comes close (then the message must be a
+  plausible standard one); CRC-14 over the scrambled payload; unscrambled and unpacked by FT8's code. Tests: four
+  messages' payloads and all 105 tones equal ft8_lib's own ft4_encode output (its C code built and run here); three
+  signals in one slot (800, 1500, 2200 Hz; DT 0, +0.2, −0.1 s; the weakest about −7 dB in 2500 Hz) all read; a
+  scrambled one and noise give nothing; the live path (48 kHz pushed as it comes, the clock stubbed) decodes in the
+  right slot with DT within 0.1 s. In Chromium: Ham Radio → DIGITAL → FT4 shows the FT4 caption, countdown and dials.
+  No off-air recording yet.
+  Hardware: a HackRF (or an HF-capable RTL-SDR) on an FT4 frequency (20 m 14.080 MHz USB is the busiest; 40 m 7.0475)
+  with a wire antenna, during contests most of all: decodes every 7.5 s; compare with WSJT-X on the same audio.

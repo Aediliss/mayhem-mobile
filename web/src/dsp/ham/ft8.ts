@@ -579,6 +579,8 @@ export class Ft8Decoder implements DigitalDecoder {
     }
   }
 
+  /** FORK: FT4 (ft4.ts) unpacks the same 77-bit messages, with this decoder's callsign hashes. */
+  unpackPayload(p: Uint8Array): string | null { return this.unpack(p); }
   // ---------------------------------------------------------------------------------------- unpacking
   private unpack(p: Uint8Array): string | null {
     const i3 = (p[9] >> 3) & 7, n3 = ((p[8] << 2) & 4) | ((p[9] >> 6) & 3);
@@ -947,3 +949,6 @@ class SincResampler {
     }
   }
 }
+
+// FORK: FT4 (ft4.ts) shares the code (BP, OSD), the CRC, the LLR scaling and the resampler
+export const ftxShared = { bpDecode, osdDecode, crc14, normalize, plausibleStd, SincResampler };

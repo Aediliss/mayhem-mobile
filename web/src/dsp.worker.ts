@@ -64,6 +64,7 @@ import { AnalogIds, analogIdText } from './dsp/hamid/analog.js';
 import { GeoscanDecoder } from './dsp/geoscan.js';
 import { CwDecoder, RttyDecoder, Psk31Decoder, type DigitalDecoder } from './dsp/ham/digital.js';
 import { Ft8Decoder } from './dsp/ham/ft8.js';
+import { Ft4Decoder } from './dsp/ham/ft4.js';   // FORK: FT4
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
 import { loadJsc } from './dsp/js8/varicode.js';
 import { DmrDecoder } from './dsp/ham/dmr.js';
@@ -233,11 +234,13 @@ const gmrs = new GmrsEngine('gmrs', emit, toAudio), murs = new GmrsEngine('murs'
 const classifier = new Classifier();
 // digital decoders on the HAM audio; 'auto' runs the three audio modems together and shows whichever is making sense
 const cw = new CwDecoder(600), rtty = new RttyDecoder(), psk = new Psk31Decoder(1000), ft8 = new Ft8Decoder(), sstv = new SstvDecoder();
-const digiAll: DigitalDecoder[] = [cw, rtty, psk, ft8, sstv];
+const ft4 = new Ft4Decoder();   // FORK: FT4
+const digiAll: DigitalDecoder[] = [cw, rtty, psk, ft8, ft4 /* FORK */, sstv];
 sstv.onImage = img => post({ type: 'sstv', ...img }, [img.rows.buffer]);
 let digiMode = 'off', digiWinner = '';
-for (const d of digiAll) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase() || (digiMode === 'auto' && (digiWinner === d.name || d.name === 'FT8' || d.name === 'SSTV'))) post({ type: 'digi', from: d.name, text: t, meta }); };
+for (const d of digiAll) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase() || (digiMode === 'auto' && (digiWinner === d.name || d.name === 'FT8' || d.name === 'FT4' /* FORK */ || d.name === 'SSTV'))) post({ type: 'digi', from: d.name, text: t, meta }); };
 ft8.onDecodes = (list, slot) => post({ type: 'ft8', list, slot });
+ft4.onDecodes = (list, slot) => post({ type: 'ft8', list, slot, mode: 'FT4' });   // FORK: FT4 shares FT8's list
 // JS8: the whole passband at every speed, on the HAM receiver's USB audio while the JS8 app is open
 const js8 = new Js8Decoder();
 let js8On = false, js8WfAt = 0;
@@ -322,7 +325,7 @@ setInterval(() => {
     if (autoSettled !== was) { applyTaps(); if (!autoSettled) dmr.reset(); }
   } else { autoSettled = false; autoCarrierSince = 0; }
   if (ham.digital.length === 0 && !dv) return;
-  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.confidence > best.confidence) best = d;
+  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' /* FORK */ && d.confidence > best.confidence) best = d;
   if (digiMode === 'auto') digiWinner = dv?.locked ? 'DMR' : best && best.confidence > 0.35 ? best.name : '';
   const conf: [string, number][] = ham.digital.map(d => [d.name, Math.round(d.confidence * 100)]);
   if (dv) conf.push(['DMR', dv.locked ? 100 : 0]);
