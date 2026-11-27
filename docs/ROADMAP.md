@@ -66,7 +66,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl (Tomasz Lemiech): hfdl.c, mpdu/lpdu/hfnpdu/acars.c, etc/systable.conf; liquid-dsp conventions checked against liquid-dsp 1.6 | GPL-3.0-or-later ✔ (spdu.c GPL-2.0-or-later ✔); libacars MIT ✔ (format only) |
 | [x] | | ADS-C (and the ARINC 622 envelope: CPDLC named) inside ACARS/VDL2/HFDL | libacars (Tomasz Lemiech): arinc.c, adsc.c, acars.c | MIT ✔ |
 | [x] | | CPDLC message bodies (FANS-1/A, ASN.1 PER: clearances, requests, free text) | libacars (asn1/ generated from the FANS-1/A ASN.1; asn1-format-cpdlc-text.c); asn1c 0.9.28 runtime PER rules | libacars MIT ✔ · asn1c runtime BSD-2-Clause ✔ |
-| [ ] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium; iridium-toolkit | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README) |
+| [x] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium (burst tagger, burst_downmix, qpsk_demod; test-data/prbs15-2M-20dB); iridium-toolkit (bitsparser.py, bch.py, reassembler ida.py / sbd.py) | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README: "unless otherwise noted"; the RS files with their own notice are not used) |
 | [ ] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `vor_rx` | Mayhem GPL-3.0 ✔ |
 | [ ] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) | JAERO | MIT ✔ |
 | [ ] | | FLARM / OGN receive | OGN docs, published decoders | check |
@@ -656,3 +656,15 @@ for "or later" first.
   Chromium). Not done: positions inside CPDLC position reports are not put on the map.
   Hardware: as for ADS-C (HFDL over oceans, VDL2 near busy long-haul airports): CPDLC cards should read like
   "CPDLC message from NYCODYA #12: CLIMB TO AND MAINTAIN FL360"; compare with dumphfdl / dumpvdl2.
+- **Iridium** (`dsp/iridium/`, new app, `test/iridium.test.ts`, `test/fixtures/iridium-prbs15-1622M-2000k.cs8`): bursts
+  found in a short-time spectrum across the span and demodulated as gr-iridium does (squared-preamble CFO, RRC 0.4, sync
+  word correlation, PLL, unique word, DQPSK). On gr-iridium's own test recording (22 ms cut from test-data/prbs15, GPL)
+  the bits match its README's RAW line exactly. Frames built here were read by iridium-toolkit's parser and reassembler
+  to the same values (IRA satellite/beam/position/pages, IBC Iridium time in era 3, IDA fragments and CRC, SBD → ACARS
+  "N512UA H1 5 HELLO IRIDIUM"); the tests hold them. In Chromium a 2 MS/s recording played in real time gave both
+  satellites on the map, the broadcast time and the ACARS line. Load: 5% of a core at 2 MS/s, ~26% at 10 MS/s on noise
+  (more with many bursts). Not read on purpose: voice, IP and pager messages (counted only); TMSIs in ring alerts
+  (counted only). Not done: Iridium NEXT's new frame formats; ACARS from Iridium is not fed to Flight Msgs yet.
+  Hardware: an L-band patch or an active GPS antenna outside with a clear sky (LNA helps); RTL-SDR or HackRF on "Ring
+  alerts · 2 MS/s": satellites with positions within a minute; HackRF on "Whole band · 10 MS/s": broadcasts with
+  Iridium time and, near aircraft routes, ACARS. Compare with gr-iridium + iridium-toolkit on a Capture of the same span.

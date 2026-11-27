@@ -74,5 +74,6 @@ export const CREDITS: [boolean, string][] = [
   [false, "HFDL physical layer, PDUs and ground-station table ported from dumphfdl by Tomasz Lemiech (GPL-3.0-or-later); ACARS framing as libacars reads it (MIT)"],
   [false, "ARINC 622 envelope and ADS-C (ARINC 745) reports and contract requests ported from libacars by Tomasz Lemiech (MIT)"],
   [false, "FANS-1/A CPDLC message set and wording from libacars by Tomasz Lemiech (MIT); unaligned PER as the asn1c runtime by Lev Walkin decodes it (BSD-2-Clause)"],
+  [false, "Iridium burst demodulation after gr-iridium (GPL-3.0-or-later; its prbs15 test recording used as a test fixture); frame classification, BCH, ring alerts, broadcasts and IDA/SBD/ACARS reassembly after iridium-toolkit by Sec & schneider (BSD-2-Clause)"],
   [false, "ExpressLRS air parameters (LoRa bandwidths, spreading factors, packet rates, hop grids) from the ExpressLRS project (GPL-3.0)"],
 ];
