@@ -818,5 +818,5 @@ for "or later" first.
   (France's twice, on 406.040 and 406.028), the homing mode renders. No off-air recording yet.
   Hardware: any radio here; 406 MHz: an antenna for 400 MHz outside; beacons are tested by their owners now and then
   (a self-test burst): near a marina, airfield or outdoor shop you may catch one; a real alert is shown in red. 121.5:
-  an ELT's homer is heard for miles from an aircraft; ELT tests are allowed only in the first five minutes of the hour
+  an ELT's homer is heard for miles from an aircraft; FAA guidance puts ELT tests in the first five minutes of the hour
   (in the US): turn for the highest level to find it.
