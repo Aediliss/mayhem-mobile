@@ -80,7 +80,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | Marine DSC ch 70 (156.525 MHz, 1200 Bd FSK); link MMSIs to Ships | ITU-R M.493-16 (12/2023): Annex 1 (ten-bit code, time diversity, phasing, format specifiers, call tables A1-4.x, Table A1-5 channels, ECC) | ITU-R recommendation: implemented from the spec, no code ported ✔ |
-| [ ] | ★ | EPIRB/PLB/ELT 406 MHz (BCH, hex ID, country, protocol, position) + 121.5 MHz homing | Mayhem `epirb_rx`; C/S T.001 | Mayhem GPL-3.0 ✔ · C/S T.001 spec |
+| [x] | ★ | EPIRB/PLB/ELT 406 MHz (BCH, hex ID, country, protocol, position) + 121.5 MHz homing | Mayhem `epirb_rx` (external/epirb_rx: beacon.hpp, location.cpp, BEACON.RES; baseband/proc_epirb: the signal) and its sdcard/EPIRB/BEACONS.TXT reference frames; C/S T.001 bit layout; ICAO 121.5 homer sweep (≥700 Hz within 1600–300 Hz, 2–4 Hz) | Mayhem's EPIRB files: GPL-2.0-or-later (Frederic Borry, ADRASEC 31) ✔ — checked in each file's header |
 | [ ] | | NAVTEX / SITOR-B (518/490 kHz) | ITU-R M.540, M.625 | spec |
 | [ ] | | Inmarsat-C EGC / SafetyNET | JAERO / scytale-c | JAERO MIT ✔ · scytale-c check |
 
@@ -799,3 +799,24 @@ for "or later" first.
   Hardware: any radio here, an antenna near the water, Marine DSC: coast stations make routine and test calls through
   the day; check against a handheld DSC radio's
   log, or another DSC decoder (YaDDNet / a DSC-capable scanner) on the same channel.
+- **Distress beacons: 406 MHz and 121.5 MHz homing** (`dsp/beacon406/`, new app "Beacons", `test/beacon406.test.ts`).
+  406: frames ported from PortaPack Mayhem's EPIRB receiver (GPL-2.0-or-later): sync, BCH-1/BCH-2 with single-bit
+  correction, protocol (user, standard, national, RLS, ELT(DT), test, orbitography), country (MID), the 15-hex beacon ID,
+  positions with their fine offsets, serials, aircraft addresses and operator designators, MMSI (ship security),
+  emergency codes, homers. The signal: every channel of 406.0–406.1 MHz at once from one 2 MS/s span; a new carrier
+  line (26 dB over the median bin; birdies and the burst's own sidebands are not new) opens a burst; its carrier's
+  frequency and phase from a line through the unwrapped phase of its unmodulated 160 ms; the phase read against it;
+  bit rate (396–404 bit/s) and timing where the Manchester halves differ most; each bit the first half's mean phase
+  minus the second's; the 24 sync bits (two wrong allowed), BCH, and one report per burst. Tests: Mayhem's own list of
+  reference and real beacon frames reads as titled — the ADRASEC standard-location test frame at its documented
+  position (49°16'32"N 3°16'32"E), EPIRB-MMSI, ship security, ELT 24-bit, RLS, national PLB, serial user EPIRB with
+  an automatic capsizing emergency, orbitography; a one-bit BCH error corrected, BCH errors in both fields not
+  accepted; bursts end to end on two channels at 403 and 397 bit/s through noise with its own spurious lines; noise
+  alone gives nothing. 121.5: the AM envelope's strongest tone tracked in 32 ms frames; three or more downward sweeps
+  of ≥ 700 Hz repeating every 0.15-0.7 s make a homer (test: 1600→300 Hz three times a second found at 3/s; a steady
+  tone and silence are not). In Chromium a 2 MS/s recording through OPEN REC: two beacons on the map and cards
+  (France's twice, on 406.040 and 406.028), the homing mode renders. No off-air recording yet.
+  Hardware: any radio here; 406 MHz: an antenna for 400 MHz outside; beacons are tested by their owners now and then
+  (a self-test burst): near a marina, airfield or outdoor shop you may catch one; a real alert is shown in red. 121.5:
+  an ELT's homer is heard for miles from an aircraft; ELT tests are allowed only in the first five minutes of the hour
+  (in the US): turn for the highest level to find it.

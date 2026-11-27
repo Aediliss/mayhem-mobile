@@ -10,6 +10,7 @@ import { IridiumDecoder } from './dsp/iridium/iridium.js';   // FORK: Iridium
 import { NavaidProcessor } from './dsp/navaid.js';   // FORK: Navaids
 import { AdslDecoder } from './dsp/adsl/adsl.js';   // FORK: ADS-L
 import { DscDecoder } from './dsp/dsc.js';   // FORK: marine DSC
+import { Beacon406Decoder, HomingProcessor } from './dsp/beacon406/beacon406.js';   // FORK: distress beacons
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -140,6 +141,8 @@ const iridium = new IridiumDecoder(emit);   // FORK: Iridium (dsp/iridium/)
 const navaid = new NavaidProcessor(emit);   // FORK: Navaids (dsp/navaid.ts)
 const adsl = new AdslDecoder(emit);   // FORK: ADS-L (dsp/adsl/)
 const dsc = new DscDecoder(emit);   // FORK: marine DSC (dsp/dsc.ts)
+const beacon406 = new Beacon406Decoder(emit);   // FORK: 406 MHz beacons (dsp/beacon406/)
+const homing = new HomingProcessor(emit);   // FORK: 121.5 MHz homing
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -566,6 +569,8 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'iridium': iridium.centerHz = centreHz; return iridium;   // FORK: Iridium
     case 'adsl': adsl.centerHz = centreHz; return adsl;   // FORK: ADS-L
     case 'dsc': return dsc;   // FORK: marine DSC
+    case 'beacon406': beacon406.centerHz = centreHz; return beacon406;   // FORK: 406 MHz beacons
+    case 'homing': homing.centerHz = centreHz; return homing;   // FORK: 121.5 MHz homing
     case 'navaid': navaid.centerHz = centreHz; navaid.tunedHz = centreHz + offsetHz; return navaid;   // FORK: Navaids
     case 'sonde': sonde.setCenter(centreHz); return sonde;
     case 'uat': return uat;
@@ -807,6 +812,8 @@ function process(iq: Int8Array): void {
   if (p === hfdl) hfdl.centerHz = centreHz;   // FORK: HFDL
   if (p === iridium) iridium.centerHz = centreHz;   // FORK: Iridium
   if (p === adsl) adsl.centerHz = centreHz;   // FORK: ADS-L
+  if (p === beacon406) beacon406.centerHz = centreHz;   // FORK: 406 MHz beacons
+  if (p === homing) homing.centerHz = centreHz;   // FORK: 121.5 MHz homing
   if (p === trains) trains.centerHz = centreHz;
   if (p === fleet) fleet.centerHz = centreHz;
   if (p === cell) cell.centerHz = centreHz;

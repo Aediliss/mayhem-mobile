@@ -54,6 +54,9 @@ import type { DroneIdFrame } from './dsp/droneid.js';   // FORK: DJI DroneID
 import { IRIDIUM_SPANS, type IridiumFrame } from './dsp/iridium/frames.js';   // FORK: Iridium
 import { ADSL_CENTRE_HZ, ADSL_RATE } from './dsp/adsl/adsl.js';   // FORK: ADS-L (Gliders)
 import { DSC_CH70_HZ, dscLine, type DscCall } from './dsp/dsc.js';   // FORK: marine DSC
+import { B406_CENTRE_HZ } from './dsp/beacon406/phy.js';   // FORK: 406 MHz beacons
+import { HOMING_HZ, type HomingState } from './dsp/beacon406/homing.js';   // FORK: 121.5 MHz homing
+import { beaconLine, type Beacon406 } from './dsp/beacon406/frame.js';   // FORK: 406 MHz beacons
 import { ADSL_CATEGORY, ADSL_EMERGENCY, ADSL_STATE, amtName, econList, type AdslPacket } from './dsp/adsl/frame.js';   // FORK: ADS-L (Gliders)
 import { dmeFor, navKind, pairedIls, type NavaidMsg } from './dsp/navaid.js';   // FORK: Navaids (pure helpers; the processor lives in the worker)
 import { LinkTracker, type LoraBurst } from './dsp/linkprint.js';   // FORK: control-link fingerprints
@@ -126,7 +129,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'adsl' | 'dsc' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, iridium, navaid, adsl, dsc, hfdl
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'adsl' | 'dsc' | 'beacons' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, iridium, navaid, adsl, dsc, beacons, hfdl
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -158,6 +161,7 @@ const APPS: AppDef[] = [
   { id: 'navaid', title: 'Navaids', blurb: 'VOR radial · ILS · DME · idents', cat: 'Receive' },   // FORK: Navaids
   { id: 'adsl', title: 'Gliders', blurb: 'ADS-L traffic · 868 MHz (Europe)', cat: 'Receive' },   // FORK: ADS-L
   { id: 'dsc', title: 'Marine DSC', blurb: 'Ch 70 · distress · calls · 156.525 MHz', cat: 'Receive' },   // FORK: marine DSC
+  { id: 'beacons', title: 'Beacons', blurb: 'EPIRB · PLB · ELT · 406 MHz · 121.5 homing', cat: 'Receive' },   // FORK: distress beacons
   { id: 'fpv', title: 'FPV', blurb: 'Analog FPV video · 5.8 GHz', cat: 'Receive' },   // FORK: analog FPV video
   { id: 'sat', title: 'Satellites', blurb: 'track and decode', cat: 'Receive' },
   { id: 'satcom', title: 'Satcom', blurb: 'Inmarsat · EGC · Aero ACARS', cat: 'Receive' },
@@ -1104,6 +1108,7 @@ function open(app: AppId | null): void {
     case 'navaid': navOpen(); break;   // FORK: Navaids
     case 'adsl': configure('NONE', ADSL_CENTRE_HZ, ADSL_RATE, 32, 32, true, 'adsl'); break;   // FORK: ADS-L, both M-band channels at once
     case 'dsc': configure('NFM', DSC_CH70_HZ, 2e6, 32, 32, false, 'dsc'); narrowShift(); requestGeo(); break;   // FORK: marine DSC on channel 70
+    case 'beacons': beaconsTune(); break;   // FORK: distress beacons
     case 'iridium': { const sp = IRIDIUM_SPANS[iriUi.span]; configure('NONE', sp.centreHz, sp.rateHz, 32, 32, true, 'iridium'); break; }   // FORK: Iridium
     case 'fpv': configure('NONE', fpvUi.hz, 20e6, 24, 30, true, 'fpv'); worker?.postMessage({ type: 'fpvTune', ch: fpvUi.ch, watch: true }); break;   // FORK: analog FPV video at 20 MS/s
     // The span is centred on 130.8 MHz: every US ACARS channel (130.025-131.550) is inside it and decoded at once,
@@ -1858,6 +1863,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   fpv: ['fpv', 'No FPV video found yet', ['SCAN steps through the 48 channels of bands A, B, E, F, R and L; channels with video turn gold', 'Tap a channel to watch it: the picture is drawn from the sync pulses, in black and white', 'Needs a HackRF at 20 MS/s and a 5.8 GHz antenna; an RTL-SDR cannot reach 5.8 GHz']],   // FORK: analog FPV video
   droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   iridium: ['iridium', 'No Iridium satellites heard yet', ['Ring alerts come several times a second from every Iridium satellite in view: an antenna that sees the sky (a patch or an active GPS-style antenna outside) hears them within a minute', 'The whole band (10 MS/s) needs a HackRF and a fast computer; an RTL-SDR covers the ring-alert span at 2 MS/s']],   // FORK: Iridium
+  beacons: ['beacons', 'No beacon heard yet', ['406 MHz beacons (EPIRB on ships, PLB on people, ELT on aircraft) send a half-second burst every 50 seconds when set off; owners test them now and then (a self-test burst, marked TEST here)', 'A beacon on the ground or the water is heard a few kilometers away; one on an aircraft, much further: any radio here reaches 406 MHz and 121.5 MHz']],   // FORK: distress beacons
   dsc: ['dsc', 'No DSC calls heard yet', ['Channel 70 (156.525 MHz) carries every VHF DSC call: distress alerts, their relays and acknowledgements from coast stations, and routine calls between ships; it is quiet most of the time', 'Near a coast or a harbour, coast stations and ships make routine and test calls through the day: an antenna up high with a view of the water hears them for tens of kilometers']],   // FORK: marine DSC
   adsl: ['adsl', 'No ADS-L aircraft heard yet', ['ADS-L is a European standard: gliders, light aircraft, paragliders and drones with a newer FLARM, an OGN tracker, SkyEcho or similar send it on 868.2 and 868.4 MHz; outside Europe expect silence', 'They send once a second at 25 mW: an 868 MHz antenna with a view of the sky, near a gliding site, hears them tens of kilometers out']],   // FORK: ADS-L
   navaid: ['navaid', 'Tune a VOR, localizer, glide path or DME', ['VORs are on 108.00-117.95 MHz (the chart or a flight app gives the nearest one); a VOR within line of sight comes in strong even on a short antenna', 'An ILS localizer is on 108.10-111.95 (odd tenths) at an airport with instrument approaches; its glide path and DME are paired with it: the buttons tune them']],   // FORK: Navaids
@@ -2117,6 +2123,7 @@ function render(app: AppId | null): void {
     case 'navaid': renderNavaid(view); break;   // FORK: Navaids
     case 'adsl': renderAdsl(view); break;   // FORK: ADS-L
     case 'dsc': renderDsc(view); break;   // FORK: marine DSC
+    case 'beacons': renderBeacons(view); break;   // FORK: distress beacons
     case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
     case 'hfdl': renderAcars(view, 'hfdl'); break;   // FORK: HFDL
@@ -4362,6 +4369,62 @@ function refreshDsc(): void {
   }
 }
 // FORK: end marine DSC
+
+// FORK: ------------------------------------------------------------------------------ distress beacons (dsp/beacon406/)
+interface BeaconHeard { b: Beacon406; hz: number; levelDb: number; first: number; last: number; n: number }
+const beaconUi = { mode: '406' as '406' | 'homing', seen: new Map<string, BeaconHeard>(), sel: '', homing: null as HomingState | null, homingAt: 0 };
+function beaconsTune(): void {
+  if (beaconUi.mode === '406') configure('NONE', B406_CENTRE_HZ, 2e6, 32, 32, true, 'beacon406');
+  else { configure('AM', HOMING_HZ, 2e6, 32, 32, true, 'homing'); narrowShift(); }
+}
+function renderBeacons(view: HTMLElement): void {
+  const u = beaconUi, h406 = u.mode === '406';
+  view.innerHTML = `
+    <section class="${visCls('beacons')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">
+      <div class="ctlrow">${segHtml([['406', '406 MHZ'], ['homing', '121.5 HOMING']].map(([k, l]) => `<button data-bcmode="${k}" class="${u.mode === k ? 'on' : ''}">${l}</button>`))}</div>
+      <div id="bc-stats" class="caption"></div>
+      ${h406 ? '<div id="bc-map" class="panel map"></div><div id="bc-cards"></div>' : '<div id="bc-homing" class="panel"></div>'}
+      <div id="bc-log">${logHtml('beacons', h406 ? 'listening on 406.0–406.1 MHz…' : 'listening on 121.5 MHz…')}</div>
+      <div class="note about">Distress beacons, receive only. 406 MHz: every channel of 406.0–406.1 MHz at once; each burst (160 ms of carrier, then 112 or 144 bits at 400 bit/s) is read as Cospas-Sarsat defines it, after PortaPack Mayhem's EPIRB receiver: beacon ID, type (EPIRB, PLB, ELT), country, protocol, the position when it carries one, serial numbers, and the emergency coded in it; the BCH codes check every frame (one wrong bit is corrected). Self-tests are marked TEST; a real alert is shown in red. 121.5 HOMING listens for the swept AM tone a beacon's homer sends, for finding it by level. Hearing a real alert: the rescue services already have it from the satellites; tell them only what they cannot know (where you are, what you see).</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  qa<HTMLButtonElement>('[data-bcmode]', view).forEach(b => b.onclick = () => { const m = b.dataset.bcmode as '406' | 'homing'; if (m !== u.mode) { u.mode = m; beaconsTune(); render('beacons'); } });
+  if (h406) {
+    geo = new GeoMap($('bc-map'), { home: state.home, start: mapStart(state.home), onPick: id => { u.sel = u.sel === id ? '' : id; refreshBeacons(); }, log });
+    $('bc-cards').onclick = e => { const c = (e.target as HTMLElement).closest<HTMLElement>('[data-bcid]'); if (c) { u.sel = u.sel === c.dataset.bcid ? '' : c.dataset.bcid!; refreshBeacons(); } };
+  }
+  refreshList('beacons'); refreshBeacons();
+}
+function onBeacon(b: Beacon406, hz: number, levelDb: number): void {
+  const now = Date.now(), h = beaconUi.seen.get(b.id) ?? { b, hz, levelDb, first: now, last: now, n: 0 };
+  h.b = b; h.hz = hz; h.levelDb = levelDb; h.last = now; h.n++;
+  beaconUi.seen.set(b.id, h);
+  if (state.app === 'beacons') refreshBeacons();
+}
+function refreshBeacons(): void {
+  if (state.app !== 'beacons') return;
+  const u = beaconUi, now = Date.now(), list = [...u.seen.values()].sort((a, b) => b.last - a.last), st = q('#bc-stats');
+  if (u.mode === 'homing') {
+    const s = u.homing && now - u.homingAt < 5000 ? u.homing : null, el = q('#bc-homing');
+    if (st) st.textContent = s?.on ? 'HOMER HEARD' : 'NO HOMER';
+    if (el) el.innerHTML = s?.on
+      ? `<div class="navaid-big" style="color:var(--danger)">121.5 MHz HOMER<small>sweep ${s.sweepHz[0]} → ${s.sweepHz[1]} Hz · ${s.perS} a second · ${s.snrDb.toFixed(0)} dB over the noise</small></div><div class="navaid-bar"><i style="left:${Math.max(0, Math.min(100, s.snrDb * 2.5)).toFixed(0)}%"></i></div><div class="caption">Turn a directional antenna (or your body, holding the radio close) for the highest level: the beacon is that way.</div>`
+      : `<div class="caption">Listening for the swept tone (between about 1600 and 300 Hz, 2–4 sweeps a second) of a beacon's 121.5 MHz homer. Voice on 121.5 (the aviation emergency channel) is not a homer.</div>`;
+    return;
+  }
+  const alerts = list.filter(h => !h.b.selfTest).length;
+  if (st) st.textContent = `${list.length} BEACON${list.length === 1 ? '' : 'S'}${alerts ? ` · ${alerts} ALERT${alerts === 1 ? '' : 'S'}` : ''}`;
+  const cards = q('#bc-cards');
+  if (cards) cards.innerHTML = list.length ? list.map(h => {
+    const b = h.b, red = !b.selfTest, age = now - h.last;
+    const what = beaconLine(b).replace(/^406 /, '').split(' · ').slice(3).join(' · ');
+    return `<div class="mt-card ${u.sel === b.id ? 'sel' : ''} ${age < 120_000 ? '' : 'dim'}" data-bcid="${esc(b.id)}"${red ? ' style="border-color:var(--danger)"' : ''}><div class="mt-h"><span class="mt-id"${red ? ' style="color:var(--danger)"' : ''}>${esc(b.type)} ${esc(b.id)}</span><span class="mt-k"><b>${red ? 'ALERT' : 'SELF-TEST'}</b><small>${esc(b.countryName ?? `country ${b.country}`)} · ${esc((h.hz / 1e6).toFixed(3))} MHz</small></span><span class="mt-live ${age < 60_000 ? 'on' : ''}"><i></i>${age < 60_000 ? 'LIVE' : bleAgo(age)}</span></div>`
+      + `<div class="mt-clk"><b>${h.n}</b><small>${esc(what)}</small><em>${h.levelDb.toFixed(0)} dB</em></div></div>`;
+  }).join('') : emptyState('beacons');
+  if (geo) geo.update(list.filter(h => h.b.lat !== undefined).map(h => ({ id: h.b.id, lat: h.b.lat!, lon: h.b.lon!, label: `${h.b.type} ${h.b.id.slice(0, 6)}${h.b.selfTest ? ' (test)' : ''}`, kind: 'station' as const, cls: h.b.selfTest ? undefined : 'talk' })), u.sel);
+}
+// FORK: end distress beacons
 // FORK: ------------------------------------------------------------------------------- Drones (DJI DroneID)
 /** Where DJI drones have been heard sending DroneID (proto17/dji_droneid); AUTO steps through them. */
 const DRONEID_FREQS = [2_414_500_000, 2_429_500_000, 2_444_500_000, 2_459_500_000];
@@ -10210,6 +10273,7 @@ function redraw(id: string): void {
  *  this side brought the entire list straight back with the next one. */
 function clearApp(id: string): void {
   if (id === 'fpv') { fpvUi.seen.clear(); refreshFpv(); }   // FORK: analog FPV video
+  if (id === 'beacons') { beaconUi.seen.clear(); beaconUi.sel = ''; refreshBeacons(); }   // FORK: distress beacons
   if (id === 'dsc') { dscUi.calls = []; dscUi.sel = -1; refreshDsc(); }   // FORK: marine DSC
   if (id === 'adsl') { adslUi.ac.clear(); adslUi.packets = 0; adslUi.sel = ''; refreshAdsl(); }   // FORK: ADS-L
   if (id === 'iridium') { iriUi.sats.clear(); iriUi.counts = {}; iriUi.time = 0; iriUi.sel = ''; refreshIridium(); }   // FORK: Iridium
@@ -10765,6 +10829,8 @@ function ensureWorker(): Worker {
       case 'droneid': onDroneId(m as unknown as { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }); break;   // FORK: DJI DroneID
       case 'navaid': onNavaid(m as unknown as NavaidMsg); break;   // FORK: Navaids
       case 'dsc': onDsc(m.call as DscCall); break;   // FORK: marine DSC
+      case 'beacon406': onBeacon(m.b as Beacon406, m.hz as number, m.levelDb as number); break;   // FORK: 406 MHz beacons
+      case 'homing': beaconUi.homing = m.s as HomingState; beaconUi.homingAt = Date.now(); refreshBeacons(); break;   // FORK: 121.5 MHz homing
       case 'adsl': onAdsl(m.p as AdslPacket, m.mhz as number, m.levelDb as number); break;   // FORK: ADS-L
       case 'adslStats': if (adslUi.ogn !== m.ogn) { adslUi.ogn = m.ogn as number; refreshAdsl(); } break;   // FORK: ADS-L (packets are counted as they arrive)
       case 'iridiumFrame': onIridiumFrame(m.f as IridiumFrame & { levelDb: number }); break;   // FORK: Iridium
@@ -11523,7 +11589,7 @@ function initShell(): void {
 /** Each app's card tag and title (the Android app's). */
 const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
   js8: ['JS8', 'HF MESSAGING'],
-  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], gmrs: ['GMRS', 'ALL 30 CHANNELS · MURS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], iridium: ['IRIDIUM', 'SATELLITES · RING ALERTS'] /* FORK */, navaid: ['NAVAIDS', 'VOR · ILS · DME'] /* FORK */, adsl: ['GLIDERS', 'ADS-L TRAFFIC'] /* FORK */, dsc: ['MARINE DSC', 'DISTRESS · CALLS · CH 70'] /* FORK */, hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'],
+  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], gmrs: ['GMRS', 'ALL 30 CHANNELS · MURS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], iridium: ['IRIDIUM', 'SATELLITES · RING ALERTS'] /* FORK */, navaid: ['NAVAIDS', 'VOR · ILS · DME'] /* FORK */, adsl: ['GLIDERS', 'ADS-L TRAFFIC'] /* FORK */, dsc: ['MARINE DSC', 'DISTRESS · CALLS · CH 70'] /* FORK */, beacons: ['BEACONS', 'EPIRB · PLB · ELT'] /* FORK */, hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'],
   ert: ['METERS', 'UTILITY METERS'], lora: ['MESH', 'MESH RADIO TEXT'], sondes: ['BALLOONS', 'WEATHER BALLOONS'], btle: ['BLUETOOTH', 'BLUETOOTH DEVICES'], adsb: ['AIRCRAFT', 'AIRCRAFT OVERHEAD'], ais: ['SHIPS', 'SHIPS NEARBY'], aprs: ['HAM MAP', 'STATIONS ON THE MAP'], uat: ['FLIGHT UAT', 'FLIGHT WEATHER · SMALL PLANES'],
   devices: ['DEVICES', 'KEYS · REMOTES · SENSORS'], spectrum: ['SPECTRUM', 'ANALYZER · ZERO SPAN'], analyzer: ['ANALYZER', 'CAPTURE · DEMOD · COMPARE'], capture: ['CAPTURE', 'RAW IQ TO FILE'], prowl: ['PROWL', 'HUNTING FOR VOICE'], lookingglass: ['GLASS', 'WIDEBAND SWEEP'],
   search: ['SEARCH', 'ACTIVE FREQUENCIES'], transmit: ['TX', 'IDLE'], troll: ['TROLL', 'IDLE'],
@@ -11536,7 +11602,7 @@ const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
 const APP_TECH: Partial<Record<AppId, string>> = {
   audio: 'WFM · NFM · AM · SSB · RDS', hd: 'NRSC-5 · IBOC · FM HYBRID', fleet: 'P25 · DMR · NXDN · TETRA · SMARTNET',
   pager: 'POCSAG · FLEX · REFLEX', lora: 'LORA · MESHTASTIC · MESHCORE · LORAWAN', adsb: 'ADS-B · MODE S · 1090 MHZ',
-  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, adsl: 'ADS-L · 868.2 / 868.4 MHZ' /* FORK */, dsc: 'DSC · CH 70 · 156.525 MHZ' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
+  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, adsl: 'ADS-L · 868.2 / 868.4 MHZ' /* FORK */, dsc: 'DSC · CH 70 · 156.525 MHZ' /* FORK */, beacons: '406.0–406.1 MHZ · 121.5 MHZ' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
   ais: 'AIS · 161.975 / 162.025 MHZ', satcom: 'INMARSAT · STD-C EGC · AERO · L-BAND', cell: 'LTE · SIB · WEA · ETWS', devices: 'OOK · FSK · TPMS · Z-WAVE · 315–915 MHZ',
   js8: 'JS8 · 8-FSK · HF USB', ham: 'SSB · CW · FM · FT8 · SSTV',
   hamplus: 'FM · DMR · D-STAR · FUSION · P25 · NXDN · M17', cb: 'CB · 26.965–27.405 MHZ · AM · FM · SSB', gmrs: 'GMRS · FRS · MURS · NFM · CTCSS · DCS', aprs: 'APRS · AX.25 · 144.390 MHZ',

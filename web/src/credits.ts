@@ -77,6 +77,7 @@ export const CREDITS: [boolean, string][] = [
   [false, "Iridium burst demodulation after gr-iridium (GPL-3.0-or-later; its prbs15 test recording used as a test fixture); frame classification, BCH, ring alerts, broadcasts and IDA/SBD/ACARS reassembly after iridium-toolkit by Sec & schneider (BSD-2-Clause)"],
   [false, "ADS-L packets, scrambling, CRC and Traffic/Status payloads written from EASA's ADS-L 4 SRD-860 specification (Issue 2; open for implementation); OGN tracker sync word from the OGN wiki (CC BY-SA 3.0)"],
   [false, "Inmarsat Aero 10.5 kbps P-channel (OQPSK, framing, interleaver, code, scrambler, signal units, ACARS) and R/T bursts (10.5k OQPSK, 600/1200 MSK) after JAERO by Jonathan Olds (MIT); its 10.5k, 10.5k burst and 1200 bps burst sample recordings used as test fixtures"],
+  [false, "406 MHz beacon frames (Cospas-Sarsat first generation: protocols, BCH, locations, IDs) ported from PortaPack Mayhem's EPIRB receiver by Frederic Borry, ADRASEC 31 (GPL-2.0-or-later); its list of reference beacon frames used in the tests"],
   [false, "Marine DSC written from ITU-R M.493-16 (the ten-bit code, time diversity, phasing, call formats, ECC)"],
   [false, "VOR bearing as PortaPack Mayhem's proc_vor_rx measures it (GPL-3.0); ILS, ident and DME from ICAO Annex 10 signal parameters"],
   [false, "ExpressLRS air parameters (LoRa bandwidths, spreading factors, packet rates, hop grids) from the ExpressLRS project (GPL-3.0)"],
