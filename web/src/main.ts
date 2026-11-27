@@ -214,7 +214,7 @@ const state = {
   viewLo: 0,                                   // the plain receiver's span center (radio LO); state.freq is the channel
   ham: { freq: 146_520_000, mode: 'NFM' as HamMode, lo: 300, hi: 6000, pitch: 600, agc: 'slow' as AgcMode, nr: false, anf: false, squelch: 6, volume: 1, shift: 0, rev: false, back: 0,
     db: -120, floor: -120, open: true, tone: 0, toneDb: 0, dcs: 0, dcsInv: false, gain: 1, audioPeak: 0,
-    digi: { mode: 'off' as 'off' | 'auto' | 'cw' | 'rtty' | 'psk31' | 'ft8' | 'dmr' | 'p25' | 'sstv', dmrSlot: 0, dmr: null as DmrStatus | null, p25: null as P25Status | null, text: '', winner: '', conf: [] as [string, number][], wpm: 0, pskHz: 1000, rttyBaud: 45.45, rttyShift: 170, rttyRev: false, ft8: [] as { utc: string; snr: number; dt: number; hz: number; text: string }[] },
+    digi: { mode: 'off' as 'off' | 'auto' | 'cw' | 'rtty' | 'psk31' | 'ft8' | 'ft4' /* FORK */ | 'dmr' | 'p25' | 'sstv', dmrSlot: 0, dmr: null as DmrStatus | null, p25: null as P25Status | null, text: '', winner: '', conf: [] as [string, number][], wpm: 0, pskHz: 1000, rttyBaud: 45.45, rttyShift: 170, rttyRev: false, ft8: [] as { utc: string; snr: number; dt: number; hz: number; text: string }[] },
     sat: { sel: 25544, svc: 0, view: 'track' as 'track' | 'orbcomm' | 'packet', tles: new Map<number, Tle>(), track: false, dopplerOn: true, passes: [] as Pass[], status: '', packets: [] as string[] },
     img: { mode: '', width: 0, height: 0, line: 0, done: false, apt: 0, lrpt: { planes: {} as Record<number, Uint8Array>, lines: 0, stats: '' } },
     log: { entries: loadLog(), draft: { call: '', rstS: '', rstR: '', name: '', qth: '', grid: '', notes: '', mode: '' }, info: null as CallInfo | null, editing: '' },
@@ -2529,7 +2529,7 @@ function hamOpen(): void {
   // a dongle starts at 24 MHz: a channel it cannot reach (FT8 at 14.074, say) opens on the 2 m calling frequency
   if (radio && !canTune(radio.limits, h.freq)) { h.freq = 146_520_000; h.rev = false; if (h.mode !== 'NFM') hamSetMode('NFM'); }
   if (h.tab === 'monitor') { monitorOpen(); return; }
-  if (h.tab === 'digi' && h.digi.mode === 'ft8' && h.mode !== 'USB') hamSetMode('USB');
+  if (h.tab === 'digi' && (h.digi.mode === 'ft8' || h.digi.mode === 'ft4' /* FORK */) && h.mode !== 'USB') hamSetMode('USB');
   if (h.tab === 'digi' && (h.digi.mode === 'dmr' || h.digi.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM');
   state.hamLo = hamLoFor(h.freq);
   configure('NONE', state.hamLo, HAM_RATES[hamRateIdx], 32, 40, false, 'ham');
@@ -2601,7 +2601,14 @@ function digiSend(): void {
   qa('[data-pskhz]').forEach(b => b.classList.toggle('on', Number(b.dataset.pskhz) === g.pskHz));
   qa('[data-rtty]').forEach(b => b.classList.toggle('on', b.dataset.rtty === `${g.rttyBaud}/${g.rttyShift}`));
   const rv = q('#rtty-rev'); if (rv) rv.classList.toggle('on', g.rttyRev);
-  const ftp = q('#ft8-panel'); if (ftp) (ftp as HTMLElement).hidden = !(g.mode === 'ft8' || g.mode === 'auto');
+  const ftp = q('#ft8-panel'); if (ftp) (ftp as HTMLElement).hidden = !(g.mode === 'ft8' || g.mode === 'ft4' /* FORK */ || g.mode === 'auto');
+  // FORK: FT4 shares the FT8 panel: its caption and dial buttons follow the mode
+  if (ftp) {
+    const cap = ftp.querySelector('.caption'); if (cap?.firstChild) cap.firstChild.textContent = `${g.mode === 'ft4' ? 'FT4' : 'FT8'} · `;
+    const tiles = ftp.querySelector('.tiles'); const want = g.mode === 'ft4' ? 'ft4' : 'ft8';
+    if (tiles && (tiles as HTMLElement).dataset.dials !== want) { (tiles as HTMLElement).dataset.dials = want; tiles.innerHTML = ftDialHtml(want === 'ft4'); bindFtDials(ftp as HTMLElement); }
+  }
+  // FORK: end
   const ftc = q('#ft8-clock'); if (ftc) ftc.textContent = '';
 }
 /** The DMR panel: what the decoder is locked to and who is talking on each time slot. */
@@ -2849,12 +2856,12 @@ function renderHam(view: HTMLElement): void {
         <div class="ctlrow"><span class="rl">RTTY</span>${segHtml([['45.45', '170'], ['50', '170'], ['75', '170'], ['45.45', '450'], ['50', '850']].map(([b, s]) => `<button data-rtty="${b}/${s}">${b === '45.45' ? '45' : b}/${s}</button>`), 'tight')}<button id="rtty-rev" class="tog">REV</button></div>
         <div class="caption">TEXT</div><pre id="digi-text" class="panel digitext">${g.text}</pre>
         <div id="sstv-panel" hidden>${imgPanelHtml()}${hsHtml(`<div class="tiles wide">${[['20m 14.230', 14_230_000, 'USB'], ['20m 14.233', 14_233_000, 'USB'], ['10m 28.680', 28_680_000, 'USB'], ['40m 7.171', 7_171_000, 'LSB'], ['ISS 145.800', 145_800_000, 'NFM']].map(([l, f, md]) => `<button class="tl" data-sstvf="${f}" data-sstvm="${md}"><b>${String(l).split(' ')[1]}</b><small>SSTV · ${String(l).split(' ')[0]} ${md}</small></button>`).join('')}</div>`)}</div>
-        <div id="ft8-panel"><div class="caption">FT8 · <span id="ft8-clock"></span> · UTC  SNR  DT  Hz  message</div><div id="ft8-list" class="panel list"></div>
-          ${hsHtml(`<div class="tiles">${[['160m', 1_840_000], ['80m', 3_573_000], ['40m', 7_074_000], ['30m', 10_136_000], ['20m', 14_074_000], ['17m', 18_100_000], ['15m', 21_074_000], ['12m', 24_915_000], ['10m', 28_074_000], ['6m', 50_313_000], ['2m', 144_174_000]].map(([l, f]) => `<button class="tl" data-ft8f="${f}"><b>${l}</b><small>${(Number(f) / 1e6).toFixed(3)}</small></button>`).join('')}</div>`)}</div>
+        <div id="ft8-panel"><div class="caption">${g.mode === 'ft4' ? 'FT4' : 'FT8' /* FORK: + FT4 */} · <span id="ft8-clock"></span> · UTC  SNR  DT  Hz  message</div><div id="ft8-list" class="panel list"></div>
+          ${hsHtml(`<div class="tiles">${ftDialHtml(g.mode === 'ft4') /* FORK: FT4's dials when FT4 */}</div>`)}</div>
       </section>`;
     scope = attach(tunableScope('scope', 200));
     qa<HTMLButtonElement>('[data-hamtab]', view).forEach(b => b.onclick = () => { h.tab = b.dataset.hamtab as typeof h.tab; open('ham'); });
-    qa<HTMLButtonElement>('[data-digi]', view).forEach(b => b.onclick = () => { g.mode = b.dataset.digi as typeof g.mode; if (g.mode === 'ft8' && h.mode !== 'USB') hamSetMode('USB'); if (g.mode === 'cw' && h.mode !== 'CW') hamSetMode('CW'); if ((g.mode === 'dmr' || g.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM'); if ((g.mode === 'psk31' || g.mode === 'rtty') && h.mode !== 'USB' && h.mode !== 'LSB') hamSetMode('USB'); digiSend(); });
+    qa<HTMLButtonElement>('[data-digi]', view).forEach(b => b.onclick = () => { g.mode = b.dataset.digi as typeof g.mode; if ((g.mode === 'ft8' || g.mode === 'ft4' /* FORK */) && h.mode !== 'USB') hamSetMode('USB'); if (g.mode === 'cw' && h.mode !== 'CW') hamSetMode('CW'); if ((g.mode === 'dmr' || g.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM'); if ((g.mode === 'psk31' || g.mode === 'rtty') && h.mode !== 'USB' && h.mode !== 'LSB') hamSetMode('USB'); digiSend(); });
     qa<HTMLButtonElement>('[data-dmrslot]', view).forEach(b => b.onclick = () => { g.dmrSlot = Number(b.dataset.dmrslot); digiSend(); });
     qa<HTMLButtonElement>('[data-sstvf]', view).forEach(b => b.onclick = () => { g.mode = 'sstv'; const md = b.dataset.sstvm as HamMode; if (h.mode !== md) hamSetMode(md); hamTune(Number(b.dataset.sstvf)); digiSend(); });
     imgBind();
@@ -2863,9 +2870,9 @@ function renderHam(view: HTMLElement): void {
     qa<HTMLButtonElement>('[data-rtty]', view).forEach(b => b.onclick = () => { const [bd, sh] = b.dataset.rtty!.split('/'); g.rttyBaud = Number(bd); g.rttyShift = Number(sh); digiSend(); });
     $('rtty-rev').onclick = () => { g.rttyRev = !g.rttyRev; digiSend(); };
     $('digi-clear').onclick = () => { g.text = ''; g.ft8 = []; $('digi-text').textContent = ''; refreshFt8(); };
-    qa<HTMLButtonElement>('[data-ft8f]', view).forEach(b => b.onclick = () => { g.mode = 'ft8'; if (h.mode !== 'USB') hamSetMode('USB'); hamTune(Number(b.dataset.ft8f)); digiSend(); });
+    bindFtDials(view);   // FORK: the dial buttons are rebuilt when FT8 ⇄ FT4 (digiSend)
     clearInterval(ft8Timer);
-    ft8Timer = window.setInterval(() => { const c = q('#ft8-clock'); if (!c) { clearInterval(ft8Timer); return; } const s = (Date.now() / 1000) % 15; c.textContent = `${(15 - s).toFixed(0)} s to next slot`; }, 500);
+    ft8Timer = window.setInterval(() => { const c = q('#ft8-clock'); if (!c) { clearInterval(ft8Timer); return; } const P = state.ham.digi.mode === 'ft4' ? 7.5 : 15 /* FORK: FT4's slots */, s = (Date.now() / 1000) % P; c.textContent = `${(P - s).toFixed(0)} s to next slot`; }, 500);
     refreshHamUi(); digiSend(); refreshFt8(); refreshDmr(); refreshP25();
     return;
   }
@@ -3120,7 +3127,7 @@ function saveStation(): void { try { localStorage.setItem('mayhem.station', JSON
 function logModeNow(): string {
   const h = state.ham, d = h.digi.mode, ssb = h.mode === 'USB' || h.mode === 'LSB' || h.mode === 'CW';
   // a digital mode only counts when the receiver is set up for it: audio modems need sideband / CW, DMR needs NFM
-  if (ssb && (d === 'cw' || d === 'rtty' || d === 'psk31' || d === 'ft8' || d === 'sstv')) return d.toUpperCase();
+  if (ssb && (d === 'cw' || d === 'rtty' || d === 'psk31' || d === 'ft8' || d === 'ft4' /* FORK */ || d === 'sstv')) return d.toUpperCase();
   if (h.mode === 'NFM' && (d === 'dmr' || (d === 'auto' && h.digi.winner === 'DMR'))) return 'DMR';
   if (ssb && d === 'auto' && h.digi.winner && h.digi.winner !== 'ANALOG VOICE') return h.digi.winner.toUpperCase();
   return h.mode === 'NFM' ? 'FM' : h.mode;
@@ -3298,7 +3305,15 @@ function pttStart(freqHz?: number, toneHz?: number, button?: HTMLElement): void 
 }
 function pttStop(): void { const h = state.ham; if (!h.ptt.on) return; tx.stop(); h.ptt.on = false; const b = pttButton; if (b) { b.classList.remove('on'); b.textContent = b.id === 'sat-ptt' ? 'PUSH TO TALK · UPLINK' : 'PUSH TO TALK'; } }
 /** The digital decoders as tiles, with what each one is for. */
-const DIGI_TILES: [string, string][] = [['auto', 'picks one'], ['cw', 'morse'], ['rtty', 'teletype'], ['psk31', 'keyboard chat'], ['ft8', '15 s slots'], ['sstv', 'pictures'],
+/** FORK: FT4's dial frequencies (USB), and the FT8/FT4 dial buttons */
+const FT4_DIALS: [string, number][] = [['80m', 3_575_000], ['40m', 7_047_500], ['30m', 10_140_000], ['20m', 14_080_000], ['17m', 18_104_000], ['15m', 21_140_000], ['12m', 24_919_000], ['10m', 28_180_000], ['6m', 50_318_000]];
+const FT8_DIALS: [string, number][] = [['160m', 1_840_000], ['80m', 3_573_000], ['40m', 7_074_000], ['30m', 10_136_000], ['20m', 14_074_000], ['17m', 18_100_000], ['15m', 21_074_000], ['12m', 24_915_000], ['10m', 28_074_000], ['6m', 50_313_000], ['2m', 144_174_000]];
+function ftDialHtml(ft4: boolean): string { return (ft4 ? FT4_DIALS : FT8_DIALS).map(([l, f]) => `<button class="tl" data-ft8f="${f}"><b>${l}</b><small>${(f / 1e6).toFixed(3)}</small></button>`).join(''); }
+function bindFtDials(root: HTMLElement): void {
+  const g = state.ham.digi, h = state.ham;
+  qa<HTMLButtonElement>('[data-ft8f]', root).forEach(b => b.onclick = () => { g.mode = g.mode === 'ft4' ? 'ft4' : 'ft8'; if (h.mode !== 'USB') hamSetMode('USB'); hamTune(Number(b.dataset.ft8f)); digiSend(); });
+}
+const DIGI_TILES: [string, string][] = [['auto', 'picks one'], ['cw', 'morse'], ['rtty', 'teletype'], ['psk31', 'keyboard chat'], ['ft8', '15 s slots'], ['ft4', '7.5 s slots'] /* FORK */, ['sstv', 'pictures'],
   ['dmr', 'digital voice'], ['p25', 'digital voice'], ['off', 'audio only']];
 function renderPtt(view: HTMLElement, tabs: string): void {
   const h = state.ham, rin = repeaterInput(h.freq);
