@@ -68,7 +68,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | CPDLC message bodies (FANS-1/A, ASN.1 PER: clearances, requests, free text) | libacars (asn1/ generated from the FANS-1/A ASN.1; asn1-format-cpdlc-text.c); asn1c 0.9.28 runtime PER rules | libacars MIT ✔ · asn1c runtime BSD-2-Clause ✔ |
 | [x] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium (burst tagger, burst_downmix, qpsk_demod; test-data/prbs15-2M-20dB); iridium-toolkit (bitsparser.py, bch.py, reassembler ida.py / sbd.py) | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README: "unless otherwise noted"; the RS files with their own notice are not used) |
 | [x] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `proc_vor_rx` (the VOR bearing); ICAO Annex 10 Vol. I signal parameters (ILS, idents, DME); LOC/GS/DME pairing checked against the FAA/RadioReference table | Mayhem GPL-3.0 ✔ · ICAO and FAA: facts (frequencies, tones, depths) only |
-| [ ] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) | JAERO | MIT ✔ |
+| [x] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) — **done upstream**: the Satcom app (0.9.76, dsp/lband/: Inmarsat-C NCS EGC, Aero P-channel 600/1200 bps ACARS to Flight Msgs; the UI says an LNA and patch are needed) | upstream | — |
+| [ ] | | Inmarsat Aero 10.5 kbps P-channel (OQPSK) and the T/R burst channels (aircraft → ground) | JAERO | MIT ✔ |
 | [ ] | | FLARM / OGN receive | OGN docs, published decoders | check |
 | [ ] | | MLAT feeder (Beast over WebSocket) via export bus | Beast format | facts |
 
@@ -679,3 +680,7 @@ for "or later" first.
   Hardware: any radio here (RTL-SDR included) with a short antenna near an airport: tune the nearest VOR (its chart
   frequency): the radial should match where you are from the station on a map, and the ident its three letters; a
   localizer at an airport with instrument approaches (and its paired glide path) for DDM; its paired DME for pulse pairs.
+- **Inmarsat AERO / STD-C**: covered by upstream's Satcom app (merged with 0.9.76): EGC from the Inmarsat-C NCS and Aero
+  P-channel ACARS at 600/1200 bps. Nothing duplicated here. The fork's ARINC 622 reader applies to its ACARS lines
+  ("SAT"), so ADS-C and CPDLC over Inmarsat read in words in Flight Msgs (test: arinc622.test.ts, "over Inmarsat too").
+  Left as a new row: the 10.5 kbps OQPSK P-channel and the T/R bursts, which upstream does not read.

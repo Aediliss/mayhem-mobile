@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { adscBasicReport, adscEarthRef, adscFlightId, arinc622Summary, buildArinc622, crcArinc, parseArinc622 } from '../src/dsp/arinc622.js';
 import { msgInsight } from '../src/acars-insight.js';
+import { parseAcarsLine } from '../src/acars-planes.js';
 import type { AcarsMsg } from '../src/acars-planes.js';
 
 const close = (a: unknown, b: number, eps = 1e-6) => assert.ok(Math.abs((a as number) - b) < eps, `${a} vs ${b}`);
@@ -60,4 +61,12 @@ test('Flight Msgs: an ADS-C report reads as ADS-C with its position, altitude, s
   assert.equal(i.kind, 'adsc');
   close(i.pos!.lat, 40.5, 1e-4); close(i.pos!.lon, -70.25, 1e-4);
   assert.deepEqual([i.nums.altFt, i.nums.kt, i.nums.hdg], [35000, 480, 90]);
+});
+
+test('over Inmarsat too: an Aero ACARS line (upstream Satcom app, "SAT") carrying ADS-C reads as ADS-C', () => {
+  const text = buildArinc622({ imi: 'ADS', gsAddr: 'AKLCDYA', reg: 'ZK-OKA', bytes: [...adscBasicReport(-37.25, 174.8, 39000, 30)] });
+  const m = parseAcarsLine(`SAT 1545.075 ↓ ZK-OKA  B6  blk 2  ack NAK\n${text}`, 0)!;
+  assert.ok(m && m.sat);
+  const i = msgInsight(m);
+  assert.equal(i.kind, 'adsc'); close(i.pos!.lat, -37.25, 1e-4); assert.equal(i.nums.altFt, 39000);
 });
