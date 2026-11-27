@@ -79,7 +79,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | Marine DSC ch 70 (156.525 MHz, 1200 Bd FSK); link MMSIs to Ships | ITU-R M.493, M.541 | spec |
+| [x] | ★ | Marine DSC ch 70 (156.525 MHz, 1200 Bd FSK); link MMSIs to Ships | ITU-R M.493-16 (12/2023): Annex 1 (ten-bit code, time diversity, phasing, format specifiers, call tables A1-4.x, Table A1-5 channels, ECC) | ITU-R recommendation: implemented from the spec, no code ported ✔ |
 | [ ] | ★ | EPIRB/PLB/ELT 406 MHz (BCH, hex ID, country, protocol, position) + 121.5 MHz homing | Mayhem `epirb_rx`; C/S T.001 | Mayhem GPL-3.0 ✔ · C/S T.001 spec |
 | [ ] | | NAVTEX / SITOR-B (518/490 kHz) | ITU-R M.540, M.625 | spec |
 | [ ] | | Inmarsat-C EGC / SafetyNET | JAERO / scytale-c | JAERO MIT ✔ · scytale-c check |
@@ -781,3 +781,21 @@ for "or later" first.
   165831 downlink in the log. Not done: R-channel signalling units are counted, not named.
   Hardware: as the 10.5k bursts (aircraft transmit at 1.6 GHz: nearby aircraft on L band, or the C-band feeder link);
   in AERO 600 or AERO 1200, tap the bursty carrier: BURSTS counts and downlinks appear.
+- **Marine DSC** (`dsp/dsc.ts`, new app "Marine DSC", `test/dsc.test.ts`): written from ITU-R M.493-16. The NFM
+  discriminator → 1300 Hz (Y, 1) / 2100 Hz (B, 0) sliding correlators → bit clock → ten-bit characters (7 information
+  bits LSB first, the count of B bits MSB first); phasing found from the DX 125 / RX 111…104 characters (three of four
+  right, one of them an RX, which says where in the phasing we are); each information character taken from its DX
+  copy or, when that fails its check bits, its RX copy four characters later; calls parsed by format specifier
+  (distress alert; all-ships, individual, group and geographic calls; distress relays, acknowledgements and
+  self-cancels with the distress ID and its information; telecommands; VHF channels and frequencies as Table A1-5;
+  position replies) and kept only if the ECC checks. Tests: every Table A1-1 row the PDF prints (0, 1, 3, 15, 43, 63,
+  99, 104, 117, 122, 125, 126, 127), every symbol's single-bit errors caught; MMSI, position (quadrant, degrees,
+  minutes), time and ECC; five calls end to end as AFSK (alert, relay and acknowledgement from a coast station, an
+  individual call proposing channel 72, a position reply); damaged DX copies read from their RX copies; the same
+  character hit in both copies, and noise, give nothing. In Chromium an FM recording at 2 MS/s through OPEN REC: three
+  calls on the cards (distress in red), the position on the map, coast station named. No off-air recording yet (none
+  with a redistributable license found). The app links to Ships: a vessel AIS has heard shows its name on the DSC card
+  with a SHIPS button, and its Ships card shows its last DSC call.
+  Hardware: any radio here, an antenna near the water, Marine DSC: coast stations make routine and test calls through
+  the day; check against a handheld DSC radio's
+  log, or another DSC decoder (YaDDNet / a DSC-capable scanner) on the same channel.
