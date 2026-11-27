@@ -9,6 +9,7 @@ import { HfdlDecoder } from './dsp/hfdl/hfdl.js';   // FORK: HFDL
 import { IridiumDecoder } from './dsp/iridium/iridium.js';   // FORK: Iridium
 import { NavaidProcessor } from './dsp/navaid.js';   // FORK: Navaids
 import { AdslDecoder } from './dsp/adsl/adsl.js';   // FORK: ADS-L
+import { DscDecoder } from './dsp/dsc.js';   // FORK: marine DSC
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -138,6 +139,7 @@ const hfdl = new HfdlDecoder(emit);   // FORK: HFDL (dsp/hfdl/)
 const iridium = new IridiumDecoder(emit);   // FORK: Iridium (dsp/iridium/)
 const navaid = new NavaidProcessor(emit);   // FORK: Navaids (dsp/navaid.ts)
 const adsl = new AdslDecoder(emit);   // FORK: ADS-L (dsp/adsl/)
+const dsc = new DscDecoder(emit);   // FORK: marine DSC (dsp/dsc.ts)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -563,6 +565,7 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'hfdl': hfdl.centerHz = centreHz; return hfdl;   // FORK: HFDL
     case 'iridium': iridium.centerHz = centreHz; return iridium;   // FORK: Iridium
     case 'adsl': adsl.centerHz = centreHz; return adsl;   // FORK: ADS-L
+    case 'dsc': return dsc;   // FORK: marine DSC
     case 'navaid': navaid.centerHz = centreHz; navaid.tunedHz = centreHz + offsetHz; return navaid;   // FORK: Navaids
     case 'sonde': sonde.setCenter(centreHz); return sonde;
     case 'uat': return uat;
