@@ -41,10 +41,12 @@ enum class MayhemApp(val title: String, val blurb: String, val category: String)
     HAM("Ham Radio", "SSB · CW · repeaters", "Receive"),
     HAMPLUS("Repeaters", "every repeater and simplex channel at once", "Receive"),
     CB("CB Radio", "all 40 channels at once", "Receive"),
+    GMRS("GMRS", "all 30 channels and MURS at once", "Receive"),
     APRS("Ham Map", "APRS · FT8 · JS8", "Receive"),
     ERT("Utility Meters", "ERT · Gridstream · 802.15.4g", "Receive"),
     BTLE("Bluetooth", "BLE advertising · 2.4 GHz", "Receive"),
     SAT("Satellites", "track and decode", "Receive"),
+    SATCOM("Satcom", "Inmarsat · EGC · Aero ACARS", "Receive"),
     SONDES("Weather Balloons", "radiosondes · 400–406 MHz", "Receive"),
     ATSC("TV", "ATSC · guide · pictures", "Receive"),
     PROWL("Prowl", "hunts live voice", "Receive"),
@@ -86,10 +88,12 @@ enum class MayhemApp(val title: String, val blurb: String, val category: String)
         HAM -> "SSB · CW · FM · FT8 · SSTV"
         HAMPLUS -> "FM · DMR · D-STAR · FUSION · P25 · NXDN · M17"
         CB -> "CB · 26.965–27.405 MHZ · AM · FM · SSB"
+        GMRS -> "GMRS · FRS · MURS · NFM · CTCSS · DCS"
         APRS -> "APRS · AX.25 · 144.390 MHZ"
         ERT -> "ERT · GRIDSTREAM · 802.15.4G"
         BTLE -> "BLE · ADVERTISING · 2.4 GHZ"
         SAT -> "SGP4 · DOPPLER · APT · LRPT · AX.25"
+        SATCOM -> "INMARSAT · STD-C EGC · AERO · L-BAND"
         SONDES -> "RS41 · DFM · M10 · 400–406 MHZ"
         ATSC -> "ATSC 1.0 · 8VSB · PSIP"
         PROWL -> "NFM · VOICE ACTIVITY HUNT"
@@ -238,6 +242,42 @@ object Apps {
             if (Radio.canSample(Radio.limits, t.PTC_RATE)) SdrEngine.configure(SdrEngine.Mode.NONE, t.PTC_CENTER, t.PTC_RATE, 32, 40, true, trains)
             else SdrEngine.configure(SdrEngine.Mode.NONE, t.PTC_NARROW, 2_000_000, 32, 40, true, trains)
         }
+    }
+    /** Satcom: Inmarsat on L-band, the NCS's EGC broadcasts to ships or an Aero P-channel's ACARS to aircraft. Aero's
+     *  ACARS also goes into Flight Msgs, marked as heard from a satellite. */
+    val satcomLog = PacketLog(); val satcom = com.rocketgod.mayhem.core.sat.SatcomProcessor(satcomLog)
+    /** The span sits this far below the channel: the DC spike is never on it, and a carrier tapped nearby needs no retune. */
+    const val SATCOM_SHIFT = 300_000L
+    private val _satcomMode = MutableStateFlow(com.rocketgod.mayhem.core.sat.SatcomProcessor.Mode.EGC)
+    val satcomMode: StateFlow<com.rocketgod.mayhem.core.sat.SatcomProcessor.Mode> = _satcomMode.asStateFlow()
+    @Volatile private var satcomEgcHz = com.rocketgod.mayhem.core.sat.Stdc.NCS_CHANNELS[0].second
+    @Volatile private var satcomAeroHz = 1_545_075_000L
+    fun setSatcomMode(m: com.rocketgod.mayhem.core.sat.SatcomProcessor.Mode) {
+        if (m == _satcomMode.value) return
+        noteSatcomHz()
+        _satcomMode.value = m
+        if (playing() == MayhemApp.SATCOM) startSatcom()
+    }
+    /** Tune the Satcom channel: inside the span through the offset, else the radio moves with the channel SATCOM_SHIFT above it. */
+    fun satcomTune(hz: Long) {
+        if (_satcomMode.value == com.rocketgod.mayhem.core.sat.SatcomProcessor.Mode.EGC) satcomEgcHz = hz else satcomAeroHz = hz
+        if (playing() == MayhemApp.SATCOM) startSatcom()
+    }
+    private fun noteSatcomHz() {
+        if (playing() != MayhemApp.SATCOM) return
+        val ch = SdrEngine.channelHz()
+        if (_satcomMode.value == com.rocketgod.mayhem.core.sat.SatcomProcessor.Mode.EGC) satcomEgcHz = ch else satcomAeroHz = ch
+    }
+    fun satcomClear() { satcom.clear() }
+    private fun startSatcom() {
+        val m = _satcomMode.value
+        val hz = if (m == com.rocketgod.mayhem.core.sat.SatcomProcessor.Mode.EGC) satcomEgcHz else satcomAeroHz
+        satcom.setMode(m)
+        satcom.centerOf = { SdrEngine.freqHz.value }; satcom.channelOf = { SdrEngine.channelHz() }
+        satcom.onNote = { com.rocketgod.mayhem.Diag.log(it) }
+        satcom.onAcars = { acarsLog.add(it) }
+        SdrEngine.configure(SdrEngine.Mode.NONE, hz - SATCOM_SHIFT, 2_000_000, 40, 40, true, satcom)
+        SdrEngine.setOffset(SATCOM_SHIFT.toInt())
     }
     /** Dispatch: P25, DMR, TETRA and NXDN trunked systems and their calls, every carrier in the span at once. */
     val fleetLog = PacketLog(); val fleet = com.rocketgod.mayhem.core.fleet.FleetProcessor(fleetLog)
@@ -416,15 +456,19 @@ object Apps {
         com.rocketgod.mayhem.core.atsc.AtscApp.init(ctx)
     }
 
+    /** The fastest LoRa rate this radio delivered every sample at, this run (0: not limited), and when it last stepped. */
+    @Volatile var loraCap = 0
+    @Volatile private var loraStepAt = 0L
+
     /** LoRa's wide span center: the one the user picked (kept until they pick LOCAL again), else the local one. */
-    fun loraWideStart(): Long {
+    fun loraWideStart(rate: Int = com.rocketgod.mayhem.core.lora.LoraPlan.WIDE_RATE): Long {
         val u = SdrEngine.savedLong("lora_user_wide")
         if (u in 400_000_000L..1_000_000_000L) return u
         val local = com.rocketgod.mayhem.core.lora.LoraLocal
-        return local.wideCenter(local.area()) ?: com.rocketgod.mayhem.core.lora.LoraPlan.homeBand().center
+        return local.wideCenter(local.area(), rate) ?: com.rocketgod.mayhem.core.lora.LoraPlan.homeBand().center
     }
 
-    /** LoRa one channel at a time: the user's pick, else the most local channel; the radio sits 300 kHz above it. */
+    /** LoRa one channel at a time: the user's pick, else LoraLocal.narrowChannel; the radio sits 300 kHz above it. */
     fun loraNarrowStart(): Long {
         val u = SdrEngine.savedLong("lora_user_narrow")
         if (u in 400_000_000L..1_000_000_000L) return u + 300_000
@@ -503,6 +547,8 @@ object Apps {
         SdrEngine.watchSignals = app != MayhemApp.LOOKING_GLASS && app != MayhemApp.SEARCH
         SdrEngine.deepQueue = app == MayhemApp.LORA
         SdrEngine.sameOn = app == MayhemApp.AUDIO
+        // MDC-1200 and FleetSync IDs ride the same NFM discriminator, read for Prowl and the Audio app
+        SdrEngine.idsOn = app == MayhemApp.AUDIO || app == MayhemApp.PROWL
         cameFrom = _current.value
         _current.value = app
         NavBar.noteOpened(app)
@@ -539,34 +585,51 @@ object Apps {
                 mesh.centerOf = { SdrEngine.freqHz.value }
             }
             MayhemApp.LORA -> {
-                val wide = Radio.canSample(Radio.limits, com.rocketgod.mayhem.core.lora.LoraScanner.RATE)
+                val plan = com.rocketgod.mayhem.core.lora.LoraPlan
+                // 10 Msps, unless this radio lost samples there earlier this run
+                val wide = Radio.canSample(Radio.limits, plan.WIDE_RATE) && (loraCap == 0 || loraCap >= plan.WIDE_RATE)
                 // Where the user last put it, if they did; else centered on what is local to where the device is (its
-                // MeshCore presets and its Meshtastic region, LoraLocal). A radio that can't sample 20 MHz sits on one
+                // MeshCore presets and its Meshtastic region, LoraLocal). A radio that can't sample 10 MHz sits on one
                 // channel, 300 kHz off it (clear of the spike at the center).
-                val band = com.rocketgod.mayhem.core.lora.LoraPlan.homeBand()
+                val band = plan.homeBand()
                 val local = com.rocketgod.mayhem.core.lora.LoraLocal
-                SdrEngine.configure(SdrEngine.Mode.NONE, if (wide) loraWideStart() else loraNarrowStart(), if (wide) com.rocketgod.mayhem.core.lora.LoraScanner.RATE else 2_000_000, 32, 40, true, lora.scanner)
+                SdrEngine.configure(SdrEngine.Mode.NONE, if (wide) loraWideStart() else loraNarrowStart(), if (wide) plan.WIDE_RATE else 2_000_000, 32, 40, true, lora.scanner)
                 lora.scanner.centerOf = { SdrEngine.freqHz.value }
                 SdrEngine.loraRecall()
                 // another area or the user's own channel: the channels again, and the span follows when the user hasn't set one
                 local.onChange = onChange@{
                     lora.scanner.replan()
                     if (playing() != MayhemApp.LORA) return@onChange
-                    val w = SdrEngine.rateHz.value >= 10_000_000
-                    kotlin.concurrent.thread(isDaemon = true, name = "lora-area") { SdrEngine.tune(if (w) loraWideStart() else loraNarrowStart()) }
+                    val r = SdrEngine.rateHz.value
+                    kotlin.concurrent.thread(isDaemon = true, name = "lora-area") { SdrEngine.tune(if (r >= 10_000_000) loraWideStart(r) else loraNarrowStart()) }
                 }
                 lora.narrowed.value = 0
+                lora.deliveryNote.value = ""
+                // the radio losing samples at this rate: one gap ruins any frame it lands in, so a narrower span that
+                // arrives whole hears more
+                lora.scanner.onLosing = onLosing@{ r ->
+                    val next = plan.stepDown(r)
+                    if (next == 0 || !Radio.canSample(Radio.limits, next) || System.currentTimeMillis() - loraStepAt < 6_000) return@onLosing
+                    loraStepAt = System.currentTimeMillis()
+                    fun mhz(x: Int) = if (x % 1_000_000 == 0) "${x / 1_000_000}" else "%.1f".format(x / 1e6)
+                    val why = "radio losing samples at ${mhz(r)} Msps; using ${mhz(next)}"
+                    com.rocketgod.mayhem.Diag.log("LoRa: $why (${SdrEngine.deliveryNote()})")
+                    loraCap = next; lora.narrowed.value = next; lora.deliveryNote.value = why
+                    kotlin.concurrent.thread(isDaemon = true, name = "lora-narrow") {
+                        SdrEngine.setRate(next); SdrEngine.tune(if (next >= plan.WIDE_RATE) loraWideStart(next) else loraNarrowStart())
+                    }
+                }
                 lora.scanner.onTooMuch = onTooMuch@{ r ->
                     // the next span down this radio can sample, still holding the band's main channel
                     val next = intArrayOf(10_000_000, 5_000_000, 2_000_000).firstOrNull { it < r && Radio.canSample(Radio.limits, it) } ?: return@onTooMuch
                     val area = local.area()
                     val ch = local.narrowChannel(area) ?: band.narrow
-                    val wc = local.wideCenter(area) ?: band.center
+                    val wc = local.wideCenter(area, next) ?: band.center
                     val c = if (next <= 2_400_000) ch + 300_000
                         else if (wc >= ch) minOf(wc, ch + (0.45 * next).toLong())
                         else maxOf(wc, ch - (0.45 * next).toLong())
                     com.rocketgod.mayhem.Diag.log("LoRa: this device fell behind at %.0f MHz, narrowing the span to %.0f MHz".format(r / 1e6, next / 1e6))
-                    lora.narrowed.value = next
+                    lora.narrowed.value = next; lora.deliveryNote.value = ""
                     // off the engine's thread, which is the one asking
                     kotlin.concurrent.thread(isDaemon = true, name = "lora-narrow") { SdrEngine.setRate(next); SdrEngine.tune(c) }
                 }
@@ -587,9 +650,11 @@ object Apps {
                 acars.onNote = { com.rocketgod.mayhem.Diag.log(it) }
             }
             MayhemApp.TRAINS -> startTrains()
+            MayhemApp.SATCOM -> startSatcom()
             MayhemApp.FLEET -> startFleet()
             MayhemApp.HAMPLUS -> HamPlus.open()
             MayhemApp.CB -> Cb.open()
+            MayhemApp.GMRS -> Gmrs.open()
             MayhemApp.CELL -> startCell()
             MayhemApp.ATSC -> com.rocketgod.mayhem.core.atsc.AtscApp.start()
             MayhemApp.SONDES -> startSondes()
@@ -637,6 +702,7 @@ object Apps {
         SdrEngine.watchSignals = true
         SdrEngine.deepQueue = false
         SdrEngine.sameOn = true
+        SdrEngine.idsOn = true
         _current.value = null
         _sweep.value = null
         // Back from an app that moved the radio (ADS-B, AIS...): the launcher listens again, and lands on the
@@ -653,6 +719,7 @@ object Apps {
         SdrEngine.watchSignals = true
         SdrEngine.deepQueue = false
         SdrEngine.sameOn = true
+        SdrEngine.idsOn = true
         _current.value = MayhemApp.AUDIO
         SdrEngine.configure(mode, freqHz, SdrEngine.RX_RATE, 24, 24, false, null)
         SdrEngine.setDial(freqHz, mode)

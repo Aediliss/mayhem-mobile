@@ -14,6 +14,7 @@
  * Outside the span, and for the sample rate, the recording plays as recorded and the player says so once.
  */
 import type { Radio, RadioCaps, RadioLimits } from './radio.js';
+import { DeliveryMeter } from './delivery.js';
 import { BYTES_PER_SAMPLE, toInt8Iq } from './filesrc/formats.js';
 import type { IqSource } from './filesrc/open.js';
 
@@ -40,6 +41,8 @@ const NO_CAPS: RadioCaps = { stagedGain: false, tunerGain: false, amp: false, bi
 export const speedLabel = (s: number) => (s === Infinity ? 'MAX' : `${s}×`);
 
 export class FileRadio implements Radio {
+  /** Delivery as the radio drivers measure it (delivery.ts): nothing is lost from a file or an audio input, so it is never fed and always reads full. */
+  readonly delivery = new DeliveryMeter();
   readonly kind = 'file' as const;
   readonly caps = NO_CAPS;
   readonly limits: RadioLimits;

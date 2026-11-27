@@ -9,6 +9,7 @@
  * nothing to gain: their signals never were audio.
  */
 import type { Radio, RadioCaps, RadioLimits } from './radio.js';
+import { DeliveryMeter } from './delivery.js';
 import { AudioToIq, modForMode } from './audiosrc/audio2iq.js';
 import type { FileRadioEvents, WorkerLike } from './fileradio.js';
 
@@ -33,6 +34,8 @@ export function mixDown(b: { numberOfChannels: number; length: number; getChanne
 }
 
 export class AudioRadio implements Radio {
+  /** Delivery as the radio drivers measure it (delivery.ts): nothing is lost from a file or an audio input, so it is never fed and always reads full. */
+  readonly delivery = new DeliveryMeter();
   readonly kind = 'audio' as const;
   readonly caps = NO_CAPS;
   readonly limits: RadioLimits = { minHz: 0, maxHz: 7_250_000_000, rates: [[240_000, 2_400_000]], canTransmit: false, cleanRate: 2_000_000 };

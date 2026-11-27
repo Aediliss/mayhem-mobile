@@ -3,12 +3,26 @@ import type { Emit, IqProcessor } from './core.js';
 import { ModeS, type ModeSFrame } from './modes.js';   // FORK: every downlink format (modes.ts)
 import { ModeAcDetector, ModeAcTracks } from './modeac.js';   // FORK: Mode A/C replies (modeac.ts)
 
+/** squawk: the Mode A identity code as four octal digits, e.g. "7700". */
 export interface Aircraft { icao: string; flight?: string; lat?: number; lon?: number; alt?: number; gs?: number; track?: number; vr?: number; seenMs: number; firstMs: number;
   // FORK: from the other downlink formats (modes.ts): squawk, on the ground, alert / SPI, Comm-B (selected altitude and
   // QNH, roll, true airspeed, heading, IAS, Mach, baro and inertial rate), and whether ADS-B was heard at all
   squawk?: string; ground?: boolean; alert?: boolean; spi?: boolean; selAlt?: number; qnh?: number; roll?: number; tas?: number; hdg?: number; ias?: number; mach?: number; baroRate?: number;
   es?: boolean; modeSOnly?: boolean; dlVersion?: number;
 }
+
+/**
+ * The 13-bit identity field (C1 A1 C2 A2 C4 A4 X B1 D1 B2 D2 B4 D4, as DF5, DF21 and the DF17 emergency status carry
+ * it) as its four squawk digits A B C D, each the octal digit of its 4-2-1 bits (Gillham order; dump1090 decodeID13Field).
+ */
+export function squawkOf(id13: number): string {
+  const bit = (n: number) => (id13 >> n) & 1;
+  const a = bit(7) * 4 + bit(9) * 2 + bit(11), b = bit(1) * 4 + bit(3) * 2 + bit(5);
+  const c = bit(8) * 4 + bit(10) * 2 + bit(12), d = bit(0) * 4 + bit(2) * 2 + bit(4);
+  return `${a}${b}${c}${d}`;
+}
+/** What a special squawk means, as the Flights card says it (the native apps' wording). */
+export const squawkMeaning = (s: string) => s === '7500' ? 'HIJACK' : s === '7600' ? 'RADIO FAILURE' : s === '7700' ? 'EMERGENCY' : '';
 
 const PREAMBLE = 8, LONG_BITS = 112, SHORT_BITS = 56, FULL_LEN = PREAMBLE + LONG_BITS;
 const AIS_CHARS = '?ABCDEFGHIJKLMNOPQRSTUVWXYZ????? ???????????????0123456789??????';
@@ -159,8 +173,14 @@ export class AdsbDecoder implements IqProcessor {
         }
         if (vr !== 0) a.vr = (vr - 1) * 64 * (vrSign ? -1 : 1);
       }
+    } else if (tc === 28 && (msg[4] & 7) === 1) {
+      // emergency / priority status: the Mode A code rides in it too
+      const id13 = ((msg[5] << 8) | msg[6]) & 0x1fff;
+      if (id13) a.squawk = squawkOf(id13);
     }
   }
+
+  // FORK: DF5 / DF21 squawks are read by modes.ts with every other downlink format (and CRC repair); upstream's identity() was here
 
   private merge(batch: Map<string, Aircraft>, now: number): void {
     for (const [icao, a] of batch) {
