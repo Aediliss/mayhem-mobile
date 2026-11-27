@@ -144,3 +144,48 @@ test('real bursts (JAERO\'s 10.5k burst sample): two T packets, an ADS-C report 
   assert.equal(ads.kind, 'adsc'); assert.ok(Math.abs(ads.pos!.lat - 51.0013) < 1e-3 && Math.abs(ads.pos!.lon + 30.0054) < 1e-3); assert.equal(ads.nums.altFt, 36000);
   assert.equal(pos.kind, 'pos'); assert.ok(Math.abs(pos.pos!.lat - 46.855) < 1e-3 && Math.abs(pos.pos!.lon + 22.2317) < 1e-3);
 });
+
+// ---- 600/1200 bps R/T bursts (MSK)
+
+test('MSK bursts at 1200 and 600 bps: a T packet through noise and a carrier offset, read back; noise gives nothing', async () => {
+  const { AeroMskBursts } = await import('../src/dsp/aero105/mskburst.js');
+  const { buildRt, tPacket } = await import('../src/dsp/aero105/burst.js');
+  const { fsk, addNoise, concat, silence, toInt8, feed } = await import('./lib/iq.js');
+  const units = acarsSus(0xC078BD, 0x82, 3, 2, 'C-GGTS', 'H1', 'C', 'M02ATS0281POS N5000W03000').map(u => signalUnit(u.slice(0, 10)));
+  const cols = 5 + 3 * (units.length - 1), coded = buildRt(tPacket(0xC078BD, 0x82, units), cols, true);
+  for (const br of [1200, 600] as const) {
+    // opening: carrier (constant frequency is not MSK: a run of ones), timing tone (1010…), then the UW and the block
+    const bits: boolean[] = [];
+    for (let i = 0; i < 100; i++) bits.push(true);
+    for (let i = 0; i < 100; i++) bits.push(!!(i & 1));
+    for (let m = 31; m >= 0; m--) bits.push(!!((0xE15AE893 >>> m) & 1));
+    for (const b of coded) bits.push(!!b);
+    const rate = 24_000, burst = fsk(bits, br, rate, br / 4, { offsetHz: 310 });
+    const iq = toInt8(addNoise(concat(silence(rate / 2), burst, silence(rate / 2)), 14, 3), 50);
+    const b = new AeroMskBursts(br), lines: string[] = []; b.hz = 1_646_015_000; b.onAcars = l => lines.push(l);
+    feed(b, iq, rate, 16384);
+    assert.deepEqual([b.bursts, b.rx.bad, b.rt.stats.tPackets], [1, 0, 1], `${br} bps`);
+    assert.deepEqual(lines, ['SAT 1646.015 ↓ C-GGTS  H1  blk C  ack NAK  #M02A TS0281\nPOS N5000W03000'], `${br} bps`);
+  }
+  const quiet = new AeroMskBursts(1200), got: string[] = []; quiet.onAcars = l => got.push(l);
+  feed(quiet, toInt8(addNoise(silence(48_000), 0, 9), 50), 24_000, 16384);
+  assert.equal(got.length, 0); assert.equal(quiet.rt.stats.tPackets, 0);
+});
+
+// fixtures/jaero-aero1200-bursts-12000sps.cs8: the two bursts of JAERO's samples/1200bps_burst_sample2.wav (MIT), each
+// ~2.15 s, as complex baseband at 12 kS/s. The ADS-C message spans both.
+test('real 1200 bps bursts (JAERO\'s sample): two T packets put back together into an ADS-C report from 165831', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { AeroMskBursts } = await import('../src/dsp/aero105/mskburst.js');
+  const { parseAcarsLine } = await import('../src/acars-planes.js');
+  const { msgInsight } = await import('../src/acars-insight.js');
+  const iq = new Int8Array(readFileSync(new URL('../test/fixtures/jaero-aero1200-bursts-12000sps.cs8', import.meta.url)));
+  const b = new AeroMskBursts(1200), lines: string[] = []; b.hz = 1_646_000_000; b.onAcars = l => lines.push(l);
+  for (let o = 0; o < iq.length; o += 16384) b.onIq(iq.subarray(o, o + 16384), 12_000, 0);
+  assert.deepEqual([b.bursts, b.rx.bad, b.rt.stats.tPackets], [2, 0, 2]);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].split('\n')[0], 'SAT 1646.000 ↓ 165831  H1  blk 1  ack NAK  #F79A MC4666');
+  const i = msgInsight(parseAcarsLine(lines[0], 0)!);
+  assert.equal(i.kind, 'adsc');   // the ADS-C reader takes it: its own CRC good
+  assert.ok(i.pos, JSON.stringify(i));
+});

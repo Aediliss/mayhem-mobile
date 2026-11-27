@@ -71,7 +71,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) — **done upstream**: the Satcom app (0.9.76, dsp/lband/: Inmarsat-C NCS EGC, Aero P-channel 600/1200 bps ACARS to Flight Msgs; the UI says an LNA and patch are needed) | upstream | — |
 | [x] | | Inmarsat Aero 10.5 kbps P-channel (OQPSK, ground → aircraft): Satcom's AERO 10.5K mode | JAERO (aerol.cpp/.h: framing, 64×78 interleaver, K=7 code 109/79, 15-bit scrambler, SU CRC, ISU reassembly and ACARS parse; oqpskdemodulator / coarsefreqestimate: RRC roll-off 1, the squared-signal line pair); samples/10.5k_sample.ogg (5.6 s cut as a test fixture) | JAERO MIT ✔ (LICENSE, Jonathan Olds 2015-2019; the files used carry no other notice) |
 | [x] | | Inmarsat Aero 10.5k R/T burst channels (aircraft → ground, OQPSK bursts): in AERO 10.5K beside the P channel | JAERO (burstoqpskdemodulator: carrier opening and symbol tone; aerol RTChannelDeleaveFECScram, RISUData, T-packet SUs); samples/10.5k_burst_sample.mp3 (two bursts cut as a test fixture) | MIT ✔ |
-| [ ] | | Inmarsat Aero 600/1200 bps R/T bursts (MSK) | JAERO (burstmskdemodulator, RTChannelDeleaveFECScram.updateMSK; samples 1200bps_burst_sample1/2) | MIT ✔ |
+| [x] | | Inmarsat Aero 600/1200 bps R/T bursts (MSK): in AERO 600 / AERO 1200 beside upstream's P-channel decoder | JAERO (burstmskdemodulator: MSK as offset QPSK + differential decoding = the frequency's sign each bit; aerol deinterleaveMSK, RTChannelDeleaveFECScram.updateMSK); samples 1200bps_burst_sample1/2.wav (sample 2's two bursts as a test fixture) | MIT ✔ |
 | [x] | | FLARM / OGN receive — as **ADS-L** (the Gliders app): both M-band channels (868.2/868.4 MHz) at once; Traffic (position, altitude, speed, climb, track, category, emergency) and Status payloads; OGN tracker packets counted, not read; FLARM's own protocol not read | EASA ADS-L 4 SRD-860 Issue 2 (1 Dec 2025, ED Decision 2022/024/R): physical layer, packet, XXTEA key-0 scrambling, CRC-24, payloads; OGN wiki (OGN sync word) | EASA spec: "open to any interested party for implementation" (A.3), written from the spec, no code ported ✔ · OGN wiki CC BY-SA 3.0 (a fact: the sync word) ✔ · FLARM air protocol: closed and obfuscated, decrypting it may be unlawful in the EU ✘ (not read) · OGN tracker firmware (pjalocha, glidernet): no license ✘ (not used; OGN's LDPC code and whitening are not published, so OGN packets are counted only) |
 | [x] | | MLAT feeder (Beast over WebSocket) via export bus: Mode-S frames carry 12 MHz ticks from the sample clock | Beast format; dump1090/readsb's 12 MHz free-running counter (what mlat-client's `dump1090` input type expects) | facts ✔ (no code ported) |
 
@@ -763,3 +763,21 @@ for "or later" first.
   them only from aircraft nearby; JAERO's users usually take them from the satellite's C-band feeder link (around
   3.6 GHz: a dish, and a HackRF, which reaches it; an RTL-SDR does not). Tap the bursty carrier in AERO 10.5K: the
   stats show BURSTS counting and downlinks appear in the log and in Flight Msgs. Check against JAERO on the same signal.
+- **Inmarsat Aero 600/1200 bps R/T bursts** (`dsp/aero105/mskburst.ts`, FORK edits in `dsp/lband/satcom.ts`,
+  `test/aero105.test.ts`): after JAERO (MIT). JAERO demodulates these MSK bursts coherently as offset QPSK and then
+  differentially decodes each rail sample against the one before, which for MSK is the sign of the frequency in each
+  bit; so here: the carrier from the squared burst (lines at twice the carrier ± half the bit rate; both lines are
+  required, past the burst's opening, or the opening's own carrier line wins), mixed out, low-passed, an FM
+  discriminator integrated over each bit with a clock pulled to its zero crossings. The UW (32 bits, one stream,
+  either polarity) opens the data; the block is 64 × 5 and then 64 × 3 per further unit, so every length up to the
+  true one checks and the longest one whose CRCs all pass is kept. T and R packets go through the same readers as the
+  10.5k bursts. Runs in upstream's AERO 600 / AERO 1200 modes beside their P-channel decoder (a few lines, FORK).
+  Also fixed in both burst receivers: the noise floor now starts from the mean power of the first stretch (it started
+  near 0, so the first burst took the whole recording). Tests: a synthetic T packet as MSK at 1200 and at 600 bps
+  through noise with a 310 Hz carrier offset, read back; noise gives nothing; and JAERO's real 1200 bps burst
+  samples: sample 1 gives C-GGTS (Air Transat 281) ADS-C to Gander across two bursts (10 + 8 units), sample 2 (the
+  103 KB fixture at 12 kS/s) gives 165831 (MC4666) ADS-C to Gander across two bursts, which the fork's ADS-C reader
+  takes (its CRC good). Every UW matched 32 of 32. In Chromium at 2 MS/s through OPEN REC in AERO 1200: 3 bursts, the
+  165831 downlink in the log. Not done: R-channel signalling units are counted, not named.
+  Hardware: as the 10.5k bursts (aircraft transmit at 1.6 GHz: nearby aircraft on L band, or the C-band feeder link);
+  in AERO 600 or AERO 1200, tap the bursty carrier: BURSTS counts and downlinks appear.

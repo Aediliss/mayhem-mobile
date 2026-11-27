@@ -24,16 +24,19 @@ export type RtPacket = { kind: 'R'; bytes: Uint8Array } | { kind: 'T'; aes: numb
  * Try to read a burst's coded bits (soft, rails' polarity already undone, first bit right after the UW).
  * null when no column count makes every CRC check.
  */
-export function decodeRt(coded: Float32Array, n = coded.length): RtPacket | null {
+export function decodeRt(coded: Float32Array, n = coded.length, msk = false): RtPacket | null {
+  // 10.5k: the block is interleaved whole, so only its true length checks. MSK: each further 3 columns are a block of
+  // their own, so every length up to the true one checks too: keep the longest before the CRCs fail
+  let best: RtPacket | null = null;
   for (let cols = 5; cols <= MAX_COLS && cols * ROWS <= n; cols += 3) {
     const nb = cols * ROWS, de = new Float32Array(nb);
-    deinterleaveCols(coded, cols, de);
+    if (msk) deinterleaveMsk(coded, cols, de); else deinterleaveCols(coded, cols, de);
     const { bits } = viterbi(de, nb / 2, true);
     const data = new Uint8Array(bits.length);
     for (let i = 0; i < bits.length; i++) data[i] = bits[i] ^ SCRAMBLE[i];
     const by = packLsb(data);
     if (cols === 5 && suCrc(by, 0, 17) === (by[17] | (by[18] << 8))) return { kind: 'R', bytes: by.slice(0, 19) };
-    if (suCrc(by, 0, 4) !== (by[4] | (by[5] << 8))) continue;
+    if (suCrc(by, 0, 4) !== (by[4] | (by[5] << 8))) { if (best) return best; continue; }
     const k = 1 + (cols - 5) / 3, units: number[][] = [];
     let ok = true;
     for (let u = 0; u < k && ok; u++) {
@@ -41,13 +44,22 @@ export function decodeRt(coded: Float32Array, n = coded.length): RtPacket | null
       if (suCrc(by, at, 10) !== (by[at + 10] | (by[at + 11] << 8))) ok = false;
       else units.push(Array.from(by.subarray(at, at + 10)));
     }
-    if (ok) return { kind: 'T', aes: (by[0] << 16) | (by[1] << 8) | by[2], ges: by[3], units };
+    const t: RtPacket = { kind: 'T', aes: (by[0] << 16) | (by[1] << 8) | by[2], ges: by[3], units };
+    if (ok && !msk) return t;
+    if (ok) best = t; else if (best) return best;
   }
-  return null;
+  return best;
 }
 
+const DEP = Array.from({ length: ROWS }, (_, i) => (i * 27) % ROWS);
+/** The 600/1200 bps bursts' layout (JAERO deinterleaveMSK): a 64 × 5 block, then a 64 × 3 block per further unit. */
+export function deinterleaveMsk(block: ArrayLike<number>, cols: number, out: Float32Array): void {
+  let k = 0;
+  for (let j = 0; j < 5; j++) for (let i = 0; i < ROWS; i++) out[k++] = block[DEP[i] * 5 + j];
+  for (let base = 5; base < cols; base += 3) for (let j = 0; j < 3; j++) for (let i = 0; i < ROWS; i++) out[k++] = block[ROWS * base + DEP[i] * 3 + j];
+}
 /** Transmitter side (tests): a burst's bits after the UW: data bytes scrambled, coded from zero, interleaved. */
-export function buildRt(bytes: number[], cols: number): Uint8Array {
+export function buildRt(bytes: number[], cols: number, msk = false): Uint8Array {
   const nb = cols * ROWS, nd = nb / 2, bits = new Uint8Array(nd);
   for (let i = 0; i < nd; i++) bits[i] = (((bytes[i >> 3] ?? 0) >> (i & 7)) & 1) ^ SCRAMBLE[i];
   let reg = 0; const coded = new Uint8Array(nb);
@@ -55,7 +67,12 @@ export function buildRt(bytes: number[], cols: number): Uint8Array {
   for (let i = 0; i < nd; i++) { reg = ((reg << 1) | bits[i]) & 127; coded[2 * i] = par(reg & 109); coded[2 * i + 1] = par(reg & 79); }
   const out = new Uint8Array(nb);
   const dep = Array.from({ length: ROWS }, (_, i) => (i * 27) % ROWS);
-  let k = 0; for (let j = 0; j < cols; j++) for (let i = 0; i < ROWS; i++) out[dep[i] * cols + j] = coded[k++];
+  let k = 0;
+  if (!msk) for (let j = 0; j < cols; j++) for (let i = 0; i < ROWS; i++) out[dep[i] * cols + j] = coded[k++];
+  else {
+    for (let j = 0; j < 5; j++) for (let i = 0; i < ROWS; i++) out[dep[i] * 5 + j] = coded[k++];
+    for (let base = 5; base < cols; base += 3) for (let j = 0; j < 3; j++) for (let i = 0; i < ROWS; i++) out[ROWS * base + dep[i] * 3 + j] = coded[k++];
+  }
   return out;
 }
 /** Transmitter side (tests): an R packet (17 bytes + CRC) and a T packet (header + units) as bytes. */
@@ -124,7 +141,7 @@ export class BurstRx {
   }
   reset(): void { this.key = ''; }
 
-  onIq(iq: Int8Array, rate: number, offsetHz: number): void {
+  onIq(iq: Int8Array, rate: number, offsetHz = 0): void {
     const key = `${rate}|${offsetHz}`;
     if (key !== this.key) { this.key = key; this.setup(rate, offsetHz); }
     const n = iq.length >> 1, xi = new Float32Array(n), xq = new Float32Array(n);
@@ -146,7 +163,8 @@ export class BurstRx {
     for (let k = 0; k < n; k++) {
       const p = xi[k] * xi[k] + xq[k] * xq[k];
       this.short += a * (p - this.short); this.n++;
-      if (this.n < 4 * sps) { this.floor = this.floor ? Math.min(this.floor, this.short) || this.short : this.short; continue; }
+      // the floor starts as the mean power of the first stretch (the short average still ramps up from 0 there)
+      if (this.n < 32 * sps) { this.floor += (p - this.floor) / this.n; continue; }
       if (!this.inBurst) {
         this.floor += (this.short < this.floor ? 0.01 : 0.0005) * (this.short - this.floor);
         this.pre.push([xi[k], xq[k]]); if (this.pre.length > preLen) this.pre.shift();

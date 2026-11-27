@@ -85,7 +85,7 @@ export class OqpskRx {
     this.tau = 0; this.strobe = 0; this.amp = 1; this.lock = 0; this.sinceAcq = 0;
   }
 
-  onIq(iq: Int8Array, rate: number, offsetHz: number): void {
+  onIq(iq: Int8Array, rate: number, offsetHz = 0): void {
     const key = `${rate}|${offsetHz}`;
     if (key !== this.key) { this.key = key; this.setup(rate, offsetHz); }
     const n = iq.length >> 1, xi = new Float32Array(n), xq = new Float32Array(n);

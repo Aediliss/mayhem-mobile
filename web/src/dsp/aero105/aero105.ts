@@ -29,5 +29,5 @@ export class Aero105 {
   /** Locked: a P-channel UW in the last two frames, or a burst read lately (an R/T channel). */
   get lock(): number { return this.pLocked || this.calls - this.burstAt < 200 ? 1 : Math.min(this.rx.lock, 0.49); }
   reset(): void { this.rx.reset(); this.sync.reset(); this.bursts.reset(); this.bitsIn = 0; }
-  onIq(iq: Int8Array, rate: number, offsetHz: number): void { this.calls++; this.rx.onIq(iq, rate, offsetHz); this.bursts.onIq(iq, rate, offsetHz); }
+  onIq(iq: Int8Array, rate: number, offsetHz = 0): void { this.calls++; this.rx.onIq(iq, rate, offsetHz); this.bursts.onIq(iq, rate, offsetHz); }
 }
