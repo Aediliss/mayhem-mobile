@@ -67,7 +67,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | ADS-C (and the ARINC 622 envelope: CPDLC named) inside ACARS/VDL2/HFDL | libacars (Tomasz Lemiech): arinc.c, adsc.c, acars.c | MIT ✔ |
 | [x] | | CPDLC message bodies (FANS-1/A, ASN.1 PER: clearances, requests, free text) | libacars (asn1/ generated from the FANS-1/A ASN.1; asn1-format-cpdlc-text.c); asn1c 0.9.28 runtime PER rules | libacars MIT ✔ · asn1c runtime BSD-2-Clause ✔ |
 | [x] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium (burst tagger, burst_downmix, qpsk_demod; test-data/prbs15-2M-20dB); iridium-toolkit (bitsparser.py, bch.py, reassembler ida.py / sbd.py) | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README: "unless otherwise noted"; the RS files with their own notice are not used) |
-| [ ] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `vor_rx` | Mayhem GPL-3.0 ✔ |
+| [x] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `proc_vor_rx` (the VOR bearing); ICAO Annex 10 Vol. I signal parameters (ILS, idents, DME); LOC/GS/DME pairing checked against the FAA/RadioReference table | Mayhem GPL-3.0 ✔ · ICAO and FAA: facts (frequencies, tones, depths) only |
 | [ ] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) | JAERO | MIT ✔ |
 | [ ] | | FLARM / OGN receive | OGN docs, published decoders | check |
 | [ ] | | MLAT feeder (Beast over WebSocket) via export bus | Beast format | facts |
@@ -668,3 +668,14 @@ for "or later" first.
   Hardware: an L-band patch or an active GPS antenna outside with a clear sky (LNA helps); RTL-SDR or HackRF on "Ring
   alerts · 2 MS/s": satellites with positions within a minute; HackRF on "Whole band · 10 MS/s": broadcasts with
   Iridium time and, near aircraft routes, ACARS. Compare with gr-iridium + iridium-toolkit on a Capture of the same span.
+- **Navaids** (`dsp/navaid.ts`, new app, `test/navaid.test.ts`): VOR radial from the 30 Hz variable AM against the 30 Hz
+  reference FM on 9960 Hz (as Mayhem's proc_vor_rx), within 1° at every bearing tested and through noise; ILS 90/150 Hz
+  depths into DDM and SDM (to 0.002); Morse idents on 1020 Hz (VOR, localizer, glide path) and DME ground-beacon pulse
+  pairs (X 12 µs, Y 30 µs), their rate and the 1350 pair/s ident; the localizer ↔ glide path ↔ DME channel pairings
+  (all 40 ILS pairs as the FAA/RadioReference table lists them). End to end: a VOR at 113.90 (bearing 211°, ident SFO)
+  and a DME beacon (ident ABC) through noise; noise gives no bearing and no ident. In Chromium a VOR recording read
+  "RADIAL 211° · ident SFO"; a localizer reading showed DDM, fly right and the paired glide path / DME buttons. Not done:
+  DME range (it needs an interrogation, i.e. a transmitter); no check against a real off-air recording yet.
+  Hardware: any radio here (RTL-SDR included) with a short antenna near an airport: tune the nearest VOR (its chart
+  frequency): the radial should match where you are from the station on a map, and the ident its three letters; a
+  localizer at an airport with instrument approaches (and its paired glide path) for DDM; its paired DME for pulse pairs.

@@ -49,6 +49,7 @@ import * as Apps from './tx-apps.js';
 import type { Aircraft } from './dsp/adsb.js';
 import type { DroneIdFrame } from './dsp/droneid.js';   // FORK: DJI DroneID
 import { IRIDIUM_SPANS, type IridiumFrame } from './dsp/iridium/frames.js';   // FORK: Iridium
+import { dmeFor, navKind, pairedIls, type NavaidMsg } from './dsp/navaid.js';   // FORK: Navaids (pure helpers; the processor lives in the worker)
 import { LinkTracker, type LoraBurst } from './dsp/linkprint.js';   // FORK: control-link fingerprints
 import { FPV_CHANNELS, type FpvLook, type OfdmLook } from './dsp/fpv.js';   // FORK: analog FPV video
 import type { AcTrack } from './dsp/modeac.js';   // FORK: Mode A/C
@@ -114,7 +115,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, iridium, hfdl
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'subghz' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, iridium, navaid, hfdl
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -142,6 +143,7 @@ const APPS: AppDef[] = [
   { id: 'btle', title: 'Bluetooth', blurb: 'BLE advertising · 2.4 GHz', cat: 'Receive' },
   { id: 'droneid', title: 'Drones', blurb: 'DJI DroneID · 2.4 GHz', cat: 'Receive' },   // FORK: DJI DroneID
   { id: 'iridium', title: 'Iridium', blurb: 'Satellites · ring alerts · ACARS · 1.6 GHz', cat: 'Receive' },   // FORK: Iridium
+  { id: 'navaid', title: 'Navaids', blurb: 'VOR radial · ILS · DME · idents', cat: 'Receive' },   // FORK: Navaids
   { id: 'fpv', title: 'FPV', blurb: 'Analog FPV video · 5.8 GHz', cat: 'Receive' },   // FORK: analog FPV video
   { id: 'sat', title: 'Satellites', blurb: 'track and decode', cat: 'Receive' },
   { id: 'sondes', title: 'Weather Balloons', blurb: 'radiosondes · 400–406 MHz', cat: 'Receive' },
@@ -1074,6 +1076,7 @@ function open(app: AppId | null): void {
     case 'sondes': sondesOpen(); break;
     case 'btle': configure('NONE', btleChannelFreq(state.btleCh), 2e6, 32, 40, true, 'btle'); worker?.postMessage({ type: 'btleChannel', ch: state.btleCh }); break;
     case 'droneid': configure('NONE', droneUi.freq, 15.36e6, 32, 40, true, 'droneid'); break;   // FORK: DJI DroneID at 15.36 MS/s
+    case 'navaid': navOpen(); break;   // FORK: Navaids
     case 'iridium': { const sp = IRIDIUM_SPANS[iriUi.span]; configure('NONE', sp.centreHz, sp.rateHz, 32, 32, true, 'iridium'); break; }   // FORK: Iridium
     case 'fpv': configure('NONE', fpvUi.hz, 20e6, 24, 30, true, 'fpv'); worker?.postMessage({ type: 'fpvTune', ch: fpvUi.ch, watch: true }); break;   // FORK: analog FPV video at 20 MS/s
     // The span is centred on 130.8 MHz: every US ACARS channel (130.025-131.550) is inside it and decoded at once,
@@ -1803,6 +1806,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   fpv: ['fpv', 'No FPV video found yet', ['SCAN steps through the 48 channels of bands A, B, E, F, R and L; channels with video turn gold', 'Tap a channel to watch it: the picture is drawn from the sync pulses, in black and white', 'Needs a HackRF at 20 MS/s and a 5.8 GHz antenna; an RTL-SDR cannot reach 5.8 GHz']],   // FORK: analog FPV video
   droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   iridium: ['iridium', 'No Iridium satellites heard yet', ['Ring alerts come several times a second from every Iridium satellite in view: an antenna that sees the sky (a patch or an active GPS-style antenna outside) hears them within a minute', 'The whole band (10 MS/s) needs a HackRF and a fast computer; an RTL-SDR covers the ring-alert span at 2 MS/s']],   // FORK: Iridium
+  navaid: ['navaid', 'Tune a VOR, localizer, glide path or DME', ['VORs are on 108.00-117.95 MHz (the chart or a flight app gives the nearest one); a VOR within line of sight comes in strong even on a short antenna', 'An ILS localizer is on 108.10-111.95 (odd tenths) at an airport with instrument approaches; its glide path and DME are paired with it: the buttons tune them']],   // FORK: Navaids
   btle: ['btle', 'Waiting for BLE advertisements', ['Phones, earbuds and watches advertise several times a second: start on CH 37', 'BLE is low power: hold the radio within a few meters of a device']],
   lora: ['lora', 'No nodes yet', ['Meshtastic nodes beacon about every 15 minutes: leave it running', 'AREA picks where you are; a wider SPAN (20 MHz on a HackRF) holds more of its channels']],
   sondes: ['sondes', 'No weather balloons yet', ['Weather services launch around 00:00 and 12:00 UTC; a sonde climbs for about 90 minutes and is heard 200+ miles out', 'Every type is decoded on its own: leave it running and they show up']],
@@ -2051,6 +2055,7 @@ function render(app: AppId | null): void {
     case 'btle': renderBle(view); break;
     case 'droneid': renderDroneId(view); break;   // FORK: DJI DroneID
     case 'iridium': renderIridium(view); break;   // FORK: Iridium
+    case 'navaid': renderNavaid(view); break;   // FORK: Navaids
     case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
     case 'hfdl': renderAcars(view, 'hfdl'); break;   // FORK: HFDL
@@ -4045,6 +4050,65 @@ function bleDetail(d: BleDevice, now: number): string {
     + `<div class="mt-fields">${[...d.fields, ...more].map(f => `<div><b>${esc(f.name)}</b><span>${esc(f.value)}</span></div>`).join('')}</div>`
     + `<div class="caption">RAW ADVERTISEMENTS · newest first · ${d.history.length} kept</div><div class="ble-raw">${rows}</div>`;
 }
+// FORK: ----------------------------------------------------------------------------------- Navaids (dsp/navaid.ts)
+const navUi = { freq: 113_900_000, last: null as NavaidMsg | null, idents: [] as string[] };
+function navOpen(): void {
+  configure('AM', navUi.freq, 2e6, 24, 24, false, 'navaid');
+  // off the DC spike: the channel 200 kHz above the span's centre
+  state.viewLo = navUi.freq - 200_000; if (radio) radio.targetFreqHz = state.viewLo; sendOffset();
+}
+function navGo(hz: number): void { navUi.freq = hz; navUi.last = null; tune(hz); refreshNavaid(); }
+function renderNavaid(view: HTMLElement): void {
+  view.innerHTML = `
+    <section class="${visCls('navaid')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">
+      <div class="ctlrow"><input id="navaid-mhz" class="txin" inputmode="decimal" placeholder="MHz (113.90, 108.10, 334.70, 1105)" style="flex:1"><button class="chip" id="navaid-go">TUNE</button></div>
+      <div id="navaid-pairs" class="ctlrow"></div>
+      <div id="navaid-panel" class="panel"></div>
+      <div id="navaid-log">${logHtml('navaid', 'idents heard appear here')}</div>
+      <div class="note about">Radio navigation aids, receive only. A VOR (108.00-117.95 MHz) gives its radial: the bearing from the station, read from its 30 Hz signals as Mayhem's VOR receiver does; an ILS localizer (108.10-111.95) and glide path (329-335 MHz) give the difference in depth of their 90 and 150 Hz tones (DDM): which side of the course or glide path you are. The Morse ident (1020 Hz) is read on each. DME (962-1213 MHz) shows its ground beacon's pulse pairs (12 µs X, 30 µs Y), their rate and its ident; the range itself needs an interrogation from a transmitter, which this does not send. Any radio here reaches all of these; an RTL-SDR included.</div>
+    </section>`;
+  scope = attach(tunableScope('scope', 80, 70));
+  const go = () => { const v = parseFloat(($<HTMLInputElement>('navaid-mhz').value || '').replace(',', '.')); if (v > 100 && v < 1300) navGo(Math.round(v * 1e6)); };
+  $('navaid-go').onclick = go; $<HTMLInputElement>('navaid-mhz').onkeydown = e => { if (e.key === 'Enter') go(); };
+  $('navaid-pairs').onclick = e => { const b = (e.target as HTMLElement).closest<HTMLElement>('[data-navhz]'); if (b) navGo(Number(b.dataset.navhz)); };
+  refreshList('navaid'); refreshNavaid();
+}
+function onNavaid(m: NavaidMsg): void {
+  navUi.last = m;
+  if (m.ident && navUi.idents[0] !== `${(m.hz / 1e6).toFixed(2)} ${m.ident}`) navUi.idents.unshift(`${(m.hz / 1e6).toFixed(2)} ${m.ident}`);
+  if (state.app === 'navaid') refreshNavaid();
+}
+function refreshNavaid(): void {
+  if (state.app !== 'navaid') return;
+  const hz = state.freq, kind = navKind(hz), gs = pairedIls(hz), dme = dmeFor(hz), m = navUi.last && Math.abs(navUi.last.hz - hz) < 1000 ? navUi.last : null;
+  const pairs = q('#navaid-pairs');
+  if (pairs) pairs.innerHTML = [gs ? `<button class="chip" data-navhz="${gs}">${kind === 'GS' ? 'LOC' : 'GLIDE PATH'} ${(gs / 1e6).toFixed(2)}</button>` : '', dme && kind !== 'DME' ? `<button class="chip" data-navhz="${dme.replyHz}">DME ${dme.ch} · ${(dme.replyHz / 1e6).toFixed(0)} MHz</button>` : ''].join('');
+  const panel = q('#navaid-panel'); if (!panel) return;
+  const rows: [string, string][] = [['What', kind ? { VOR: 'VOR', LOC: 'ILS localizer', GS: 'ILS glide path', DME: 'DME ground beacon (replies)' }[kind] : 'not a navaid frequency'], ['Ident', m?.ident ?? '—']];
+  let big = '';
+  if (m?.vor) {
+    const v = m.vor, to = (v.bearingDeg + 180) % 360;
+    big = v.ok ? `<div class="navaid-big">RADIAL ${Math.round(v.bearingDeg).toString().padStart(3, '0')}°<small>from the station · to it: ${Math.round(to).toString().padStart(3, '0')}°</small></div>` : '<div class="navaid-big dim">NO BEARING<small>the 30 Hz signals are too weak or missing</small></div>';
+    rows.push(['30 Hz variable', `${(v.varDepth * 100).toFixed(0)}% (30% when clean)`], ['Reference', `±${v.refDevHz} Hz on 9960 Hz (±480 when clean)`]);
+  }
+  if (m?.ils) {
+    const i = m.ils, full = kind === 'GS' ? 0.175 : 0.155, defl = Math.max(-1, Math.min(1, i.ddm / full));
+    const side = Math.abs(i.ddm) < 0.002 ? (kind === 'GS' ? 'on the glide path' : 'on the course') : kind === 'GS' ? (i.ddm > 0 ? 'above the glide path: fly down' : 'below the glide path: fly up') : (i.ddm > 0 ? '90 Hz side (left of course on approach): fly right' : '150 Hz side (right of course on approach): fly left');
+    big = `<div class="navaid-big">DDM ${i.ddm >= 0 ? '+' : ''}${i.ddm.toFixed(3)}<small>${esc(side)}</small></div><div class="navaid-bar"><i style="left:${(50 + 50 * defl).toFixed(1)}%"></i></div>`;
+    rows.push(['90 Hz', `${(i.m90 * 100).toFixed(1)}%`], ['150 Hz', `${(i.m150 * 100).toFixed(1)}%`], ['SDM', `${(i.sdm * 100).toFixed(1)}% (${kind === 'GS' ? '80' : '40'}% nominal)`]);
+  }
+  if (m?.dme) {
+    const d = m.dme;
+    big = `<div class="navaid-big">${d.pairsPerS} PAIRS/S<small>${d.mode ? `${d.mode} channel · pairs ${d.spacingUs} µs apart` : 'no pulse pairs heard'}</small></div>`;
+    rows.push(['Range', 'needs an interrogation (a transmitter): not sent']);
+  }
+  if (m) rows.push(['Level', `${m.levelDb} dB`]);
+  if (dme && kind !== 'DME') rows.push(['Paired DME', `${dme.ch} (ground replies on ${(dme.replyHz / 1e6).toFixed(0)} MHz)`]);
+  if (navUi.idents.length) rows.push(['Idents heard', navUi.idents.slice(0, 6).join(' · ')]);
+  panel.innerHTML = big + `<div class="mt-fields">${rows.map(([k, v]) => `<div><b>${esc(k)}</b><span>${esc(v)}</span></div>`).join('')}</div>`;
+}
+// FORK: end Navaids
 // FORK: ------------------------------------------------------------------------------------- Iridium (dsp/iridium/)
 interface IriSat { sat: number; beams: Set<number>; lat?: number; lon?: number; altKm?: number; first: number; last: number; ra: number; bc: number; levelDb: number }
 const iriUi = { span: 0, sats: new Map<number, IriSat>(), counts: {} as Record<string, number>, detected: 0, demodulated: 0, time: 0, sel: '' };
@@ -9992,6 +10056,7 @@ function ensureWorker(): Worker {
       case 'hdobj': hdOnObject(m); break;
       case 'ble': onBleAdv(m as { pdu: number[]; db: number; ch: number }); break;
       case 'droneid': onDroneId(m as unknown as { frame: DroneIdFrame; cfoHz: number; bursts: number; decoded: number }); break;   // FORK: DJI DroneID
+      case 'navaid': onNavaid(m as unknown as NavaidMsg); break;   // FORK: Navaids
       case 'iridiumFrame': onIridiumFrame(m.f as IridiumFrame & { levelDb: number }); break;   // FORK: Iridium
       case 'iridiumStats': iriUi.counts = m.counts as Record<string, number>; iriUi.detected = m.detected as number; iriUi.demodulated = m.demodulated as number; refreshIridium(); break;   // FORK: Iridium
       case 'loraBurst': onLoraBurst(m.burst as LoraBurst); break;   // FORK: control-link fingerprints
@@ -10537,7 +10602,7 @@ function bindDesktop(): void {
     // drop the radio mid-session.
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-    const tunable = !state.app || state.app === 'audio' || state.app === 'capture' || state.app === 'pager' || state.app === 'aprs' || state.app === 'ais' || state.app === 'ert' || state.app === 'lora' || state.app === 'acars' || state.app === 'subghz' || state.app === 'devices' || state.app === 'analyzer';
+    const tunable = !state.app || state.app === 'audio' || state.app === 'capture' || state.app === 'pager' || state.app === 'aprs' || state.app === 'ais' || state.app === 'ert' || state.app === 'lora' || state.app === 'acars' || state.app === 'navaid' || state.app === 'subghz' || state.app === 'devices' || state.app === 'analyzer';   // FORK: + navaid
     // start typing a number (or F) to key in a frequency; a focused readout digit already took its own keystroke
     if ((tunable || state.app === 'ham') && !e.defaultPrevented && !e.ctrlKey && !e.metaKey && !e.altKey && /^[0-9.,fF]$/.test(e.key)) {
       freqEntry(/[fF]/.test(e.key) ? '' : e.key); e.preventDefault(); return;
@@ -10724,7 +10789,7 @@ function initShell(): void {
 /** Each app's card tag and title (the Android app's). */
 const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
   js8: ['JS8', 'HF MESSAGING'],
-  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], iridium: ['IRIDIUM', 'SATELLITES · RING ALERTS'] /* FORK */, hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'], subghz: ['SUB-GHZ', 'SENSORS · REMOTES · KEYS'],
+  hamplus: ['REPEATERS', 'EVERY CHANNEL · EVERY TALKER'], cb: ['CB RADIO', 'ALL 40 CHANNELS'], pager: ['PAGER', 'PAGER MESSAGES'], hd: ['HD RADIO', 'STATION DATA · ART · TRAFFIC'], vdl2: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], iridium: ['IRIDIUM', 'SATELLITES · RING ALERTS'] /* FORK */, navaid: ['NAVAIDS', 'VOR · ILS · DME'] /* FORK */, hfdl: ['FLIGHT MSGS', 'AIRLINE MESSAGES'] /* FORK */, acars: ['FLIGHT MSGS', 'AIRLINE MESSAGES'], trains: ['TRAINS', 'END OF TRAIN · TRAIN CONTROL'], fleet: ['DISPATCH', 'TRUNKED DISPATCH · CALLS'], cell: ['CELL', 'CELL TOWERS · ALERTS'], atsc: ['TV', 'DIGITAL TV'], subghz: ['SUB-GHZ', 'SENSORS · REMOTES · KEYS'],
   ert: ['METERS', 'UTILITY METERS'], lora: ['MESH', 'MESH RADIO TEXT'], sondes: ['BALLOONS', 'WEATHER BALLOONS'], btle: ['BLUETOOTH', 'BLUETOOTH DEVICES'], adsb: ['AIRCRAFT', 'AIRCRAFT OVERHEAD'], ais: ['SHIPS', 'SHIPS NEARBY'], aprs: ['HAM MAP', 'STATIONS ON THE MAP'], uat: ['FLIGHT UAT', 'FLIGHT WEATHER · SMALL PLANES'],
   devices: ['DEVICES', 'KEYS · REMOTES · SENSORS'], spectrum: ['SPECTRUM', 'ANALYZER · ZERO SPAN'], analyzer: ['ANALYZER', 'CAPTURE · DEMOD · COMPARE'], capture: ['CAPTURE', 'RAW IQ TO FILE'], prowl: ['PROWL', 'HUNTING FOR VOICE'], lookingglass: ['GLASS', 'WIDEBAND SWEEP'],
   search: ['SEARCH', 'ACTIVE FREQUENCIES'], transmit: ['TX', 'IDLE'], troll: ['TROLL', 'IDLE'],
@@ -10737,7 +10802,7 @@ const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
 const APP_TECH: Partial<Record<AppId, string>> = {
   audio: 'WFM · NFM · AM · SSB · RDS', hd: 'NRSC-5 · IBOC · FM HYBRID', fleet: 'P25 · DMR · NXDN · TETRA · SMARTNET',
   pager: 'POCSAG · FLEX · REFLEX', lora: 'LORA · MESHTASTIC · MESHCORE · LORAWAN', adsb: 'ADS-B · MODE S · 1090 MHZ',
-  uat: 'UAT · FIS-B · 978 MHZ', iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
+  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
   ais: 'AIS · 161.975 / 162.025 MHZ', cell: 'LTE · SIB · WEA · ETWS', devices: 'OOK · FSK · TPMS · Z-WAVE · 315–915 MHZ',
   subghz: 'OOK · FSK · 315–915 MHZ', js8: 'JS8 · 8-FSK · HF USB', ham: 'SSB · CW · FM · FT8 · SSTV',
   hamplus: 'FM · DMR · D-STAR · FUSION · P25 · NXDN · M17', cb: 'CB · 26.965–27.405 MHZ · AM · FM · SSB', aprs: 'APRS · AX.25 · 144.390 MHZ',

@@ -470,7 +470,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   body { box-sizing: border-box; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   header.bar, #hint, #unsupported, #log-panel { flex: none; }
   main#view { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 10px 10px 6px; }
-  .view.launcher, .view.audio, .view.prowl, .view.sat, .view.ham, .view.adsb, .view.sat, .view.ais, .view.aprs, .view.pager, .view.ert, .view.lora, .view.sondes, .view.uat, .view.btle, .view.droneid, .view.fpv /* FORK: Drones, FPV */, .view.iridium /* FORK: Iridium */, .view.tpms, .view.acars, .view.vdl2, .view.hfdl /* FORK: HFDL */, .view.subghz, .view.devices, .view.lookingglass, .view.search, .view.capture, .view.trains, .view.fleet, .view.hd, .view.cell, .view.atsc {
+  .view.launcher, .view.audio, .view.prowl, .view.sat, .view.ham, .view.adsb, .view.sat, .view.ais, .view.aprs, .view.pager, .view.ert, .view.lora, .view.sondes, .view.uat, .view.btle, .view.droneid, .view.fpv /* FORK: Drones, FPV */, .view.iridium /* FORK: Iridium */, .view.navaid /* FORK: Navaids */, .view.tpms, .view.acars, .view.vdl2, .view.hfdl /* FORK: HFDL */, .view.subghz, .view.devices, .view.lookingglass, .view.search, .view.capture, .view.trains, .view.fleet, .view.hd, .view.cell, .view.atsc {
     display: flex; flex-direction: column; overflow: hidden;
   }
   .visual { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -562,7 +562,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   #hint, #unsupported, #log-panel { flex: none; }
   /* main#view IS the .view.* element, so its display comes from the per-app rules below; it just flexes to fill. */
   main#view { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px 12px 6px; }
-  .view.audio, .view.prowl, .view.sat, .view.ham, .view.adsb, .view.sat, .view.ais, .view.aprs, .view.pager, .view.ert, .view.lora, .view.sondes, .view.uat, .view.btle, .view.droneid, .view.fpv /* FORK: Drones, FPV */, .view.iridium /* FORK: Iridium */, .view.tpms, .view.acars, .view.vdl2, .view.hfdl /* FORK: HFDL */, .view.subghz, .view.devices, .view.lookingglass, .view.search, .view.capture, .view.trains, .view.fleet, .view.hd, .view.cell, .view.atsc {
+  .view.audio, .view.prowl, .view.sat, .view.ham, .view.adsb, .view.sat, .view.ais, .view.aprs, .view.pager, .view.ert, .view.lora, .view.sondes, .view.uat, .view.btle, .view.droneid, .view.fpv /* FORK: Drones, FPV */, .view.iridium /* FORK: Iridium */, .view.navaid /* FORK: Navaids */, .view.tpms, .view.acars, .view.vdl2, .view.hfdl /* FORK: HFDL */, .view.subghz, .view.devices, .view.lookingglass, .view.search, .view.capture, .view.trains, .view.fleet, .view.hd, .view.cell, .view.atsc {
     display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 12px; flex: 1; min-height: 0; align-items: stretch;
   }
   .visual { display: flex; flex-direction: column; min-height: 0; }
@@ -624,7 +624,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   .chip { font-size: 13px; }
   .view.launcher { grid-template-columns: minmax(0, 1fr) minmax(330px, 500px); }
   /* Controls stop growing past ~560 px so an ultra-wide monitor turns into waterfall, not a wall of chips. */
-  .view.audio, .view.prowl, .view.sat, .view.ham, .view.adsb, .view.sat, .view.ais, .view.aprs, .view.pager, .view.ert, .view.lora, .view.sondes, .view.uat, .view.btle, .view.droneid, .view.fpv /* FORK: Drones, FPV */, .view.iridium /* FORK: Iridium */, .view.tpms, .view.acars, .view.vdl2, .view.hfdl /* FORK: HFDL */, .view.subghz, .view.devices, .view.lookingglass, .view.search, .view.capture, .view.trains, .view.fleet, .view.hd, .view.cell, .view.atsc {
+  .view.audio, .view.prowl, .view.sat, .view.ham, .view.adsb, .view.sat, .view.ais, .view.aprs, .view.pager, .view.ert, .view.lora, .view.sondes, .view.uat, .view.btle, .view.droneid, .view.fpv /* FORK: Drones, FPV */, .view.iridium /* FORK: Iridium */, .view.navaid /* FORK: Navaids */, .view.tpms, .view.acars, .view.vdl2, .view.hfdl /* FORK: HFDL */, .view.subghz, .view.devices, .view.lookingglass, .view.search, .view.capture, .view.trains, .view.fleet, .view.hd, .view.cell, .view.atsc {
     grid-template-columns: minmax(0, 1fr) minmax(360px, 560px);
   }
   .view.transmit { grid-template-columns: minmax(0, 820px); }
@@ -3308,3 +3308,9 @@ main#view.view:is(.hamplus, .cb).hpwide { display: grid; grid-template-columns: 
 /* FORK: the recording playback strip (fileradio.ts) wears the no-radio strip's shape in the accent colour */
 #playbar { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 #playbar > i { background: var(--accent); }
+/* FORK: Navaids: the big reading and the course needle */
+.navaid-big { font-size: 28px; font-weight: 600; line-height: 1.1; letter-spacing: .04em; color: var(--accent); padding: 6px 4px; }
+.navaid-big small { display: block; font-size: 11px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
+.navaid-big.dim { color: var(--muted); }
+.navaid-bar { position: relative; height: 10px; margin: 4px 4px 8px; border-radius: 5px; background: linear-gradient(90deg, transparent 49.5%, var(--muted) 49.5%, var(--muted) 50.5%, transparent 50.5%), rgba(255,255,255,.06); }
+.navaid-bar i { position: absolute; top: -3px; width: 4px; height: 16px; margin-left: -2px; border-radius: 2px; background: var(--accent); }
