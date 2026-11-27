@@ -10,7 +10,7 @@ import { fft } from '../../fft.js';
 export const SYMBOL_RATE = 5250;
 const ACQ_BLOCKS = 4;
 
-function lowpass(cutoff: number, n: number): Float32Array {
+export function lowpass(cutoff: number, n: number): Float32Array {
   if (n <= 1) return Float32Array.of(1);
   const h = new Float32Array(n), m = (n - 1) / 2; let s = 0;
   for (let i = 0; i < n; i++) {
@@ -35,7 +35,7 @@ export function rrc(sps: number, span = 4, beta = 1): Float32Array {
 }
 
 /** A decimating complex FIR with its own history. */
-class Decim {
+export class Decim {
   private hi: Float32Array; private hq: Float32Array; private next = 0;
   constructor(private readonly h: Float32Array, private readonly D: number) { this.hi = new Float32Array(h.length - 1); this.hq = new Float32Array(h.length - 1); }
   run(xi: Float32Array, xq: Float32Array, n: number, oi: Float32Array, oq: Float32Array): number {
@@ -85,7 +85,7 @@ export class OqpskRx {
     this.tau = 0; this.strobe = 0; this.amp = 1; this.lock = 0; this.sinceAcq = 0;
   }
 
-  onIq(iq: Int8Array, rate: number, offsetHz: number): void {
+  onIq(iq: Int8Array, rate: number, offsetHz = 0): void {
     const key = `${rate}|${offsetHz}`;
     if (key !== this.key) { this.key = key; this.setup(rate, offsetHz); }
     const n = iq.length >> 1, xi = new Float32Array(n), xq = new Float32Array(n);

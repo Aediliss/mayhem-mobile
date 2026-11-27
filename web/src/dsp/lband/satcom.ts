@@ -10,6 +10,7 @@ import { PskReceiver } from './psk.js';
 import { StdcDecoder, STDC_SYMBOL_RATE, type EgcMessage, type StdcStats } from './stdc.js';
 import { AeroDecoder, aesHex, type AeroStats } from './aero.js';
 import { Aero105 } from '../aero105/aero105.js';   // FORK: Aero 10.5 kbps (OQPSK, after JAERO)
+import { AeroMskBursts } from '../aero105/mskburst.js';   // FORK: Aero 600/1200 R/T bursts (MSK, after JAERO)
 
 export type SatcomMode = 'egc' | 'aero600' | 'aero1200' | 'aero10500';   // FORK: + aero10500
 
@@ -26,6 +27,7 @@ export class SatcomProcessor implements IqProcessor {
   private readonly stdc = new StdcDecoder();
   private aero: AeroDecoder | null = null;
   private a105: Aero105 | null = null;   // FORK: Aero 10.5 kbps
+  private msk: AeroMskBursts | null = null;   // FORK: Aero 600/1200 R/T bursts
   private lastSnap = 0; private dirty = false; private wasLocked = false;
 
   constructor(private readonly emit: Emit) {
@@ -36,7 +38,7 @@ export class SatcomProcessor implements IqProcessor {
   set mode(m: SatcomMode) {
     if (m === this.modeNow) return;
     this.modeNow = m;
-    this.a105 = null;   // FORK: Aero 10.5 kbps
+    this.a105 = null; this.msk = null;   // FORK: Aero 10.5 kbps, 600/1200 bursts
     if (m === 'egc') { this.aero = null; this.psk = new PskReceiver(STDC_SYMBOL_RATE, x => this.stdc.push(x)); }
     // FORK: Aero 10.5 kbps: its own OQPSK receiver and decoder, in place of the BPSK pair
     else if (m === 'aero10500') {
@@ -50,18 +52,23 @@ export class SatcomProcessor implements IqProcessor {
       a.onAcars = (line, aes) => { this.emit({ type: 'packet', line }); this.emit({ type: 'log', line: `Aero: ACARS to AES ${aesHex(aes)}` }); this.dirty = true; };
       this.aero = a;
       this.psk = new PskReceiver(a.rate, x => a.push(x));
+      // FORK: the R/T bursts aircraft send at the same rate, listened for on the same channel
+      const b = new AeroMskBursts(a.rate);
+      b.onAcars = (line, aes) => { this.emit({ type: 'packet', line }); this.emit({ type: 'log', line: `Aero ${a.rate} burst: ACARS from AES ${aesHex(aes)}` }); this.dirty = true; };
+      this.msk = b;
     }
     this.stdc.reset();
   }
 
   clear(): void { this.stdc.clear(); this.dirty = true; }
-  reset(_rate: number): void { this.psk.reset(); this.stdc.reset(); this.aero?.reset(); this.a105?.reset(); }   // FORK: + a105
+  reset(_rate: number): void { this.psk.reset(); this.stdc.reset(); this.aero?.reset(); this.a105?.reset(); this.msk?.reset(); }   // FORK: + a105, msk
 
   onIq(iq: Int8Array, rate: number): void {
     if (this.aero) this.aero.hz = this.channelHz;
     // FORK: Aero 10.5 kbps runs its own receiver (rx: what the lock / carrier readings come from)
     if (this.a105) { this.a105.hz = this.channelHz; this.a105.onIq(iq, rate, this.channelHz - this.centerHz); }
     else this.psk.onIq(iq, rate, this.channelHz - this.centerHz);
+    if (this.msk) { this.msk.hz = this.channelHz; this.msk.onIq(iq, rate, this.channelHz - this.centerHz); }
     const rx = this.a105 ?? this.psk;
     const locked = rx.lock > 0.5;
     if (locked !== this.wasLocked) { this.wasLocked = locked; this.emit({ type: 'log', line: locked ? `Satcom: locked to the carrier ${fmtHz(rx.carrierHz)} from ${(this.channelHz / 1e6).toFixed(3)} MHz` : 'Satcom: carrier lost' }); }
@@ -73,7 +80,7 @@ export class SatcomProcessor implements IqProcessor {
   snap(): SatcomSnap {
     const p = this.a105 ?? this.psk;   // FORK: + a105
     return { mode: this.modeNow, hz: this.channelHz, carrierHz: Number.isFinite(p.carrierHz) ? p.carrierHz : NaN, lock: p.lock, lineDb: p.lineDb,
-      egc: { ...this.stdc.stats }, aero: this.aero ? { ...this.aero.stats } : this.a105 ? { ...this.a105.stats } : null, messages: this.stdc.messages() };   // FORK: + a105 stats
+      egc: { ...this.stdc.stats }, aero: this.aero ? { ...this.aero.stats, ...(this.msk ? { bursts: this.msk.bursts } : {}) } : this.a105 ? { ...this.a105.stats } : null, messages: this.stdc.messages() };   // FORK: + a105 stats, msk bursts
   }
 }
 
