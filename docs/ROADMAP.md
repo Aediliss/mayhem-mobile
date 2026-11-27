@@ -71,7 +71,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) — **done upstream**: the Satcom app (0.9.76, dsp/lband/: Inmarsat-C NCS EGC, Aero P-channel 600/1200 bps ACARS to Flight Msgs; the UI says an LNA and patch are needed) | upstream | — |
 | [ ] | | Inmarsat Aero 10.5 kbps P-channel (OQPSK) and the T/R burst channels (aircraft → ground) | JAERO | MIT ✔ |
 | [x] | | FLARM / OGN receive — as **ADS-L** (the Gliders app): both M-band channels (868.2/868.4 MHz) at once; Traffic (position, altitude, speed, climb, track, category, emergency) and Status payloads; OGN tracker packets counted, not read; FLARM's own protocol not read | EASA ADS-L 4 SRD-860 Issue 2 (1 Dec 2025, ED Decision 2022/024/R): physical layer, packet, XXTEA key-0 scrambling, CRC-24, payloads; OGN wiki (OGN sync word) | EASA spec: "open to any interested party for implementation" (A.3), written from the spec, no code ported ✔ · OGN wiki CC BY-SA 3.0 (a fact: the sync word) ✔ · FLARM air protocol: closed and obfuscated, decrypting it may be unlawful in the EU ✘ (not read) · OGN tracker firmware (pjalocha, glidernet): no license ✘ (not used; OGN's LDPC code and whitening are not published, so OGN packets are counted only) |
-| [ ] | | MLAT feeder (Beast over WebSocket) via export bus | Beast format | facts |
+| [x] | | MLAT feeder (Beast over WebSocket) via export bus: Mode-S frames carry 12 MHz ticks from the sample clock | Beast format; dump1090/readsb's 12 MHz free-running counter (what mlat-client's `dump1090` input type expects) | facts ✔ (no code ported) |
 
 ## Phase 5 — Marine and emergency
 
@@ -191,7 +191,7 @@ for "or later" first.
   APRS packet decoded from IQ leaves as TNC2 text and a KISS frame. Browser check (Chromium): EXPORT on, settings
   survive reload, the APRS recording played in Ham Map → a local WebSocket server receives the three TNC2 lines, a
   local CORS webhook one POST of 9 events, and DOWNLOAD gives the same 9 as JSON lines.
-  Beast timestamps are 0 (no sample clock), so the Beast output suits readsb/tar1090 but not MLAT.
+  Beast timestamps were 0 here at first (no sample clock); Phase 4's MLAT item added them (see below).
 - **Phase 1 · export bus, part B: MQTT** (`web/src/export/mqtt.ts`, `test/mqtt.test.ts`): MQTT 3.1.1 over WebSockets
   written from the OASIS spec (CONNECT with optional user/password, PUBLISH QoS 0, keep-alive PINGREQ, DISCONNECT;
   no client library added). Topics: `<prefix>/events/<kind>` (log lines under `events/line/<app>`), and each
@@ -704,3 +704,20 @@ for "or later" first.
   Hardware (Europe): any radio here, 868 MHz antenna outside, near a gliding site on a soaring day; open Gliders: aircraft
   with newer FLARMs, OGN trackers or SkyEcho-type devices appear on the map within seconds. Compare positions with
   glidernet.org's live map (OGN ground stations receive ADS-L too).
+- **MLAT feeder** (`dsp/adsb.ts` FORK edits, `export/event.ts`, `export/sinks.ts`, `test/mlat.test.ts`): every Mode-S
+  frame now leaves the ADS-B decoder with its time in 12 MHz ticks counted from the radio's samples (the first preamble
+  pulse; 6 ticks a sample at 2 MS/s, as dump1090's free-running counter) and dump1090's signal byte (√power · 255).
+  The export bus puts both in `adsb.frame` events (`data.ts`, `data.sig`) and in the Beast output (it was 0 before).
+  Samples the radio reports lost (DeliveryMeter gaps) move the clock on by the estimated count, and the held-back
+  samples are dropped; a restart starts it at 0 (mlat-server resynchronizes a receiver whose clock jumps). Tests:
+  frames at known samples across four buffers (one straddling an edge) come out exactly 6 ticks a sample apart; a gap
+  of 12 345 samples shows up as 74 070 ticks; reset starts again at 0; the Beast bytes carry the ticks, the signal and
+  the 0x1a escape inside a timestamp. Limits: at 2 MS/s a frame's time is to the sample (0.5 µs, ~150 m), coarser than
+  readsb's 2.4 MS/s phase-corrected times, so expect MLAT positions within a few hundred meters at best; a gap's size
+  is estimated from the wall clock, so after a USB stall the server has to resync (seconds). Not tried here: a real
+  mlat-client session (no network to an MLAT server from this environment).
+  Hardware: RTL-SDR or HackRF on ADS-B at 2 MS/s with a 1090 MHz antenna; Settings → EXPORT → WebSocket, format Beast,
+  `ws://localhost:30005`; on the computer: `websockify 30005 localhost:30004`, `readsb --net-only --net-bi-port 30004
+  --net-bo-port 30005`, then `mlat-client --input-type dump1090 --input-connect localhost:30005 --lat … --lon … --alt …
+  --user … --server <an MLAT server you are allowed to feed>`. mlat-client should report "clock: dump1090" and, after a
+  few minutes with aircraft around, synchronized peers. tar1090 on readsb shows the frames meanwhile.

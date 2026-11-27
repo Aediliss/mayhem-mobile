@@ -4,7 +4,7 @@
  *
  * kinds:
  *   line            any decoder's log line (the text the app's LOG shows)
- *   adsb.frame      a CRC-checked Mode-S frame (hex)                      ← worker 'modes'
+ *   adsb.frame      a CRC-checked Mode-S frame (hex; data.ts 12 MHz ticks, data.sig) ← worker 'modes'
  *   adsb.aircraft   an aircraft whose state changed                       ← worker 'aircraft' table
  *   ais.frame       an AIS message's payload (hex + bit count)           ← worker 'aisRaw'
  *   ais.vessel      a vessel whose state changed                          ← worker 'table' (Ships)
@@ -51,7 +51,7 @@ export class EventAdapter {
     };
     switch (m.type) {
       case 'packet': return typeof m.line === 'string' ? [{ ...base(), kind: 'line', text: m.line }] : [];
-      case 'modes': return [{ ...base(), kind: 'adsb.frame', hex: String(m.hex) }];
+      case 'modes': return [{ ...base(), kind: 'adsb.frame', hex: String(m.hex), ...(typeof m.ts === 'number' ? { data: { ts: m.ts, sig: m.sig ?? 0 } } : {}) }];
       case 'aisRaw': return [{ ...base(), kind: 'ais.frame', hex: hexOf(m.bytes as number[]), bits: m.bits as number }];
       case 'ax25': return [{ ...base(), kind: 'aprs.frame', hex: hexOf(m.bytes as number[]) }];
       case 'ble': return [{ ...base(), kind: 'ble.adv', hex: hexOf(m.pdu as number[]), data: { db: m.db, ch: m.ch, ...(m.phy ? { phy: m.phy } : {}) } }];

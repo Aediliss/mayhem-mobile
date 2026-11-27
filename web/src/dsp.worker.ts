@@ -433,7 +433,7 @@ self.onmessage = (e: MessageEvent) => {
       queue.push(b); armDrain(); break;
     }
     // samples the radio sent never arrived, `back` samples before the newest one sent here
-    case 'gap': if (processor === lora) lora.gap((m.back as number) - queuedSamples(), m.slack as number); break;
+    case 'gap': if (processor === lora) lora.gap((m.back as number) - queuedSamples(), m.slack as number); if (processor === adsb) adsb.gap(m.lost as number);   /* FORK: MLAT clock */ break;
     case 'config':
       if (processor === lora && typeof m.rate === 'number' && m.rate !== rate) dropQueued();
       if (processor === lora && typeof m.centreHz === 'number' && m.centreHz !== centreHz) { dropQueued(); lora.gap(0); }

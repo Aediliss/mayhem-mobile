@@ -78,7 +78,7 @@ export class WebhookSink implements Sink {
 
 export type WsFormat = 'jsonl' | 'sbs' | 'beast' | 'nmea' | 'tnc2' | 'kiss' | 'rtl433';
 export const WS_FORMATS: [WsFormat, string][] = [
-  ['jsonl', 'JSON lines (every event)'], ['sbs', 'SBS / BaseStation (ADS-B)'], ['beast', 'Beast binary (ADS-B)'], ['nmea', 'NMEA !AIVDM (AIS)'],
+  ['jsonl', 'JSON lines (every event)'], ['sbs', 'SBS / BaseStation (ADS-B)'], ['beast', 'Beast binary (ADS-B, with MLAT timestamps)'], ['nmea', 'NMEA !AIVDM (AIS)'],
   ['tnc2', 'APRS text, TNC2 (APRS)'], ['kiss', 'KISS (APRS AX.25)'], ['rtl433', 'rtl_433 JSON (Devices)'],
 ];
 
@@ -92,7 +92,7 @@ export function formatEvent(fmt: WsFormat, ev: DecodeEvent, sbs?: SbsEncoder): (
   const when = new Date(ev.t);
   switch (fmt) {
     case 'jsonl': return [JSON.stringify(ev) + '\n'];
-    case 'beast': return ev.kind === 'adsb.frame' && ev.hex ? [beastFrame(unhex(ev.hex))] : [];
+    case 'beast': return ev.kind === 'adsb.frame' && ev.hex ? [beastFrame(unhex(ev.hex), Number(ev.data?.sig ?? 0), Number(ev.data?.ts ?? 0))] : [];
     case 'sbs': return ev.kind === 'adsb.aircraft' && ev.data && sbs ? sbs.update(ev.data as unknown as SbsAircraft, when).map(l => l + '\r\n') : [];
     case 'nmea': return ev.kind === 'ais.frame' && ev.hex ? aivdm(unhex(ev.hex), ev.bits ?? ev.hex.length * 4, aisChannel(ev.freqHz)).map(s => s + '\r\n') : [];
     case 'tnc2': { const s = ev.kind === 'aprs.frame' && ev.hex ? ax25ToTnc2(unhex(ev.hex)) : null; return s ? [s + '\r\n'] : []; }
@@ -107,7 +107,9 @@ export type WsCtor = new (url: string) => WsLike;
 /**
  * A WebSocket client that streams one format. Browsers cannot open a TCP listener, so the consumer runs a WebSocket
  * server, or a bridge such as `websockify 30005 localhost:30004` in front of readsb's Beast input. Reconnects with
- * backoff; holds up to 500 messages while down.
+ * backoff; holds up to 500 messages while down. MLAT: readsb `--net-only --net-bi-port 30004 --net-bo-port 30005`
+ * behind that bridge, and mlat-client `--input-type dump1090 --input-connect localhost:30005` (the Beast frames carry
+ * 12 MHz ticks from the radio's sample clock).
  */
 export class WsSink implements Sink {
   readonly name: string;

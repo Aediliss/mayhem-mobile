@@ -56,6 +56,8 @@ export class AdsbDecoder implements IqProcessor {
   /** FORK: Mode A/C replies (modeac.ts) among the samples, and the codes heard as tracks. */
   private readonly acDet = new ModeAcDetector(2_000_000); readonly acTracks = new ModeAcTracks(); private acReplies = 0;
   private dbg = { pre: 0, df: 0, ok: 0, fail: 0, last: 0 };
+  /** FORK: MLAT: the sample count since the stream started of m[0] in onIq, so a frame's time is a 12 MHz tick count. */
+  private mBase = 0;
   private lastPublish = 0;
   /** Receiver position for single-frame CPR (set from the phone's geolocation). */
   ref: { lat: number; lon: number } | null = null;
@@ -64,11 +66,13 @@ export class AdsbDecoder implements IqProcessor {
     for (let i = 0; i <= 128; i++) for (let q = 0; q <= 128; q++) this.maglut[i * 129 + q] = Math.round(Math.sqrt(i * i + q * q) * 360);
   }
 
-  reset(): void { this.carryLen = 0; this.cpr.clear(); this.icaoFrames.clear(); }
+  reset(): void { this.carryLen = 0; this.cpr.clear(); this.icaoFrames.clear(); this.mBase = 0; }   // FORK: + mBase (MLAT)
+  /** FORK: MLAT: `lost` samples never arrived; the clock steps over them (the samples held back are dropped). */
+  gap(lost: number): void { this.mBase += this.carryLen + Math.max(0, Math.round(lost)); this.carryLen = 0; }
   /** CLEAR on the screen: forget every aircraft and the frame count, and say so, or the next frame re-sends them. */
   clear(): void { this.planes.clear(); this.cpr.clear(); this.frames = 0; this.emit({ type: 'aircraft', list: [], frames: 0 }); this.acTracks.tracks.clear(); this.acReplies = 0; this.emit({ type: 'modeac', tracks: [], replies: 0 }); }   // FORK: + Mode A/C
 
-  onIq(iq: Int8Array): void {
+  onIq(iq: Int8Array, rate = 2_000_000): void {   // FORK: + rate (MLAT ticks)
     const nSamp = iq.length >> 1;
     if (nSamp < 8) return;
     const m = new Int32Array(this.carryLen + nSamp);
@@ -115,7 +119,10 @@ export class AdsbDecoder implements IqProcessor {
       if (!fr) { if (df === 17 || df === 18) this.dbg.fail++; j++; continue; }
       this.byDf.set(fr.df, (this.byDf.get(fr.df) ?? 0) + 1);
       this.frames++;
-      this.emit({ type: 'modes', hex: Array.from(fr.bytes, b => b.toString(16).padStart(2, '0')).join('') });   // FORK: raw frame for the export bus (Beast)
+      // FORK: raw frame for the export bus (Beast), with its time in 12 MHz ticks from the sample count (the preamble's
+      // first sample; what MLAT needs is a clock steady within this receiver) and dump1090's signal byte (√power · 255)
+      let pk = 0; for (let i = 0; i < nb * 2; i += 2) pk += Math.max(m[j + PREAMBLE * 2 + i], m[j + PREAMBLE * 2 + i + 1]);
+      this.emit({ type: 'modes', hex: Array.from(fr.bytes, b => b.toString(16).padStart(2, '0')).join(''), ts: Math.round((this.mBase + j) * 12e6 / rate) % 2 ** 48, sig: Math.min(255, Math.round(pk / nb / (360 * 128) * 255)) });
       if (fr.df === 17 || fr.df === 18) { this.dbg.ok++; this.decode(Int32Array.from(fr.bytes), batch, nowMs); }
       else this.modeSApply(fr, batch, nowMs);
       read.push([j, j + (nb + PREAMBLE) * 2]);   // FORK: Mode A/C skips it
@@ -127,6 +134,7 @@ export class AdsbDecoder implements IqProcessor {
     const keep = Math.min(FULL_LEN * 2, mlen);
     this.carry.set(m.subarray(mlen - keep));
     this.carryLen = keep;
+    this.mBase += mlen - keep;   // FORK: MLAT clock
     if (batch.size > 0) this.merge(batch, nowMs);
     if (nowMs - this.dbg.last > 1000) {
       this.dbg.last = nowMs;
