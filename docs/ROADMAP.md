@@ -797,5 +797,5 @@ for "or later" first.
   with a redistributable license found). The app links to Ships: a vessel AIS has heard shows its name on the DSC card
   with a SHIPS button, and its Ships card shows its last DSC call.
   Hardware: any radio here, an antenna near the water, Marine DSC: coast stations make routine and test calls through
-  the day (US Coast Guard Rescue 21 sites send safety broadcasts announcements); check against a handheld DSC radio's
+  the day; check against a handheld DSC radio's
   log, or another DSC decoder (YaDDNet / a DSC-capable scanner) on the same channel.
