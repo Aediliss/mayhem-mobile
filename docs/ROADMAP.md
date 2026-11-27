@@ -69,7 +69,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium (burst tagger, burst_downmix, qpsk_demod; test-data/prbs15-2M-20dB); iridium-toolkit (bitsparser.py, bch.py, reassembler ida.py / sbd.py) | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README: "unless otherwise noted"; the RS files with their own notice are not used) |
 | [x] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `proc_vor_rx` (the VOR bearing); ICAO Annex 10 Vol. I signal parameters (ILS, idents, DME); LOC/GS/DME pairing checked against the FAA/RadioReference table | Mayhem GPL-3.0 ✔ · ICAO and FAA: facts (frequencies, tones, depths) only |
 | [x] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) — **done upstream**: the Satcom app (0.9.76, dsp/lband/: Inmarsat-C NCS EGC, Aero P-channel 600/1200 bps ACARS to Flight Msgs; the UI says an LNA and patch are needed) | upstream | — |
-| [ ] | | Inmarsat Aero 10.5 kbps P-channel (OQPSK) and the T/R burst channels (aircraft → ground) | JAERO | MIT ✔ |
+| [x] | | Inmarsat Aero 10.5 kbps P-channel (OQPSK, ground → aircraft): Satcom's AERO 10.5K mode | JAERO (aerol.cpp/.h: framing, 64×78 interleaver, K=7 code 109/79, 15-bit scrambler, SU CRC, ISU reassembly and ACARS parse; oqpskdemodulator / coarsefreqestimate: RRC roll-off 1, the squared-signal line pair); samples/10.5k_sample.ogg (5.6 s cut as a test fixture) | JAERO MIT ✔ (LICENSE, Jonathan Olds 2015-2019; the files used carry no other notice) |
+| [ ] | | Inmarsat Aero T/R burst channels (aircraft → ground: 10.5k OQPSK and 600/1200 MSK bursts) | JAERO (burstoqpskdemodulator, burstmskdemodulator, RTChannelDeleaveFECScram; samples 10.5k_burst_sample, 1200bps_burst_sample1/2) | MIT ✔ |
 | [x] | | FLARM / OGN receive — as **ADS-L** (the Gliders app): both M-band channels (868.2/868.4 MHz) at once; Traffic (position, altitude, speed, climb, track, category, emergency) and Status payloads; OGN tracker packets counted, not read; FLARM's own protocol not read | EASA ADS-L 4 SRD-860 Issue 2 (1 Dec 2025, ED Decision 2022/024/R): physical layer, packet, XXTEA key-0 scrambling, CRC-24, payloads; OGN wiki (OGN sync word) | EASA spec: "open to any interested party for implementation" (A.3), written from the spec, no code ported ✔ · OGN wiki CC BY-SA 3.0 (a fact: the sync word) ✔ · FLARM air protocol: closed and obfuscated, decrypting it may be unlawful in the EU ✘ (not read) · OGN tracker firmware (pjalocha, glidernet): no license ✘ (not used; OGN's LDPC code and whitening are not published, so OGN packets are counted only) |
 | [x] | | MLAT feeder (Beast over WebSocket) via export bus: Mode-S frames carry 12 MHz ticks from the sample clock | Beast format; dump1090/readsb's 12 MHz free-running counter (what mlat-client's `dump1090` input type expects) | facts ✔ (no code ported) |
 
@@ -721,3 +722,24 @@ for "or later" first.
   --net-bo-port 30005`, then `mlat-client --input-type dump1090 --input-connect localhost:30005 --lat … --lon … --alt …
   --user … --server <an MLAT server you are allowed to feed>`. mlat-client should report "clock: dump1090" and, after a
   few minutes with aircraft around, synchronized peers. tar1090 on readsb shows the frames meanwhile.
+- **Inmarsat Aero 10.5 kbps P-channel** (`dsp/aero105/`, Satcom FORK edits in `dsp/lband/satcom.ts` and main.ts,
+  `test/aero105.test.ts`): after JAERO (MIT). OQPSK at 5250 symbols a second a rail (RRC roll-off 1): the carrier from
+  the pair of lines the squared signal puts 5250 Hz either side of twice the carrier (±25 kHz search), then a Gardner
+  clock on half-symbol strobes and a Costas loop. Frames of 5250 bits: header, 178 dummy bits, 4992 coded bits through
+  a 64 × 78 interleaver, the UW 0xE15AE893 on both rails (each rail's polarity found from it); the K = 7 code runs on
+  across frames, so each frame is decoded with the end of the one before and the start of the one after (half a
+  second of latency); 15-bit scrambler; 26 signal units of 12 bytes with CRC-16/X-25; JAERO's ISU/SSU reassembly and
+  ACARS check (odd parity), then upstream's `acarsLine`, so the lines read as upstream's 600/1200 ones ("SAT …") and go
+  to Flight Msgs. Tests: the SU CRC's check value (0x906E); frames → bits → message through every rail polarity and a
+  bit shift; OQPSK IQ end to end with a 3.2 kHz carrier error at Eb/N0 ≈ 9 dB; and a real recording: 5.6 s of JAERO's
+  10.5k sample (fixture, 179 KB, 16 kS/s) gives 6+ frames with every signal unit's CRC good and three uplinks: a CPDLC
+  message from Shanwick (PIKCPYA) to PH-BQI that the fork's FANS decoder reads as "THIS IS AN AUTOMATED MESSAGE TO
+  CONFIRM CPDLC CONTACT WITH SHANWICK CENTER", the Frankfurt ATIS to A6-EDY, and an ADS-C periodic contract request
+  to N914BA (every 832 s, with flight ID, predicted route, earth reference and meteo data). Over the whole 4-minute
+  sample (not committed): 2496 signal units in 50 s, none bad; about 60× faster than real time at 48 kS/s. In
+  Chromium the same signal played at 2 MS/s through OPEN REC: Satcom AERO 10.5K locked (+0.26 kHz), 468 signal units,
+  GES 144, the ATIS and ADS-C lines in its log. Not done: the T/R bursts aircraft send back (new row); C-channel voice
+  (never: voice).
+  Hardware: an L-band patch and LNA (as for upstream's Satcom), HackRF or RTL-SDR at 2 MS/s; Satcom → AERO 10.5K; tap a
+  ~10 kHz-wide carrier around 1545–1555 MHz (the 10.5k ones are the widest Aero carriers); "LOCKED" within a second or
+  two and signal units counting; messages within minutes on a busy one (Atlantic/Indian Ocean satellites at peak hours).

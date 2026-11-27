@@ -4979,12 +4979,12 @@ function renderSatcom(view: HTMLElement): void {
   view.innerHTML = `
     <section class="${visCls('satcom')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
     <section class="controls">
-      <div class="ctlrow">${segHtml(([['egc', 'EGC · SHIPS'], ['aero600', 'AERO 600'], ['aero1200', 'AERO 1200']] as [SatcomMode, string][]).map(([k, l]) => `<button data-scmode="${k}" class="${u.mode === k ? 'on' : ''}">${l}</button>`))}</div>
+      <div class="ctlrow">${segHtml(([['egc', 'EGC · SHIPS'], ['aero600', 'AERO 600'], ['aero1200', 'AERO 1200'], ['aero10500', 'AERO 10.5K' /* FORK */]] as [SatcomMode, string][]).map(([k, l]) => `<button data-scmode="${k}" class="${u.mode === k ? 'on' : ''}">${l}</button>`))}</div>
       ${egc ? `<div class="row bandstrip">${NCS_CHANNELS.map(([n, hz]) => `<button class="chip" data-schz="${hz}">${n} ${(hz / 1e6).toFixed(3)}</button>`).join('')}</div>`
         : '<div class="caption">TAP A CARRIER · 1545 TO 1555 MHZ</div>'}
       <div id="sc-stats" class="health"></div>
       ${egc ? `${countRowHtml('satcom', '0 MESSAGES')}<div id="sc-msgs" class="cl-alerts"></div>` : logHtml('satcom', 'listening…')}
-      <div class="note about">Inmarsat on L-band, receive only. EGC decodes the broadcasts every Inmarsat-C ship terminal hears on its region's NCS carrier: SafetyNET (NAVAREA and coastal warnings, weather, distress relays, search and rescue) and FleetNET, with the priority and the area each is meant for. Encrypted messages are flagged and not decoded. AERO decodes the ACARS that ground stations send to aircraft on a P-channel; each message also shows in Flight Msgs, marked SATCOM. Needs an L-band patch antenna and an LNA.</div>
+      <div class="note about">Inmarsat on L-band, receive only. EGC decodes the broadcasts every Inmarsat-C ship terminal hears on its region's NCS carrier: SafetyNET (NAVAREA and coastal warnings, weather, distress relays, search and rescue) and FleetNET, with the priority and the area each is meant for. Encrypted messages are flagged and not decoded. AERO decodes the ACARS that ground stations send to aircraft on a P-channel; each message also shows in Flight Msgs, marked SATCOM.${'' /* FORK */} AERO 10.5K reads the busier 10 500 bps OQPSK P-channels (after JAERO), where CPDLC and ADS-C to oceanic flights are common. Needs an L-band patch antenna and an LNA.</div>
     </section>`;
   scope = attach(tunableScope('scope', 80, 70));
   qa<HTMLButtonElement>('[data-scmode]', view).forEach(b => b.onclick = () => satcomSetMode(b.dataset.scmode as SatcomMode));
