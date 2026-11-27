@@ -64,12 +64,15 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | HFDL (2.9–22 MHz), many channels per span, feeds ACARS cards | dumphfdl (Tomasz Lemiech): hfdl.c, mpdu/lpdu/hfnpdu/acars.c, etc/systable.conf; liquid-dsp conventions checked against liquid-dsp 1.6 | GPL-3.0-or-later ✔ (spdu.c GPL-2.0-or-later ✔); libacars MIT ✔ (format only) |
-| [ ] | | CPDLC / ADS-C inside ACARS/VDL2/HFDL | libacars | MIT ✔ |
-| [ ] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium; iridium-toolkit | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README) |
-| [ ] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `vor_rx` | Mayhem GPL-3.0 ✔ |
-| [ ] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) | JAERO | MIT ✔ |
-| [ ] | | FLARM / OGN receive | OGN docs, published decoders | check |
-| [ ] | | MLAT feeder (Beast over WebSocket) via export bus | Beast format | facts |
+| [x] | | ADS-C (and the ARINC 622 envelope: CPDLC named) inside ACARS/VDL2/HFDL | libacars (Tomasz Lemiech): arinc.c, adsc.c, acars.c | MIT ✔ |
+| [x] | | CPDLC message bodies (FANS-1/A, ASN.1 PER: clearances, requests, free text) | libacars (asn1/ generated from the FANS-1/A ASN.1; asn1-format-cpdlc-text.c); asn1c 0.9.28 runtime PER rules | libacars MIT ✔ · asn1c runtime BSD-2-Clause ✔ |
+| [x] | | Iridium (1616–1626.5 MHz): bursts, frame types, ring alerts, sat/beam IDs, ACARS | gr-iridium (burst tagger, burst_downmix, qpsk_demod; test-data/prbs15-2M-20dB); iridium-toolkit (bitsparser.py, bch.py, reassembler ida.py / sbd.py) | gr-iridium GPL-3.0-or-later ✔ (headers) · iridium-toolkit BSD-2-Clause ✔ (README: "unless otherwise noted"; the RS files with their own notice are not used) |
+| [x] | | VOR bearing + Morse ID; ILS LOC/GS DDM; DME pulse pairs | Mayhem `proc_vor_rx` (the VOR bearing); ICAO Annex 10 Vol. I signal parameters (ILS, idents, DME); LOC/GS/DME pairing checked against the FAA/RadioReference table | Mayhem GPL-3.0 ✔ · ICAO and FAA: facts (frequencies, tones, depths) only |
+| [x] | | Inmarsat AERO / STD-C (needs LNA + patch; say so in UI) — **done upstream**: the Satcom app (0.9.76, dsp/lband/: Inmarsat-C NCS EGC, Aero P-channel 600/1200 bps ACARS to Flight Msgs; the UI says an LNA and patch are needed) | upstream | — |
+| [x] | | Inmarsat Aero 10.5 kbps P-channel (OQPSK, ground → aircraft): Satcom's AERO 10.5K mode | JAERO (aerol.cpp/.h: framing, 64×78 interleaver, K=7 code 109/79, 15-bit scrambler, SU CRC, ISU reassembly and ACARS parse; oqpskdemodulator / coarsefreqestimate: RRC roll-off 1, the squared-signal line pair); samples/10.5k_sample.ogg (5.6 s cut as a test fixture) | JAERO MIT ✔ (LICENSE, Jonathan Olds 2015-2019; the files used carry no other notice) |
+| [ ] | | Inmarsat Aero T/R burst channels (aircraft → ground: 10.5k OQPSK and 600/1200 MSK bursts) | JAERO (burstoqpskdemodulator, burstmskdemodulator, RTChannelDeleaveFECScram; samples 10.5k_burst_sample, 1200bps_burst_sample1/2) | MIT ✔ |
+| [x] | | FLARM / OGN receive — as **ADS-L** (the Gliders app): both M-band channels (868.2/868.4 MHz) at once; Traffic (position, altitude, speed, climb, track, category, emergency) and Status payloads; OGN tracker packets counted, not read; FLARM's own protocol not read | EASA ADS-L 4 SRD-860 Issue 2 (1 Dec 2025, ED Decision 2022/024/R): physical layer, packet, XXTEA key-0 scrambling, CRC-24, payloads; OGN wiki (OGN sync word) | EASA spec: "open to any interested party for implementation" (A.3), written from the spec, no code ported ✔ · OGN wiki CC BY-SA 3.0 (a fact: the sync word) ✔ · FLARM air protocol: closed and obfuscated, decrypting it may be unlawful in the EU ✘ (not read) · OGN tracker firmware (pjalocha, glidernet): no license ✘ (not used; OGN's LDPC code and whitening are not published, so OGN packets are counted only) |
+| [x] | | MLAT feeder (Beast over WebSocket) via export bus: Mode-S frames carry 12 MHz ticks from the sample clock | Beast format; dump1090/readsb's 12 MHz free-running counter (what mlat-client's `dump1090` input type expects) | facts ✔ (no code ported) |
 
 ## Phase 5 — Marine and emergency
 
@@ -189,7 +192,7 @@ for "or later" first.
   APRS packet decoded from IQ leaves as TNC2 text and a KISS frame. Browser check (Chromium): EXPORT on, settings
   survive reload, the APRS recording played in Ham Map → a local WebSocket server receives the three TNC2 lines, a
   local CORS webhook one POST of 9 events, and DOWNLOAD gives the same 9 as JSON lines.
-  Beast timestamps are 0 (no sample clock), so the Beast output suits readsb/tar1090 but not MLAT.
+  Beast timestamps were 0 here at first (no sample clock); Phase 4's MLAT item added them (see below).
 - **Phase 1 · export bus, part B: MQTT** (`web/src/export/mqtt.ts`, `test/mqtt.test.ts`): MQTT 3.1.1 over WebSockets
   written from the OASIS spec (CONNECT with optional user/password, PUBLISH QoS 0, keep-alive PINGREQ, DISCONNECT;
   no client library added). Topics: `<prefix>/events/<kind>` (log lines under `events/line/<app>`), and each
@@ -635,3 +638,108 @@ for "or later" first.
   Hardware: HackRF (or an RTL-SDR in direct sampling / V4) with an outdoor wire, Flight Msgs → HFDL HF, band 8.9 by
   night or 13 / 17 / 21 by day: squitters from ground stations within a few minutes, then aircraft ACARS; compare a few
   messages with dumphfdl on the same recording (Capture it, then run dumphfdl over the .cs8).
+- **ADS-C / ARINC 622** (`dsp/arinc622.ts`, hook in `acars-insight.ts`, `test/arinc622.test.ts`): the envelope (ground
+  address, IMI, registration, hex payload, CRC-16) and every ADS-C tag libacars reads, downlink and uplink. Messages
+  built here were decoded by libacars 2.2 itself (built from source); the tests hold the values it printed (position to
+  1e-6°, altitude, time past the hour, track, speeds, flight ID, contract number and reporting interval, meteo, airframe
+  ID) and libacars found every CRC good. In Flight Msgs an ADS-C report is kind ADS-C, its position goes on the map and
+  its altitude, speed and track on the card (checked in Chromium). CPDLC is only named (connect request, confirm,
+  disconnect, message): its body is ASN.1 PER and is the next row.
+  Hardware: ADS-C is mostly oceanic and polar, so HFDL (Flight Msgs → HFDL HF) is where to hear it; also VDL2 near
+  airports with FANS-equipped long-haul traffic. Look for cards with an ADS-C chip and compare with dumphfdl / dumpvdl2
+  on the same recording.
+- **CPDLC (FANS-1/A)** (`dsp/cpdlc/`, `scripts/fans/`, `test/cpdlc.test.ts`): the message set's unaligned-PER schema
+  (213 types, 183 uplink and 129 downlink elements) was read out of libacars' asn1c tables by a C program that walks the
+  descriptors (so constraints, alphabets and CHOICE order are asn1c's own), with libacars' element phrases, labels and
+  units; `fans.ts` is generated and `scripts/fans/README.md` says how to regenerate it. A decoder (and a test encoder)
+  follow asn1c 0.9.28's PER rules. Messages encoded here were decoded by libacars 2.2 itself to the same values
+  (header, timestamp, flight levels, QNH altitude, lat/lon, fix, free text); the tests hold those texts and values.
+  In Flight Msgs a CPDLC message is kind CPDLC and its summary is the clearance or request in words (checked in
+  Chromium). Not done: positions inside CPDLC position reports are not put on the map.
+  Hardware: as for ADS-C (HFDL over oceans, VDL2 near busy long-haul airports): CPDLC cards should read like
+  "CPDLC message from NYCODYA #12: CLIMB TO AND MAINTAIN FL360"; compare with dumphfdl / dumpvdl2.
+- **Iridium** (`dsp/iridium/`, new app, `test/iridium.test.ts`, `test/fixtures/iridium-prbs15-1622M-2000k.cs8`): bursts
+  found in a short-time spectrum across the span and demodulated as gr-iridium does (squared-preamble CFO, RRC 0.4, sync
+  word correlation, PLL, unique word, DQPSK). On gr-iridium's own test recording (22 ms cut from test-data/prbs15, GPL)
+  the bits match its README's RAW line exactly. Frames built here were read by iridium-toolkit's parser and reassembler
+  to the same values (IRA satellite/beam/position/pages, IBC Iridium time in era 3, IDA fragments and CRC, SBD → ACARS
+  "N512UA H1 5 HELLO IRIDIUM"); the tests hold them. In Chromium a 2 MS/s recording played in real time gave both
+  satellites on the map, the broadcast time and the ACARS line. Load: 5% of a core at 2 MS/s, ~26% at 10 MS/s on noise
+  (more with many bursts). Not read on purpose: voice, IP and pager messages (counted only); TMSIs in ring alerts
+  (counted only). Not done: Iridium NEXT's new frame formats; ACARS from Iridium is not fed to Flight Msgs yet.
+  Hardware: an L-band patch or an active GPS antenna outside with a clear sky (LNA helps); RTL-SDR or HackRF on "Ring
+  alerts · 2 MS/s": satellites with positions within a minute; HackRF on "Whole band · 10 MS/s": broadcasts with
+  Iridium time and, near aircraft routes, ACARS. Compare with gr-iridium + iridium-toolkit on a Capture of the same span.
+- **Navaids** (`dsp/navaid.ts`, new app, `test/navaid.test.ts`): VOR radial from the 30 Hz variable AM against the 30 Hz
+  reference FM on 9960 Hz (as Mayhem's proc_vor_rx), within 1° at every bearing tested and through noise; ILS 90/150 Hz
+  depths into DDM and SDM (to 0.002); Morse idents on 1020 Hz (VOR, localizer, glide path) and DME ground-beacon pulse
+  pairs (X 12 µs, Y 30 µs), their rate and the 1350 pair/s ident; the localizer ↔ glide path ↔ DME channel pairings
+  (all 40 ILS pairs as the FAA/RadioReference table lists them). End to end: a VOR at 113.90 (bearing 211°, ident SFO)
+  and a DME beacon (ident ABC) through noise; noise gives no bearing and no ident. In Chromium a VOR recording read
+  "RADIAL 211° · ident SFO"; a localizer reading showed DDM, fly right and the paired glide path / DME buttons. Not done:
+  DME range (it needs an interrogation, i.e. a transmitter); no check against a real off-air recording yet.
+  Hardware: any radio here (RTL-SDR included) with a short antenna near an airport: tune the nearest VOR (its chart
+  frequency): the radial should match where you are from the station on a map, and the ident its three letters; a
+  localizer at an airport with instrument approaches (and its paired glide path) for DDM; its paired DME for pulse pairs.
+- **Inmarsat AERO / STD-C**: covered by upstream's Satcom app (merged with 0.9.76): EGC from the Inmarsat-C NCS and Aero
+  P-channel ACARS at 600/1200 bps. Nothing duplicated here. The fork's ARINC 622 reader applies to its ACARS lines
+  ("SAT"), so ADS-C and CPDLC over Inmarsat read in words in Flight Msgs (test: arinc622.test.ts, "over Inmarsat too").
+  Left as a new row: the 10.5 kbps OQPSK P-channel and the T/R bursts, which upstream does not read.
+- **FLARM / OGN → ADS-L** (`dsp/adsl/`, new app "Gliders", `test/adsl.test.ts`): ADS-L written from EASA's ADS-L 4
+  SRD-860 Issue 2 (the spec says it "is open to any interested party for implementation"). Both M-band channels
+  (868.2 and 868.4 MHz) from one 2 MS/s span at 868.3: each mixed down, low-passed to ~4 samples a chip, FM
+  discriminator, Manchester bits as second chip minus first (a carrier offset cancels), the sync word 0x72 0x4B
+  searched at every sample, length byte, CRC-24, XXTEA (key 0, 6 rounds) undone; Traffic and Status payloads read
+  field for field. Tests: the spec's bit-packing example and every exponential-encoding table row (altitude, ground
+  speed, vertical rate); the CRC-24 checks a real ADS-B frame's parity (8D4840D6…576098, so it is the Mode-S code the
+  spec names); XXTEA matches the standard zero-key test vector; Traffic/Status built and read back; end to end, three
+  packets on both channels (two overlapping in time, one with a 12 kHz crystal error) through noise; a damaged packet,
+  a reserved key and noise give nothing; an OGN tracker's sync is counted. Sensitivity on synthetic packets: 39/40 at
+  0 dB SNR across the 2 MHz span (about 9 dB in the channel), 19/40 at −3 dB. In Chromium a 2 MS/s recording played
+  through OPEN REC gave both aircraft on the map, the emergency pulsing, and the status ("also FLARM, ADS-B · Mode S")
+  on the card. Not read: FLARM's own protocol (closed and obfuscated; decrypting it may be unlawful in the EU), OGN
+  tracker packets (their LDPC code and whitening are unpublished; the firmware has no license), FEC (Reed-Solomon)
+  packets and the O-band (869.525 MHz, PilotAware-compatible LDR and the HDR uplinks), and the secure signature
+  (not checked). Note: the spec's XXTEA table says num_data_words 6, but its own text and packet layout give 5 (the
+  20-byte ADS-L data of a Traffic packet, length 0x18); 5 is used. Not yet checked against a real off-air recording.
+  Hardware (Europe): any radio here, 868 MHz antenna outside, near a gliding site on a soaring day; open Gliders: aircraft
+  with newer FLARMs, OGN trackers or SkyEcho-type devices appear on the map within seconds. Compare positions with
+  glidernet.org's live map (OGN ground stations receive ADS-L too).
+- **MLAT feeder** (`dsp/adsb.ts` FORK edits, `export/event.ts`, `export/sinks.ts`, `test/mlat.test.ts`): every Mode-S
+  frame now leaves the ADS-B decoder with its time in 12 MHz ticks counted from the radio's samples (the first preamble
+  pulse; 6 ticks a sample at 2 MS/s, as dump1090's free-running counter) and dump1090's signal byte (√power · 255).
+  The export bus puts both in `adsb.frame` events (`data.ts`, `data.sig`) and in the Beast output (it was 0 before).
+  Samples the radio reports lost (DeliveryMeter gaps) move the clock on by the estimated count, and the held-back
+  samples are dropped; a restart starts it at 0 (mlat-server resynchronizes a receiver whose clock jumps). Tests:
+  frames at known samples across four buffers (one straddling an edge) come out exactly 6 ticks a sample apart; a gap
+  of 12 345 samples shows up as 74 070 ticks; reset starts again at 0; the Beast bytes carry the ticks, the signal and
+  the 0x1a escape inside a timestamp. Limits: at 2 MS/s a frame's time is to the sample (0.5 µs, ~150 m), coarser than
+  readsb's 2.4 MS/s phase-corrected times, so expect MLAT positions within a few hundred meters at best; a gap's size
+  is estimated from the wall clock, so after a USB stall the server has to resync (seconds). Not tried here: a real
+  mlat-client session (no network to an MLAT server from this environment).
+  Hardware: RTL-SDR or HackRF on ADS-B at 2 MS/s with a 1090 MHz antenna; Settings → EXPORT → WebSocket, format Beast,
+  `ws://localhost:30005`; on the computer: `websockify 30005 localhost:30004`, `readsb --net-only --net-bi-port 30004
+  --net-bo-port 30005`, then `mlat-client --input-type dump1090 --input-connect localhost:30005 --lat … --lon … --alt …
+  --user … --server <an MLAT server you are allowed to feed>`. mlat-client should report "clock: dump1090" and, after a
+  few minutes with aircraft around, synchronized peers. tar1090 on readsb shows the frames meanwhile.
+- **Inmarsat Aero 10.5 kbps P-channel** (`dsp/aero105/`, Satcom FORK edits in `dsp/lband/satcom.ts` and main.ts,
+  `test/aero105.test.ts`): after JAERO (MIT). OQPSK at 5250 symbols a second a rail (RRC roll-off 1): the carrier from
+  the pair of lines the squared signal puts 5250 Hz either side of twice the carrier (±25 kHz search), then a Gardner
+  clock on half-symbol strobes and a Costas loop. Frames of 5250 bits: header, 178 dummy bits, 4992 coded bits through
+  a 64 × 78 interleaver, the UW 0xE15AE893 on both rails (each rail's polarity found from it); the K = 7 code runs on
+  across frames, so each frame is decoded with the end of the one before and the start of the one after (half a
+  second of latency); 15-bit scrambler; 26 signal units of 12 bytes with CRC-16/X-25; JAERO's ISU/SSU reassembly and
+  ACARS check (odd parity), then upstream's `acarsLine`, so the lines read as upstream's 600/1200 ones ("SAT …") and go
+  to Flight Msgs. Tests: the SU CRC's check value (0x906E); frames → bits → message through every rail polarity and a
+  bit shift; OQPSK IQ end to end with a 3.2 kHz carrier error at Eb/N0 ≈ 9 dB; and a real recording: 5.6 s of JAERO's
+  10.5k sample (fixture, 179 KB, 16 kS/s) gives 6+ frames with every signal unit's CRC good and three uplinks: a CPDLC
+  message from Shanwick (PIKCPYA) to PH-BQI that the fork's FANS decoder reads as "THIS IS AN AUTOMATED MESSAGE TO
+  CONFIRM CPDLC CONTACT WITH SHANWICK CENTER", the Frankfurt ATIS to A6-EDY, and an ADS-C periodic contract request
+  to N914BA (every 832 s, with flight ID, predicted route, earth reference and meteo data). Over the whole 4-minute
+  sample (not committed): 2496 signal units in 50 s, none bad; about 60× faster than real time at 48 kS/s. In
+  Chromium the same signal played at 2 MS/s through OPEN REC: Satcom AERO 10.5K locked (+0.26 kHz), 468 signal units,
+  GES 144, the ATIS and ADS-C lines in its log. Not done: the T/R bursts aircraft send back (new row); C-channel voice
+  (never: voice).
+  Hardware: an L-band patch and LNA (as for upstream's Satcom), HackRF or RTL-SDR at 2 MS/s; Satcom → AERO 10.5K; tap a
+  ~10 kHz-wide carrier around 1545–1555 MHz (the 10.5k ones are the widest Aero carriers); "LOCKED" within a second or
+  two and signal units counting; messages within minutes on a busy one (Atlantic/Indian Ocean satellites at peak hours).

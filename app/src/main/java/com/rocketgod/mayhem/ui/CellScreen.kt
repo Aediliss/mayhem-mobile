@@ -86,9 +86,10 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.max
 
-private val CL_VIEWS = listOf("MESSAGES", "CELLS", "NEIGHBORS", "LOG")
+private val CL_VIEWS = listOf("MESSAGES", "CELLS", "NEIGHBORS", "PAGING", "LOG")
 /** On a wide screen the alerts have the big pane, so they are not a tab. */
-private val CL_WIDE_VIEWS = listOf(1, 2, 3)
+private val CL_WIDE_VIEWS = listOf(1, 2, 3, 4)
+private const val CL_LOG = 4
 private val CL_BW = mapOf(6 to "1.4", 15 to "3", 25 to "5", 50 to "10", 75 to "15", 100 to "20")
 
 private fun clMhz(hz: Long) = "%.1f".format(Locale.US, hz / 1e6)
@@ -151,20 +152,25 @@ private fun AreaThumb(a: WarningArea, col: Color, modifier: Modifier) {
 
 /**
  * Cell: LTE cells and their emergency alerts (WEA/CMAS, ETWS) from the broadcast channels, receive only. ALERTS holds
- * every warning heard until it is cleared, CELLS every cell with its SIBs, NEIGHBORS the relations they announce, LOG
- * every decoded block. A tap on a cell opens every decoded field.
+ * every warning heard until it is cleared, CELLS every cell with its SIBs, NEIGHBORS the relations they announce, PAGING
+ * the pages heard and how often each identity was paged, LOG every decoded block. A tap on a cell opens every decoded field.
  */
 @Composable
 fun CellScreen(accent: Color) {
     val d = rememberDims()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val s by Apps.cell.snap.collectAsState()
+    val liveSnap by Apps.cell.snap.collectAsState()
     val band by Apps.cellBand.collectAsState()
     val scan by Apps.cellScan.collectAsState()
     val freq by SdrEngine.freqHz.collectAsState()
     val kind by Radio.kind.collectAsState()
     val logSnap by Apps.cellLog.snapshot.collectAsState()
+    // PAUSE holds the cells, the messages and the log still for reading; decoding carries on and RESUME catches up
+    var paused by remember { mutableStateOf(false) }
+    var heldSnap by remember { mutableStateOf<CellSnap?>(null) }
+    var heldLog by remember { mutableStateOf<List<String>>(emptyList()) }
+    val s = if (paused) heldSnap else liveSnap
     val wide = d.wide
     var view by rememberSaveable { mutableIntStateOf(0) }
     var sel by rememberSaveable { mutableStateOf<String?>(null) }
@@ -218,11 +224,13 @@ fun CellScreen(accent: Color) {
 
     @Composable
     fun switcher(withFull: Boolean, modifier: Modifier = Modifier) {
-        val counts = listOf(if (groups.isNotEmpty()) "· ${groups.size} ALERT${if (groups.size == 1) "" else "S"}" else "${s?.feed?.size ?: 0}", "${s?.cells?.size ?: 0}", "$nbCount", "")
+        val counts = listOf(if (groups.isNotEmpty()) "· ${groups.size} ALERT${if (groups.size == 1) "" else "S"}" else "${s?.feed?.size ?: 0}", "${s?.cells?.size ?: 0}", "$nbCount", "${s?.paging?.total ?: 0}", "")
         Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(6f)), verticalAlignment = Alignment.Top) {
             ClSeg(tabs.map { "${CL_VIEWS[it]} ${counts[it]}".trim() }, tabs.indexOf(view), accent, Modifier.weight(1f)) { view = tabs[it] }
             ToggleBox("EXPORT", false, accent) { export() }
-            IconBox(ClearIcon, "Clear") { scope.launch(Dispatchers.Default) { Apps.cell.clear() }; sel = null }
+            PauseClear(paused, accent, Modifier, onPause = { paused = !paused; heldSnap = liveSnap; heldLog = logSnap.lines }) {
+                scope.launch(Dispatchers.Default) { Apps.cell.clear() }; sel = null; heldSnap = null; heldLog = emptyList()
+            }
             if (withFull && !wide) IconBox(FullscreenIcon, "Full screen") { full = true }
         }
     }
@@ -292,9 +300,10 @@ fun CellScreen(accent: Color) {
                 1 -> if (s == null || s!!.cells.isEmpty()) EmptyState("cellcards", Modifier.fillMaxSize().panel(), accent)
                     else LazyColumn(Modifier.fillMaxSize(), verticalArrangement = gap) { items(s!!.cells, key = { it.key }) { c -> CellCard(c, s!!, now, sel == c.key, accent, ::pick) } }
                 2 -> NeighborList(s, now, accent, Modifier.fillMaxSize(), ::pick)
-                else -> LogList(logSnap.lines, Modifier.fillMaxSize(), empty = "watching for LTE cells…", total = logSnap.total, accent = accent)
+                3 -> PagingList(s, now, accent, Modifier.fillMaxSize())
+                else -> LogList(if (paused) heldLog else logSnap.lines, Modifier.fillMaxSize(), empty = "watching for LTE cells…", total = if (paused) null else logSnap.total, accent = accent)
             }
-            if (!wide && view != 3) detailPanel(Modifier.align(Alignment.BottomCenter).padding(d.dp(6f)))
+            if (!wide && view != CL_LOG) detailPanel(Modifier.align(Alignment.BottomCenter).padding(d.dp(6f)))
         }
     }
 
@@ -624,6 +633,51 @@ private fun NeighborList(s: CellSnap?, now: Long, accent: Color, modifier: Modif
             }
         }
         item(key = "note") { Text("a highlighted cell (●) is one this app has heard itself", color = Palette.muted, fontFamily = Mono, fontSize = d.sp(10f), modifier = Modifier.padding(d.dp(2f))) }
+    }
+}
+
+/** The pages heard: the flags, the identities paged most, then every page as heard, newest first. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PagingList(s: CellSnap?, now: Long, accent: Color, modifier: Modifier) {
+    val d = rememberDims()
+    val p = s?.paging
+    if (s == null || p == null || (p.total == 0 && p.rows.isEmpty())) {
+        Text("pages arrive on P-RNTI at the paging occasions SIB2 sets · they need the whole carrier in the span and SIB2 decoded first (FDD cells)",
+            color = Palette.muted, fontFamily = Mono, fontSize = d.sp(10f), modifier = modifier.padding(d.dp(8f)))
+        return
+    }
+    val counts = p.ids.associate { "${it.type}|${it.id}" to it.count }
+    fun label(key: String) = s.cells.firstOrNull { it.key == key }?.let { cellLabel(it) } ?: key
+    @Composable
+    fun box(content: @Composable () -> Unit) = Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(d.dp(12f))).background(Palette.surface)
+        .border(1.dp, accent.copy(alpha = 0.25f), RoundedCornerShape(d.dp(12f))).padding(d.dp(10f)), verticalArrangement = Arrangement.spacedBy(d.dp(7f))) { content() }
+    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(d.dp(9f))) {
+        item(key = "head") {
+            box {
+                Text("${p.total} PAGE RECORD${if (p.total == 1) "" else "S"}", color = Palette.ink, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = d.sp(12f))
+                Text("${p.ids.size} identit${if (p.ids.size == 1) "y" else "ies"} · S-TMSI as MMEC:M-TMSI", color = Palette.muted, fontFamily = Mono, fontSize = d.sp(9f))
+                val f = p.flags
+                val flags = buildList {
+                    if (f.sysInfoMod > 0) add("SI CHANGE ×${f.sysInfoMod}" to accent)
+                    if (f.etws > 0) add("ETWS ×${f.etws}" to Palette.danger)
+                    if (f.cmas > 0) add("CMAS ×${f.cmas}" to Palette.danger)
+                    if (f.eab > 0) add("EAB ×${f.eab}" to Palette.muted)
+                }
+                if (flags.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(d.dp(4f)), verticalArrangement = Arrangement.spacedBy(d.dp(4f))) { for ((t, col) in flags) ClPill(t, col) }
+            }
+        }
+        if (p.ids.isNotEmpty()) item(key = "ids") {
+            box { ClTable(listOf("IDENTITY", "TYPE", "DOMAIN", "PAGES", "LAST"), p.ids.take(50).map { listOf(it.id, it.type, it.domain, "×${it.count}", clAgo(now - it.lastMs)) }, listOf(0.36f, 0.18f, 0.14f, 0.12f, 0.2f)) }
+        }
+        if (p.rows.isNotEmpty()) item(key = "rows") {
+            box {
+                ClTable(listOf("TIME", "CELL", "TYPE", "IDENTITY", "DOMAIN"), p.rows.map { r ->
+                    val n = if (r.id.isNotEmpty()) counts["${r.type}|${r.id}"] ?: 1 else r.count
+                    listOf(clClock(r.lastMs), label(r.cell), r.type, r.id.ifEmpty { "-" } + if (n > 1) " ×$n" else "", r.domain.ifEmpty { "-" })
+                }, listOf(0.16f, 0.26f, 0.16f, 0.3f, 0.12f))
+            }
+        }
     }
 }
 

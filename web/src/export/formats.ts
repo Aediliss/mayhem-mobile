@@ -65,8 +65,8 @@ export function aivdm(bytes: ArrayLike<number>, bits: number, channel: 'A' | 'B'
 
 /**
  * A Mode-S frame in Beast binary: 0x1a, '2' (56-bit) or '3' (112-bit), a 6-byte 12 MHz timestamp, a signal byte,
- * the frame; every 0x1a after the first byte doubled. The timestamp is 0: this receiver has no sample-accurate
- * clock, so the output is fine for readsb/tar1090 but not for multilateration.
+ * the frame; every 0x1a after the first byte doubled. The timestamp counts 12 MHz ticks from the radio's sample
+ * clock (dump1090's free-running counter), so mlat-client can use it (input type dump1090); 0 when unknown.
  */
 export function beastFrame(frame: ArrayLike<number>, signal = 0, timestamp12MHz = 0): Uint8Array {
   if (frame.length !== 7 && frame.length !== 14) throw new Error(`Beast: a Mode-S frame is 7 or 14 bytes, not ${frame.length}`);

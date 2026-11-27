@@ -7,6 +7,8 @@
  * asks, rather than trying something and reading the wreckage afterwards.
  */
 
+import type { DeliveryMeter, Gap } from './delivery.js';
+
 export type RadioKind = 'hackrf' | 'rtlsdr' | 'file' | 'audio';   // FORK: 'file' = a recording (fileradio.ts), 'audio' = audio in (audioradio.ts)
 
 /** The envelope a radio will work inside. Everything here is hardware, not preference. */
@@ -34,6 +36,8 @@ export interface RadioEvents {
   onIq: (buf: Int8Array) => void;
   onLog: (line: string) => void;
   onStatus: (line: string) => void;
+  /** Samples the radio sent never arrived (delivery.ts), told after the buffers around the gap. */
+  onGap?: (gap: Gap) => void;
 }
 
 export interface Radio {
@@ -54,6 +58,8 @@ export interface Radio {
   setGain(lnaDb: number, vgaDb: number, amp: boolean): void;
   /** Which knobs this radio really has, for the RADIO panel. Only what bring-up has found is listed. */
   readonly caps: RadioCaps;
+  /** Samples delivered against wall time, at the rate streaming now. */
+  readonly delivery: DeliveryMeter;
 }
 
 /**
@@ -135,6 +141,9 @@ export const APP_NEEDS: Record<string, AppNeeds> = {
   // Bluetooth advertising sits at 2.4 GHz, well past the top of an R82xx.
   btle: { freqHz: 2_402_000_000 },
   droneid: { freqHz: 2_444_500_000, rateHz: 15_360_000 },   // FORK: DJI DroneID: 2.4 GHz at 15.36 MS/s (a HackRF)
+  navaid: { freqHz: 113_900_000 },   // FORK: Navaids (VOR/ILS at VHF, glide path 329-335 MHz, DME 962-1213 MHz: any radio here reaches them)
+  adsl: { freqHz: 868_300_000 },   // FORK: ADS-L (868.2/868.4 MHz: any radio here reaches it)
+  iridium: { freqHz: 1_625_800_000 },   // FORK: Iridium (an RTL-SDR reaches the ring-alert span; the whole band needs a HackRF at 10 MS/s)
   hfdl: { freqHz: 8_700_000 },   // FORK: HFDL is HF (a HackRF, or a dongle that can sample HF directly)
   fpv: { freqHz: 5_800_000_000, rateHz: 20_000_000 },   // FORK: analog FPV video: 5.8 GHz at 20 MS/s (a HackRF)
   transmit: { tx: true },

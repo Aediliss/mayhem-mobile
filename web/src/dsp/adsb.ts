@@ -3,12 +3,26 @@ import type { Emit, IqProcessor } from './core.js';
 import { ModeS, type ModeSFrame } from './modes.js';   // FORK: every downlink format (modes.ts)
 import { ModeAcDetector, ModeAcTracks } from './modeac.js';   // FORK: Mode A/C replies (modeac.ts)
 
+/** squawk: the Mode A identity code as four octal digits, e.g. "7700". */
 export interface Aircraft { icao: string; flight?: string; lat?: number; lon?: number; alt?: number; gs?: number; track?: number; vr?: number; seenMs: number; firstMs: number;
   // FORK: from the other downlink formats (modes.ts): squawk, on the ground, alert / SPI, Comm-B (selected altitude and
   // QNH, roll, true airspeed, heading, IAS, Mach, baro and inertial rate), and whether ADS-B was heard at all
   squawk?: string; ground?: boolean; alert?: boolean; spi?: boolean; selAlt?: number; qnh?: number; roll?: number; tas?: number; hdg?: number; ias?: number; mach?: number; baroRate?: number;
   es?: boolean; modeSOnly?: boolean; dlVersion?: number;
 }
+
+/**
+ * The 13-bit identity field (C1 A1 C2 A2 C4 A4 X B1 D1 B2 D2 B4 D4, as DF5, DF21 and the DF17 emergency status carry
+ * it) as its four squawk digits A B C D, each the octal digit of its 4-2-1 bits (Gillham order; dump1090 decodeID13Field).
+ */
+export function squawkOf(id13: number): string {
+  const bit = (n: number) => (id13 >> n) & 1;
+  const a = bit(7) * 4 + bit(9) * 2 + bit(11), b = bit(1) * 4 + bit(3) * 2 + bit(5);
+  const c = bit(8) * 4 + bit(10) * 2 + bit(12), d = bit(0) * 4 + bit(2) * 2 + bit(4);
+  return `${a}${b}${c}${d}`;
+}
+/** What a special squawk means, as the Flights card says it (the native apps' wording). */
+export const squawkMeaning = (s: string) => s === '7500' ? 'HIJACK' : s === '7600' ? 'RADIO FAILURE' : s === '7700' ? 'EMERGENCY' : '';
 
 const PREAMBLE = 8, LONG_BITS = 112, SHORT_BITS = 56, FULL_LEN = PREAMBLE + LONG_BITS;
 const AIS_CHARS = '?ABCDEFGHIJKLMNOPQRSTUVWXYZ????? ???????????????0123456789??????';
@@ -42,6 +56,8 @@ export class AdsbDecoder implements IqProcessor {
   /** FORK: Mode A/C replies (modeac.ts) among the samples, and the codes heard as tracks. */
   private readonly acDet = new ModeAcDetector(2_000_000); readonly acTracks = new ModeAcTracks(); private acReplies = 0;
   private dbg = { pre: 0, df: 0, ok: 0, fail: 0, last: 0 };
+  /** FORK: MLAT: the sample count since the stream started of m[0] in onIq, so a frame's time is a 12 MHz tick count. */
+  private mBase = 0;
   private lastPublish = 0;
   /** Receiver position for single-frame CPR (set from the phone's geolocation). */
   ref: { lat: number; lon: number } | null = null;
@@ -50,11 +66,13 @@ export class AdsbDecoder implements IqProcessor {
     for (let i = 0; i <= 128; i++) for (let q = 0; q <= 128; q++) this.maglut[i * 129 + q] = Math.round(Math.sqrt(i * i + q * q) * 360);
   }
 
-  reset(): void { this.carryLen = 0; this.cpr.clear(); this.icaoFrames.clear(); }
+  reset(): void { this.carryLen = 0; this.cpr.clear(); this.icaoFrames.clear(); this.mBase = 0; }   // FORK: + mBase (MLAT)
+  /** FORK: MLAT: `lost` samples never arrived; the clock steps over them (the samples held back are dropped). */
+  gap(lost: number): void { this.mBase += this.carryLen + Math.max(0, Math.round(lost)); this.carryLen = 0; }
   /** CLEAR on the screen: forget every aircraft and the frame count, and say so, or the next frame re-sends them. */
   clear(): void { this.planes.clear(); this.cpr.clear(); this.frames = 0; this.emit({ type: 'aircraft', list: [], frames: 0 }); this.acTracks.tracks.clear(); this.acReplies = 0; this.emit({ type: 'modeac', tracks: [], replies: 0 }); }   // FORK: + Mode A/C
 
-  onIq(iq: Int8Array): void {
+  onIq(iq: Int8Array, rate = 2_000_000): void {   // FORK: + rate (MLAT ticks)
     const nSamp = iq.length >> 1;
     if (nSamp < 8) return;
     const m = new Int32Array(this.carryLen + nSamp);
@@ -101,7 +119,10 @@ export class AdsbDecoder implements IqProcessor {
       if (!fr) { if (df === 17 || df === 18) this.dbg.fail++; j++; continue; }
       this.byDf.set(fr.df, (this.byDf.get(fr.df) ?? 0) + 1);
       this.frames++;
-      this.emit({ type: 'modes', hex: Array.from(fr.bytes, b => b.toString(16).padStart(2, '0')).join('') });   // FORK: raw frame for the export bus (Beast)
+      // FORK: raw frame for the export bus (Beast), with its time in 12 MHz ticks from the sample count (the preamble's
+      // first sample; what MLAT needs is a clock steady within this receiver) and dump1090's signal byte (√power · 255)
+      let pk = 0; for (let i = 0; i < nb * 2; i += 2) pk += Math.max(m[j + PREAMBLE * 2 + i], m[j + PREAMBLE * 2 + i + 1]);
+      this.emit({ type: 'modes', hex: Array.from(fr.bytes, b => b.toString(16).padStart(2, '0')).join(''), ts: Math.round((this.mBase + j) * 12e6 / rate) % 2 ** 48, sig: Math.min(255, Math.round(pk / nb / (360 * 128) * 255)) });
       if (fr.df === 17 || fr.df === 18) { this.dbg.ok++; this.decode(Int32Array.from(fr.bytes), batch, nowMs); }
       else this.modeSApply(fr, batch, nowMs);
       read.push([j, j + (nb + PREAMBLE) * 2]);   // FORK: Mode A/C skips it
@@ -113,6 +134,7 @@ export class AdsbDecoder implements IqProcessor {
     const keep = Math.min(FULL_LEN * 2, mlen);
     this.carry.set(m.subarray(mlen - keep));
     this.carryLen = keep;
+    this.mBase += mlen - keep;   // FORK: MLAT clock
     if (batch.size > 0) this.merge(batch, nowMs);
     if (nowMs - this.dbg.last > 1000) {
       this.dbg.last = nowMs;
@@ -159,8 +181,14 @@ export class AdsbDecoder implements IqProcessor {
         }
         if (vr !== 0) a.vr = (vr - 1) * 64 * (vrSign ? -1 : 1);
       }
+    } else if (tc === 28 && (msg[4] & 7) === 1) {
+      // emergency / priority status: the Mode A code rides in it too
+      const id13 = ((msg[5] << 8) | msg[6]) & 0x1fff;
+      if (id13) a.squawk = squawkOf(id13);
     }
   }
+
+  // FORK: DF5 / DF21 squawks are read by modes.ts with every other downlink format (and CRC repair); upstream's identity() was here
 
   private merge(batch: Map<string, Aircraft>, now: number): void {
     for (const [icao, a] of batch) {

@@ -9,6 +9,7 @@
  * Twin ports: core/apps/AcarsInsight.kt and core/apps/AcarsInsight.swift (same names, same constants).
  */
 import type { AcarsMsg, AcarsPlane } from './acars-planes.js';
+import { arinc622Summary, parseArinc622 } from './dsp/arinc622.js';   // FORK: ARINC 622
 import { labelMeaning } from './acars-planes.js';
 
 /** An airport: ICAO ident, position, name. */
@@ -21,6 +22,7 @@ export const KINDS: Record<string, string> = {
   link: 'LINK TEST', ack: 'ACK', out: 'OUT', off: 'OFF', on: 'ON', in: 'IN', pos: 'POSITION', wx: 'WEATHER', atis: 'ATIS',
   eta: 'ETA', delay: 'DELAY', text: 'FREE TEXT', printer: 'PRINTER', engine: 'ENGINE DATA', fault: 'FAULT REPORT', fms: 'FMS',
   data: 'SYSTEM DATA', media: 'MEDIA', airline: 'AIRLINE', request: 'REQUEST', other: 'MESSAGE',
+  adsc: 'ADS-C', cpdlc: 'CPDLC',   // FORK: ARINC 622 (dsp/arinc622.ts)
 };
 export const kindLabelOf = (k: string) => KINDS[k] ?? 'MESSAGE';
 
@@ -170,6 +172,7 @@ const POS_LABELS = new Set(['10', '11', '12', '13', '14', '15', '16', '17', '2Z'
 /** What one message is, in plain words. */
 export function msgInsight(m: AcarsMsg, lookup: AirportLookup | null = null, home: LatLon | null = null): MsgInsight {
   const t = m.text, up = t.toUpperCase(), L = m.label;
+  const a6 = arinc622Insight(m); if (a6) return a6;   // FORK: ADS-C / CPDLC inside the message (dsp/arinc622.ts)
   const airports = findAirports(t, lookup);
   const pos = findPositions(t, home)[0] ?? null;
   const route = findRoute(t, lookup);
@@ -205,6 +208,14 @@ export function msgInsight(m: AcarsMsg, lookup: AirportLookup | null = null, hom
   else { const mean = labelMeaning(L); summary = mean ? mean[0].toUpperCase() + mean.slice(1) : t ? t.replace(/\s+/g, ' ').trim().slice(0, 80) : `Label ${L}`; }
   if (kind === 'pos' && pos) summary = `Position ${pos.lat.toFixed(2)}, ${pos.lon.toFixed(2)}${apt ? ` · ${apt}` : ''}`;
   return { kind, summary, airports, pos, phase, orig: route?.[0] ?? '', dest: route?.[1] ?? '', nums: flightNums(t) };
+}
+
+/** FORK: an ARINC 622 application (ADS-C, CPDLC) read as such, its ADS-C position and motion kept. */
+function arinc622Insight(m: AcarsMsg): MsgInsight | null {
+  const a = parseArinc622(m.label, m.text, m.down); if (!a) return null;
+  const s = arinc622Summary(a), adsc = a.app === 'adsc' || a.app === 'adsc-disconnect';
+  return { kind: adsc ? 'adsc' : 'cpdlc', summary: s.summary, airports: [], pos: s.pos, phase: '', orig: '', dest: '',
+    nums: { altFt: s.altFt, kt: s.kt, mach: '', hdg: s.hdg, fuel: '', eta: '' } };
 }
 
 /** What a whole aircraft's messages add up to. */
