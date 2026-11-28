@@ -16,6 +16,7 @@
 import { fft } from '../../fft.js';
 import { WsprFrontEnd } from './wspr.js';
 import { FST4W_GEN, FST4W_MN, FST4W_NM, FST4W_NRW } from './fst4w-tables.js';
+import { ldpcBp, ldpcChecks, ldpcEncode, ldpcGen, type LdpcCode } from './ldpc.js';
 import type { DigitalDecoder } from './digital.js';
 
 const FS = 300, NSS = 205, NSYM = 160, N = 240, K = 74, M = N - K;
@@ -160,23 +161,12 @@ export function fst4wUnpack(b: ArrayLike<number>, hashes?: Map<number, string>):
 }
 
 // ---- the code -----------------------------------------------------------------------------------------------------------
-const GEN: Uint8Array[] = FST4W_GEN.map(h => {
-  const row = new Uint8Array(K);
-  for (let j = 0; j < 19; j++) { const v = parseInt(h[j], 16), nb = j === 18 ? 2 : 4; for (let jj = 0; jj < nb; jj++) if ((v >> (3 - jj)) & 1) row[j * 4 + jj] = 1; }
-  return row;
-});
+const CODE: LdpcCode = { n: N, m: M, mn: FST4W_MN, nm: FST4W_NM, nrw: FST4W_NRW, colw: 3, roww: 5 };
+const GEN = ldpcGen(FST4W_GEN, K);
 /** 74 bits (message + CRC) → the 240-bit codeword (systematic: the message first). */
-export function fst4wEncode(m74: ArrayLike<number>): Uint8Array {
-  const cw = new Uint8Array(N); for (let i = 0; i < K; i++) cw[i] = m74[i];
-  for (let i = 0; i < M; i++) { let s = 0; const g = GEN[i]; for (let j = 0; j < K; j++) s ^= g[j] & m74[j]; cw[K + i] = s; }
-  return cw;
-}
-/** Whether every parity check holds. */
-export function fst4wChecks(cw: ArrayLike<number>): number {
-  let bad = 0;
-  for (let j = 0; j < M; j++) { let s = 0; for (let i = 0; i < FST4W_NRW[j]; i++) s ^= cw[FST4W_NM[j * 5 + i] - 1]; bad += s; }
-  return bad;
-}
+export const fst4wEncode = (m74: ArrayLike<number>): Uint8Array => ldpcEncode(GEN, m74, K);
+/** How many parity checks fail. */
+export const fst4wChecks = (cw: ArrayLike<number>): number => ldpcChecks(CODE, cw);
 /** A message → the 160 tones, or null. */
 export function fst4wTones(msg: string): Uint8Array | null {
   const b = fst4wPack(msg); if (!b) return null;
@@ -189,28 +179,7 @@ export function fst4wTones(msg: string): Uint8Array | null {
 }
 
 /** Belief propagation (sum-product, after decode240_74): LLRs (> 0 means 1) → the codeword, or null. */
-export function fst4wBp(llr: Float32Array, iters = 30): Uint8Array | null {
-  const tov = new Float32Array(3 * N), toc = new Float32Array(5 * M), th = new Float32Array(5 * M), zn = new Float32Array(N), cw = new Uint8Array(N);
-  for (let j = 0; j < M; j++) for (let i = 0; i < FST4W_NRW[j]; i++) toc[j * 5 + i] = llr[FST4W_NM[j * 5 + i] - 1];
-  for (let iter = 0; iter <= iters; iter++) {
-    for (let i = 0; i < N; i++) { zn[i] = llr[i] + tov[3 * i] + tov[3 * i + 1] + tov[3 * i + 2]; cw[i] = zn[i] > 0 ? 1 : 0; }
-    if (fst4wChecks(cw) === 0) return cw;
-    // messages to checks: the bit's total without what this check said
-    for (let j = 0; j < M; j++) for (let i = 0; i < FST4W_NRW[j]; i++) {
-      const ib = FST4W_NM[j * 5 + i] - 1; let t = zn[ib];
-      for (let kk = 0; kk < 3; kk++) if (FST4W_MN[3 * ib + kk] - 1 === j) t -= tov[3 * ib + kk];
-      toc[j * 5 + i] = t; th[j * 5 + i] = Math.tanh(-t / 2);
-    }
-    // messages to bits: the product over the check's other bits
-    for (let ib = 0; ib < N; ib++) for (let kk = 0; kk < 3; kk++) {
-      const j = FST4W_MN[3 * ib + kk] - 1; let p = 1;
-      for (let i = 0; i < FST4W_NRW[j]; i++) if (FST4W_NM[j * 5 + i] - 1 !== ib) p *= th[j * 5 + i];
-      const x = Math.max(-0.999999, Math.min(0.999999, -p));
-      tov[3 * ib + kk] = 2 * Math.atanh(x);
-    }
-  }
-  return null;
-}
+export const fst4wBp = (llr: Float32Array, iters = 30): Uint8Array | null => ldpcBp(CODE, llr, iters);
 
 // ---- test signal (GFSK, BT 2, as gen_fst4wave) -----------------------------------------------------------------------------
 function erf(x: number): number {   // Abramowitz-Stegun 7.1.26

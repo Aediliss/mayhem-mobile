@@ -106,7 +106,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | WSPR-2 in Ham Radio → DIGITAL (2-minute beacons: call, grid, dBm, SNR, DT, drift) | WSJT-X lib/wsprd (wsprd.c, wsprd_utils.c, wsprsim_utils.c); its wsprsim built and run for the test vectors | WSJT-X GPL-3.0 ✔ (COPYING is GPLv3; wsprd.c, wsprd_utils.c and nhash.c say GPL v3 or later). fano.c (Phil Karn, 1994) carries no licence line, so the sequential decoder is written here from the textbook stack algorithm instead; nhash is lookup3 (Bob Jenkins, public domain) |
 | [ ] | | WSPRnet spot upload (off by default; needs the STATION call and grid, and Settings' "nothing is sent anywhere else" text changed) | WSJT-X WSPRNet.cpp (form fields to check) | GPL-3.0 ✔ |
 | [x] | ★ | FST4W-120 in Ham Radio → DIGITAL (the 2-minute beacons on WSPR's dials) | WSJT-X lib/fst4 (genfst4, get_crc24, ldpc_240_74_*, decode240_74, get_fst4_bitmetrics), lib/fst4_decode.f90, lib/77bit/packjt77.f90 (type 0.6) | GPL-3.0 ✔ (WSJT-X COPYING; these files carry no header of their own) |
-| [ ] | ★ | JT65/JT9/Q65/FST4 (the QSO modes), FST4W-300/900/1800, MSK144 | WSJT-X | GPL-3.0 ✔ |
+| [x] | ★ | MSK144 (meteor scatter) in Ham Radio → DIGITAL | WSJT-X lib/genmsk_128_90, encode_128_90, crc13.cpp, ldpc_128_90_*, bpdecode128_90, msk144spd / msk144sync / msk144_freq_search / msk144decodeframe | GPL-3.0 ✔ (WSJT-X COPYING) |
+| [ ] | ★ | JT65/JT9/Q65/FST4 (the QSO modes), FST4W-300/900/1800, MSK40 short messages | WSJT-X | GPL-3.0 ✔ |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
@@ -914,3 +915,23 @@ for "or later" first.
   Hardware: a HackRF (or an HF-capable RTL-SDR) with a wire antenna on NMF 6340.5 or 9110 kHz (dial 6338.6 / 9108.1
   USB) or DWD Hamburg 7880 kHz, at a scheduled chart time: the start tone, phasing and a surface analysis should
   draw over ~10-20 minutes; compare with fldigi's or SeaTTY's WEFAX on the same audio.
+- **MSK144** (`dsp/ham/msk144.ts`, `dsp/ham/msk144-tables.ts` (WSJT-X's LDPC(128,90) tables, generated from the .f90
+  files), `dsp/ham/ldpc.ts` (belief propagation shared with FST4W, whose decoder now uses it); FORK edits in the worker
+  and main.ts beside FT8/FT4/WSPR (the DIGITAL tile; FT8's list and panel: caption, the calling frequencies 50.260,
+  50.280, 144.150, 144.360 MHz, its own empty text; not Ham Map spots), `test/msk144.test.ts`, fixtures
+  `test/fixtures/wsjtx-msk144-181211_120500.wav` and `_120800.wav` (WSJT-X's own samples, 12 kHz, GPL-3.0)): after
+  WSJT-X. USB audio to a 12 kHz baseband at 1500 Hz; every 18 ms the squared frame's spectrum looks for MSK's lines at
+  ±1000 Hz (moved by twice the frequency error); a peak 3× the quarter-quantile (or 12× its neighbours) is a ping: its
+  three frames in six combinations, ±8 Hz in 2 Hz steps, coherently summed; the sync word by correlation; phase from the
+  two syncs; matched-filtered bits (≤4 sync bits wrong); BP (10 iterations, early stop); CRC-13; under 18 hard errors;
+  the message type allowed; unpacked by FT8's code. Tests: the CRC construction agrees with FT8's CRC-14; encoded
+  codewords pass every parity check (two WSJT-X tables agree); the frame has its syncs; the I/Q waveform is the same
+  signal as WSJT-X's tone sequence (genmsk_128_90's tones through continuous-phase FSK at 1000/2000 Hz: match > 0.97);
+  a frame decodes clean and three noisy frames decode, noise does not; a 0.4 s ping 37 Hz off in noise decodes once at
+  its frequency (±2 Hz), noise alone gives nothing; WSJT-X's two real 6 m recordings give K1JT WA4CQG EM72 (120500) and
+  CQ W4IMD EM84, CQ KD9VV EN71 (120800). 60 s of noise took 0.6 s of CPU (2 candidates, no decode). In Chromium: the
+  120800 recording through AUDIO IN (Ham Radio, USB, real time) listed CQ KD9VV EN71 and CQ W4IMD EM84 (two pings).
+  Not done: MSK40 short messages ("<CALL1 CALL2> RPT"), a-priori decoding, Ham Map spots.
+  Hardware: a HackRF or RTL-SDR with a 6 m vertical or a small Yagi on 50.260 MHz USB (2 m 144.150 in North America,
+  144.360 in Europe), around dawn or during a meteor shower (the Geminids in mid-December): pings decode as they come;
+  compare with WSJT-X in MSK144 mode on the same audio.
