@@ -107,7 +107,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [ ] | | WSPRnet spot upload (off by default; needs the STATION call and grid, and Settings' "nothing is sent anywhere else" text changed) | WSJT-X WSPRNet.cpp (form fields to check) | GPL-3.0 ✔ |
 | [x] | ★ | FST4W-120 in Ham Radio → DIGITAL (the 2-minute beacons on WSPR's dials) | WSJT-X lib/fst4 (genfst4, get_crc24, ldpc_240_74_*, decode240_74, get_fst4_bitmetrics), lib/fst4_decode.f90, lib/77bit/packjt77.f90 (type 0.6) | GPL-3.0 ✔ (WSJT-X COPYING; these files carry no header of their own) |
 | [x] | ★ | MSK144 (meteor scatter) in Ham Radio → DIGITAL | WSJT-X lib/genmsk_128_90, encode_128_90, crc13.cpp, ldpc_128_90_*, bpdecode128_90, msk144spd / msk144sync / msk144_freq_search / msk144decodeframe | GPL-3.0 ✔ (WSJT-X COPYING) |
-| [ ] | ★ | JT65/JT9/Q65/FST4 (the QSO modes), FST4W-300/900/1800, MSK40 short messages | WSJT-X | GPL-3.0 ✔ |
+| [x] | ★ | FST4 (15 s to 30 min) and FST4W-300/900/1800 in Ham Radio → DIGITAL | WSJT-X lib/fst4 (ldpc_240_101_*, genfst4's message scrambling), lib/fst4_decode.f90 (the periods' timing) | GPL-3.0 ✔ |
+| [ ] | ★ | JT65/JT9/Q65, MSK40 short messages | WSJT-X | GPL-3.0 ✔ |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
@@ -935,3 +936,22 @@ for "or later" first.
   Hardware: a HackRF or RTL-SDR with a 6 m vertical or a small Yagi on 50.260 MHz USB (2 m 144.150 in North America,
   144.360 in Europe), around dawn or during a meteor shower (the Geminids in mid-December): pings decode as they come;
   compare with WSJT-X in MSK144 mode on the same audio.
+- **FST4 and the FST4W periods** (`dsp/ham/fst4w.ts` now `Fst4Decoder(wspr, period, centreHz)` with `Fst4wDecoder` the
+  FST4W case; `dsp/ham/fst4w-tables.ts` gains WSJT-X's LDPC(240,101) tables; `WsprFrontEnd` takes the audio centre;
+  FORK edits in the worker and main.ts: an FST4 tile, the T/R period chips for both, FST4's Rx frequency box, 2200 m and
+  630 m dials for FST4, the countdown per period, the list's hint now following the mode (it stayed on FT8's before),
+  `test/fst4w.test.ts`, fixture `test/fixtures/wsjtx-fst4-60-210115_0058-250sps-1335hz.ci16`): after WSJT-X. Each
+  period's samples a symbol (fst4_decode.f90: 720 for 15 s ... 134400 for 1800 s), the baseband at 250-375 Hz so a
+  symbol is a whole number of samples, the frame nominally 1 s in (0.5 s for 15 s); the search and refinement scaled to
+  the tone spacing; FST4: FT8's 77-bit message XORed with genfst4's sequence, CRC-24 over 101 bits, LDPC(240,101),
+  FT8's unpacking. Tests: the (240,101) generator and parity checks agree and the CRC checks; FST4W-300 at −34 dB,
+  FST4W-900 and -1800 at −38 dB (in 2500 Hz), 40 Hz off, decode with frequency and DT, noise alone gives nothing in each;
+  FST4-15 through 12 kHz audio and the front end decodes a standard message 60 Hz off at −16 dB; WSJT-X's real FST4-60
+  sample (samples/FST4+FST4W/210115_0058.wav) decodes CQ K9KFR EN71 at 1335 Hz (with the Rx frequency set there: the
+  search covers ±100 Hz). A 1800 s period takes about 1.2 s to decode. In Chromium: the FST4 tile with its seven
+  periods, the Rx box and the LF/MF dials; FST4W's four periods; captions and countdowns follow.
+  Not done: WSJT-X's wider FST4 search (it can cover the whole passband), its 8-symbol metrics, OSD and a-priori passes;
+  no off-air FST4W recording yet (WSJT-X's FST4W sample would not download).
+  Hardware: FST4/FST4W are mostly on 2200 m (136 kHz) and 630 m (474.2 kHz), below the HackRF's 1 MHz: an RTL-SDR with
+  direct sampling (or an upconverter) and a large antenna; FST4W also on the WSPR dials above 1.8 MHz with a HackRF.
+  Compare with WSJT-X in the same mode and T/R period.

@@ -105,3 +105,70 @@ test('live: 48 kHz audio pushed as it comes decodes at the end of its slot (the 
   assert.deepEqual([got[0].slot * 120_000, got[0].text], [slotMs, 'K1ABC FN42 37']);
   assert.ok(Math.abs(got[0].dt) <= 0.2, `DT ${got[0].dt}`);
 });
+
+// ---- FST4 and the other periods -------------------------------------------------------------------------------------
+import { readFileSync } from 'node:fs';
+import { Fst4Decoder, fst4Checks, fst4Encode, fst4Geo, fst4TonesOf, FST4W_PERIODS } from '../src/dsp/ham/fst4w.js';
+import { packStandard as pack77 } from '../src/dsp/ham/ft8-encode.js';
+
+test('FST4: the (240,101) generator and parity checks agree; the 101-bit CRC checks', () => {
+  for (const m of ['CQ K9KFR EN71', 'K1ABC W9XYZ -11', 'W9XYZ K1ABC RR73']) {
+    const cw = fst4Encode(pack77(m)!);
+    assert.equal(fst4Checks(cw), 0, m);
+    assert.equal(fst4Crc24(cw, 101), 0, m);
+  }
+});
+
+/** The period's baseband directly (continuous-phase 4-FSK at [offHz] from the centre, starting [dtS] after the
+ *  nominal start) plus complex noise of variance 1, the signal [snr] dB in 2500 Hz of audio (2A² against 5000/FS). */
+function baseband4(tones: ArrayLike<number>, period: number, offHz: number, dtS: number, snr: number, seed = 1): [Float32Array, Float32Array] {
+  const g = fst4Geo(period), n = Math.ceil((g.startS + g.durS + 1) * g.FS), I = new Float32Array(n), Q = new Float32Array(n);
+  const A = Math.sqrt(10 ** (snr / 10) * 5000 / g.FS / 2), at = Math.round((g.startS + dtS) * g.FS); let ph = 0.7;
+  for (let k = 0; k < 160 * g.NSS; k++) {
+    const j = at + k; if (j >= 0 && j < n) { I[j] += A * Math.cos(ph); Q[j] += A * Math.sin(ph); }
+    ph += 2 * Math.PI * (offHz + (tones[Math.floor(k / g.NSS)] - 1.5) * g.DF) / g.FS;
+  }
+  let s = seed; const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
+  for (let j = 0; j < n; j++) { const r = Math.sqrt(-2 * Math.log(rnd() + 1e-12)), t = 2 * Math.PI * rnd(); I[j] += r * Math.cos(t) / Math.SQRT2; Q[j] += r * Math.sin(t) / Math.SQRT2; }
+  return [I, Q];
+}
+
+for (const period of FST4W_PERIODS.filter(p => p !== 120)) {
+  test(`FST4W-${period}: a station 40 Hz off at -${period >= 900 ? 38 : 34} dB decodes with its frequency and DT; noise does not`, () => {
+    const snr = period >= 900 ? -38 : -34, [I, Q] = baseband4(fst4wTones('G4JNT IO90 23')!, period, 40, 0.3, snr);
+    const d = new Fst4Decoder(true, period); d.budgetMs = 60_000;
+    const got = d.decodeBuffer(I, Q);
+    assert.equal(got.length, 1, JSON.stringify(got.map(g => g.text)));
+    assert.equal(got[0].text, 'G4JNT IO90 23');
+    assert.ok(Math.abs(got[0].hz - 1540) <= 1, `${got[0].hz} Hz`);
+    assert.ok(Math.abs(got[0].dt - 0.3) <= 0.15 + fst4Geo(period).NSS / fst4Geo(period).FS / 10, `DT ${got[0].dt}`);
+    const [nI, nQ] = baseband4(fst4wTones('G4JNT IO90 23')!, period, 40, 0.3, -99, 9);
+    assert.deepEqual(new Fst4Decoder(true, period).decodeBuffer(nI, nQ), []);
+  });
+}
+
+test('FST4-15 through 12 kHz audio and the front end: a standard message, 60 Hz off at -16 dB', () => {
+  const g = fst4Geo(15), tones = fst4TonesOf(fst4Encode(pack77('K1ABC W9XYZ -11')!)), R = 12_000;
+  const sig = fst4wAudio(tones, 1560, R, Math.sqrt(2 * 10 ** (-16 / 10) * 0.01 * 2500 / 6000), g.NSS / g.FS), a = new Float32Array(R * 15);
+  for (let k = 0; k < sig.length; k++) a[Math.round(0.5 * R) + k] += sig[k];
+  let s = 4; for (let k = 0; k < a.length; k += 2) { s = (s * 1664525 + 1013904223) >>> 0; const u = s / 2 ** 32; s = (s * 1664525 + 1013904223) >>> 0; const r = Math.sqrt(-2 * Math.log(u + 1e-12)), t = 2 * Math.PI * s / 2 ** 32; a[k] += 0.1 * r * Math.cos(t); a[k + 1] += 0.1 * r * Math.sin(t); }
+  const I: number[] = [], Q: number[] = [], fe = new WsprFrontEnd(R, (p, q) => { I.push(p); Q.push(q); }, g.FS);
+  fe.push(a); fe.push(new Float32Array(R));
+  const sk = Math.round(fe.delayS * g.FS), d = new Fst4Decoder(false, 15); d.budgetMs = 60_000;
+  const got = d.decodeBuffer(Float32Array.from(I.slice(sk, sk + d.spanSamples)), Float32Array.from(Q.slice(sk, sk + d.spanSamples)), Date.UTC(2026, 10, 28, 6, 0, 45));
+  assert.deepEqual(got.map(x => [x.text, x.hz, x.utc]), [['K1ABC W9XYZ -11', 1560, '060045']]);
+  assert.ok(Math.abs(got[0].dt) <= 0.1);
+});
+
+// fixtures/wsjtx-fst4-60-210115_0058-250sps-1335hz.ci16: WSJT-X's samples/FST4+FST4W/210115_0058.wav (WSJT-X, GPL-3.0;
+// a real FST4-60 transmission) put through WsprFrontEnd centred on 1335 Hz to the decoder's 250 Hz baseband, 60 s,
+// int16 I/Q. Source: https://sourceforge.net/p/wsjt/wsjtx/ (samples/FST4+FST4W).
+test('FST4-60: WSJT-X\'s sample recording decodes CQ K9KFR EN71 at 1335 Hz', () => {
+  const b = readFileSync(new URL('../test/fixtures/wsjtx-fst4-60-210115_0058-250sps-1335hz.ci16', import.meta.url));
+  const n = b.length / 4, I = new Float32Array(n), Q = new Float32Array(n);
+  for (let k = 0; k < n; k++) { I[k] = b.readInt16LE(4 * k) / 32768; Q[k] = b.readInt16LE(4 * k + 2) / 32768; }
+  const d = new Fst4Decoder(false, 60, 1335); d.budgetMs = 60_000;
+  const got = d.decodeBuffer(I.subarray(0, d.spanSamples), Q.subarray(0, d.spanSamples));
+  assert.deepEqual(got.map(x => [x.text, x.hz]), [['CQ K9KFR EN71', 1335]]);
+  assert.ok(got[0].snr > 0 && Math.abs(got[0].dt) < 1);
+});
