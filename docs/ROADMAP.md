@@ -118,7 +118,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | Olivia and Contestia in Ham Radio → DIGITAL | fldigi src/include/jalocha/pj_mfsk.h, pj_fht.h, pj_gray.h, src/olivia/olivia.cxx | GPL-3.0 ✔ (fldigi COPYING; pj_mfsk.h has no header of its own) |
 | [x] | | MFSK16 and MFSK32 in Ham Radio → DIGITAL | fldigi src/mfsk/mfsk.cxx, interleave.cxx, mfskvaricode.cxx, src/include/mfsk.h | GPL-3.0-or-later ✔ (file headers) |
 | [x] | | DominoEX and Thor in Ham Radio → DIGITAL | fldigi src/dominoex/dominoex.cxx, dominovar.cxx, src/thor/thor.cxx, thorvaricode.cxx | GPL-3.0-or-later ✔ (file headers) |
-| [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
+| [x] | | D-STAR slow data + DPRS → Ham Map; Fusion data | JARL spec (already decoded upstream in hamid/dstar.ts, ysf.ts) | spec ✔ |
 | [x] | | HF packet (300 Bd AX.25) in Ham Radio → DIGITAL; KISS / TNC2 out via the export bus | AX.25 2.2; the HF 1600/1800 Hz convention | spec only (Dire Wolf GPL-2.0-or-later: not ported) |
 | [ ] | | ARDOP monitor (receive only: frame types, 4FSK / PSK / QAM data frames) | ardopcf (pflarue/ardop) | MIT ✔ (LICENSE: Rick Muething, John Wiseman, Peter LaRue); a whole ARQ protocol, own item |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
@@ -1027,6 +1027,16 @@ for "or later" first.
   4- and a 6-digit selcall and an HF DSC call, clean and at 8 dB; a bad ECC and noise give nothing. Hardware: marine
   HF DSC on 2187.5 / 8414.5 kHz (tune 1.7 kHz below in USB); selcall on outback / NGO HF networks (e.g. Australian RFDS,
   VKS-737) heard on their channels in USB.
+- **D-STAR / Fusion positions on Ham Map** (`src/dv-spots.ts`; FORK edits in ham-spots.ts (a DV spot mode with an
+  exact position, on the APRS layer; no SNR in its log line), main.ts (HAM+'s snapshots → dvSpots; the log filter by
+  layer; the DV colour; no grid square drawn for DV) and styles.css; `test/dvspots.test.ts`): the slow data (D-PRS with
+  its CRC checked, GPS NMEA, the 20-character message) and Fusion's data units were already read by the identity layer
+  upstream; what was missing was the map. Each D-STAR / Fusion talker with a position in HAM+ becomes a Ham Map station
+  at that position ("D-STAR D-PRS", "Fusion GPS", plus the slow data message), counted again only when it moves or a
+  minute passes. Tests: two talkers become DV spots at their exact positions and grids, others (DMR, no position) do
+  not; the APRS layer chip hides them; a repeat does not count, a move does. Hardware: HAM+ on a D-STAR repeater
+  output while a radio with GPS on (D-PRS) keys up: its callsign should appear on Ham Map in purple; same with a Fusion
+  radio sending GPS (FT2D / FTM-400 with GPS on).
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The

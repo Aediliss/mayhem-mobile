@@ -87,7 +87,8 @@ import { enteredPlan } from './dsp/fleet/smartnet.js';
 import { clampPpm, measurePlan, ppmAfter, PPM_MAX } from './dsp/ppm.js';
 import type { FleetSnap, CallRow as FleetCall, Lock as DispatchLock, TgPrefs, UnitReport as FleetUnitReport, SystemRow as FleetSystem, SiteRow as FleetSite, CarrierRow as FleetCarrier, GrantRow as FleetGrant } from './dsp/fleet/fleet.js';
 import type { Iden as FleetIden } from './dsp/fleet/tsbk.js';
-import { hamSpots, loadLayers, saveLayers, visibleSpots, gridRing, freqText, bandLabel, type HamSpot, type HamLayer } from './ham-spots.js';
+import { hamSpots, loadLayers, saveLayers, visibleSpots, gridRing, freqText, bandLabel, spotLayer, type HamSpot, type HamLayer } from './ham-spots.js';   // FORK: + spotLayer
+import { dvSpots } from './dv-spots.js';   // FORK: D-STAR / Fusion positions → Ham Map
 import { renderJs8, js8Dial, js8SetDial, js8Speeds, js8OnDecodes, js8OnWaterfall, refreshJs8, type Js8Host } from './js8-ui.js';
 import type { Js8Decode } from './dsp/js8/decoder.js';
 import type { Js8Speed } from './dsp/js8/modes.js';
@@ -11269,7 +11270,7 @@ function refreshAis(): void {
 /** Ham Map's layers, in the order of their chips: APRS packets, and the FT8 and JS8 stations that sent a grid. */
 const HAM_LAYERS: [HamLayer, string][] = [['aprs', 'APRS'], ['ft8', 'FT8'], ['js8', 'JS8']];
 /** FT8 and JS8 squares and markers each in their own color, so the layers tell apart on the map. */
-const SPOT_COLOR: Record<HamSpot['mode'], string> = { FT8: '#4fc3f7', JS8: '#ffb74d' };
+const SPOT_COLOR: Record<HamSpot['mode'], string> = { FT8: '#4fc3f7', JS8: '#ffb74d', DV: '#ba68c8' /* FORK */ };
 /** When each APRS log line came in (parallel to logs.aprs), so the Ham Map log interleaves it with the grid decodes. */
 const aprsLogMs: number[] = [];
 const isSpotId = (id: string) => /^(ft8|js8):/.test(id);
@@ -11282,7 +11283,7 @@ hamSpots.subscribe(() => { if (state.app === 'aprs') { refreshList('aprs'); refr
 function hamLogHtml(): string {
   const L = state.hamLayers, rows: { ms: number; sel: string; line: string }[] = [];
   if (L.aprs) (logs['aprs'] ?? []).forEach((l, i) => rows.push({ ms: aprsLogMs[i] ?? 0, sel: /^([A-Za-z0-9-]+)>/.exec(l)?.[1] ?? '', line: `APRS ${l}` }));
-  for (const x of hamSpots.logLines()) if (L[x.mode === 'FT8' ? 'ft8' : 'js8']) rows.push({ ms: x.ms, sel: `${x.mode.toLowerCase()}:${x.call}`, line: x.line });
+  for (const x of hamSpots.logLines()) if (L[spotLayer(x.mode) /* FORK: DV */]) rows.push({ ms: x.ms, sel: `${x.mode.toLowerCase()}:${x.call}`, line: x.line });
   rows.sort((a, b) => b.ms - a.ms);
   if (!rows.length) return emptyState('aprs');
   return rows.slice(0, 300).map((r, i) => `<div class="tap" data-hmsel="${esc(r.sel)}">${logLineHtml(r.line, rows.length - i)}</div>`).join('');
@@ -11318,7 +11319,7 @@ function refreshAprs(): void {
     ...aprs.filter(s => s.lat !== undefined && s.lon !== undefined).map(s => ({ id: s.call, lat: s.lat!, lon: s.lon!, heading: s.course, label: s.call, kind: (s.kind === 'station' ? 'station' : 'object') as GeoItem['kind'] })),
     ...spots.map(s => ({ id: s.id, lat: s.lat, lon: s.lon, label: s.call, kind: 'qso' as const, color: SPOT_COLOR[s.mode] })),
   ], sel);
-  geo?.setShapes(spots.map(s => ({ id: s.id, pts: gridRing(s.grid), line: false, color: SPOT_COLOR[s.mode], sel: s.id === sel, label: `${s.call} ${s.grid}` })));
+  geo?.setShapes(spots.filter(s => s.mode !== 'DV' /* FORK: an exact position, no square */).map(s => ({ id: s.id, pts: gridRing(s.grid), line: false, color: SPOT_COLOR[s.mode], sel: s.id === sel, label: `${s.call} ${s.grid}` })));
   const at = isSpotId(sel) ? hamSpots.get(sel) : undefined, home = hamHome();
   geo?.setLines(at && home && L[at.mode === 'FT8' ? 'ft8' : 'js8'] ? [[[home.lat, home.lon], [at.lat, at.lon]]] : []);
 }
@@ -11736,7 +11737,7 @@ function ensureWorker(): Worker {
       case 'trains': trainsUi.snap = m as TrainsSnap; refreshTrains(); break;
       case 'satcom': satcomUi.snap = m.snap as SatcomSnap; refreshSatcom(); break;
       case 'fleet': fleetUi.snap = m as unknown as FleetSnap; refreshFleet(); break;
-      case 'hamplus': hpUi.snap = m as unknown as HpSnap; refreshHamPlus(); break;
+      case 'hamplus': hpUi.snap = m as unknown as HpSnap; refreshHamPlus(); dvSpots(hpUi.snap, Date.now()); break;   // FORK: + DV positions
       case 'hamplusNote': hpNote(String(m.text)); break;
       case 'cb': cbUi.snap = m as unknown as CbSnap; refreshCb(); break;
       case 'cbNote': cbNote(String(m.text)); break;
