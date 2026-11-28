@@ -132,7 +132,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 |---|---|---|---|---|
 | [x] | ★ | Jamming detection (319.5/345/433.92/915 MHz, GNSS L1): sustained floor rise / CW carrier → alert card + bus event | own | — |
 | [x] | ★ | GPS L1 C/A monitor: acquisition (PRN, Doppler, C/N0), jamming + spoofing flags; fix = stretch (not done) | IS-GPS-200; GNSS-SDR | spec · GNSS-SDR GPL-3.0 ✔ |
-| [ ] | ★ | Rogue cell heuristics on the LTE decoder (identity/metadata only) | 3GPP TS 36.331; SeaGlass/Crocodile Hunter papers | spec · check any code |
+| [x] | ★ | Rogue cell heuristics on the LTE decoder (identity/metadata only) | 3GPP TS 36.331; SeaGlass/Crocodile Hunter papers | spec · ideas from the SeaGlass and Crocodile Hunter papers, no code used ✔ |
 | [ ] | | RF baseline per site + new-emitter alerts, JSON + printable HTML report | own | — |
 | [ ] | | PowerG presence + supervision timing only (encrypted) | own measurements | — |
 | [ ] | | Fox hunt / DF: RSSI vs compass bearing plot | Mayhem fox hunt / signal hunter | GPL-3.0 ✔ |
@@ -1094,6 +1094,21 @@ for "or later" first.
   recording. Hardware: an active GPS patch outdoors with bias-tee power (RTL-SDR Blog V3/V4 or HackRF): 6-10
   satellites at 35-50 dB-Hz within a minute, the clock offset steady; then a GPS simulator (e.g. gps-sdr-sim into a
   dummy load, never over the air) should raise UNIFORM / STRONG.
+- **Rogue cell heuristics** (`src/cell-watch.ts`; FORK edits in main.ts: the Cell app's WATCH tab, its count of flagged
+  cells, each snapshot through the watch, CLEAR; `test/cellwatch.test.ts`): rules of our own over what the Cell app
+  already decodes (identity and broadcast metadata only), after the ideas in SeaGlass (Ney et al., PETS 2017) and EFF's
+  Crocodile Hunter: TEST PLMN (MCC 001 / 999), UNKNOWN OPERATOR, IDENTITY CHANGED (the same frequency + PCI, another
+  cell identity / TAC / PLMN), DUPLICATE IDENTITY, LONE TAC (none of the operator's other cells use it, while they
+  agree), BAIT RESELECTION (priority 7 above the operator's others, q-RxLevMin −140 dBm, priority 7 with q-Hyst 0),
+  NO NEIGHBOURS (no SIB4 / SIB5 while the operator's complete cells send them), IMSI PAGING, CLOCK OFF (SIB8 / SIB16
+  time over a minute from the device), LOUD (20 dB over the operator's other cells on the band). Shown as reasons to look
+  closer, not proof. Tests: four ordinary cells of one operator raise nothing; a fake with a test PLMN raises TEST PLMN,
+  BAIT RESELECTION, CLOCK OFF and IMSI PAGING; one mimicking the operator raises LONE TAC, BAIT RESELECTION, LOUD and
+  NO NEIGHBOURS; an identity swap and a cloned identity; an unknown operator is info only. Browser: the tab shows and
+  hides, no console errors. Not done: checking cells against a database (OpenCellID; a network lookup would send where
+  you are), 2G / GSM (where most catchers downgrade phones: no GSM decoder here yet), NR. Hardware: AUTO for a few
+  minutes in a familiar place should flag nothing (or only UNKNOWN OPERATOR for a small carrier); a lab cell (srsRAN or
+  an LTE test set with PLMN 001-01 into a dummy load / shielded box, never over the air) should raise TEST PLMN.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The
