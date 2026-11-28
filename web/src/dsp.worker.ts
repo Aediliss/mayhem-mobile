@@ -77,6 +77,7 @@ import { PskDecoder } from './dsp/ham/psk.js';   // FORK: PSK63 / PSK125 / QPSK3
 import { HellDecoder } from './dsp/ham/hell.js';   // FORK: Feld Hell
 import { OliviaDecoder } from './dsp/ham/olivia.js';   // FORK: Olivia / Contestia
 import { MfskDecoder } from './dsp/ham/mfsk.js';   // FORK: MFSK16 / MFSK32
+import { IfkDecoder } from './dsp/ham/ifk.js';   // FORK: DominoEX / Thor
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
 import { loadJsc } from './dsp/js8/varicode.js';
 import { DmrDecoder } from './dsp/ham/dmr.js';
@@ -275,8 +276,9 @@ jt65.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT65', slot, list })
 const jt9 = new Jt9Decoder();   // FORK: JT9
 // FORK: PSK63, PSK125, QPSK31: their text into the DIGITAL text panel, on PSK31's centre frequency
 const pskMore = [new PskDecoder(62.5, false), new PskDecoder(125, false), new PskDecoder(31.25, true)];
-// FORK: the fldigi text modes on PSK31's centre (PSK63 / 125, QPSK31, MFSK16 / 32), one DIGITAL mode each, by name
-const textMore = [...pskMore, new MfskDecoder(15.625), new MfskDecoder(31.25)];
+// FORK: the fldigi text modes on PSK31's centre (PSK63 / 125, QPSK31, MFSK16 / 32, DominoEX, Thor), one DIGITAL mode each, by name
+const ifk = [new IfkDecoder('dominoex'), new IfkDecoder('thor')];
+const textMore = [...pskMore, new MfskDecoder(15.625), new MfskDecoder(31.25), ...ifk];
 const hell = new HellDecoder();   // FORK: Feld Hell: its strip goes to the SSTV picture panel
 hell.onImage = img => post({ type: 'sstv', ...img }, [img.rows.buffer]);
 // FORK: Olivia and Contestia: text into the DIGITAL panel, centred on PSK31's frequency
@@ -359,6 +361,7 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   if (typeof opts.fst4Period === 'number') fst4.setPeriod(opts.fst4Period);
   if (typeof opts.fst4Rx === 'number') fst4.setCentre(opts.fst4Rx);
   if (typeof opts.jt65Sub === 'number') jt65.sub = opts.jt65Sub;   // FORK: JT65
+  if (typeof opts.ifkSpeed === 'number') for (const d of ifk) d.setSpeed(opts.ifkSpeed);   // FORK: DominoEX / Thor
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
   const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'jt9' ? [jt9] : mode === 'hell' ? [hell] : mode === 'olivia' ? [olivia] : mode === 'contestia' ? [contestia] : textMore.some(d => d.name.toLowerCase() === mode) ? textMore.filter(d => d.name.toLowerCase() === mode) : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();

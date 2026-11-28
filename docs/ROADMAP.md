@@ -117,7 +117,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | Feld Hell in Ham Radio → DIGITAL | the mode's definition (fldigi, the Feld Hell Club); nothing ported | — |
 | [x] | | Olivia and Contestia in Ham Radio → DIGITAL | fldigi src/include/jalocha/pj_mfsk.h, pj_fht.h, pj_gray.h, src/olivia/olivia.cxx | GPL-3.0 ✔ (fldigi COPYING; pj_mfsk.h has no header of its own) |
 | [x] | | MFSK16 and MFSK32 in Ham Radio → DIGITAL | fldigi src/mfsk/mfsk.cxx, interleave.cxx, mfskvaricode.cxx, src/include/mfsk.h | GPL-3.0-or-later ✔ (file headers) |
-| [ ] | | fldigi modes: Thor, DominoEX | fldigi | GPL-3.0 ✔ |
+| [x] | | DominoEX and Thor in Ham Radio → DIGITAL | fldigi src/dominoex/dominoex.cxx, dominovar.cxx, src/thor/thor.cxx, thorvaricode.cxx | GPL-3.0-or-later ✔ (file headers) |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
 | [ ] | | HF packet (300 Bd), ARDOP; KISS out via export bus | Dire Wolf; ARDOP spec | check |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
@@ -983,6 +983,17 @@ for "or later" first.
   tone chose streams a whole tone off, whose symbols are all wrong), squelched until one tone stands out above noise.
   Tests: the text clean, MFSK16 at −10 dB and MFSK32 at −8 dB in 2500 Hz 4 Hz off; noise prints (almost) nothing.
   Hardware: MFSK16 around 14.080 / 7.080 MHz USB (also used for MFSK pictures, not decoded here); compare with fldigi.
+- **DominoEX / Thor** (`dsp/ham/ifk.ts`, `dsp/ham/domino-varicode.ts`; FORK edits in the worker (two decoders on PSK31's
+  centre buttons, the speed) and main.ts (the DIGITAL tiles, a DOMINO/THOR speed row: 4, 5, 8, 11, 16, 22);
+  `test/ifk.test.ts`): after fldigi: 18 tones, IFK+ (each 4-bit symbol moves the tone up by symbol + 2, mod 18);
+  DominoEX sends its varicode's 1-3 nibbles as symbols; Thor sends MFSK's varicode through the K=7 code and the 4×4×10
+  interleaver (MFSK's, reused). Receiver (written here): a one-symbol DFT on 3 bins a tone step, every quarter symbol,
+  over the band ±6 tones; four symbol phases decoded side by side; the phase whose tones stand out most prints,
+  squelched against noise. IFK+ is differential, so tuning need not be exact. Not done: Thor's K=15 fast modes (25×4,
+  50×1/2, 100), DominoEX's MultiPSK FEC option, Micro modes, the secondary (idle) text and Thor's pictures.
+  Tests: DominoEX 11 / 22 / 8 and Thor 11 / 22 / 16 clean and through noise (−3 to −9 dB in 2500 Hz) 47 Hz off; noise
+  prints (almost) nothing. Hardware: DominoEX 11 / Thor 11 and 22 on 3.583 / 7.073 / 14.073 MHz USB and NBEMS nets
+  (Thor 22 / DominoEX 11 are common there); compare with fldigi.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The

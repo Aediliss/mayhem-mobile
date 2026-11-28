@@ -84,6 +84,7 @@ export const CREDITS: [boolean, string][] = [
   [false, "JT9 after WSJT-X (GPL-3.0: frame, sync, interleaving, the bits' soft values; its K=32 code decoded by the WSPR stack decoder); test recording: WSJT-X's samples"],
   [false, "Olivia and Contestia after Pawel Jalocha's MFSK code in fldigi (GPL-3.0: the Walsh-Hadamard FEC, scrambling codes, symbol layout, soft decoding; tone placement from olivia.cxx)"],
   [false, "MFSK16 and MFSK32 after fldigi (GPL-3.0-or-later: the K=7 code, the interleaver, the soft decoding, tone placement; varicode by Nino Porcino IZ8BLY)"],
+  [false, "DominoEX and Thor after fldigi (GPL-3.0-or-later: IFK+, the tone plan and speeds, DominoEX's varicode, Thor's coding); DominoEX by Murray Greenman ZL1BPU and Con Wassilieff ZL2AFP, Thor by Dave Freese W1HKJ"],
   [false, "QPSK31 after fldigi (GPL-3.0: the K=5 code's polynomials and the phase mapping); PSK63 / PSK125 as PSK31 faster"],
   [false, "MSK144 after WSJT-X (GPL-3.0: frame and sync word, LDPC(128,90) tables, CRC-13, the short-ping decoder); MSK144 by Steven Franke K9AN and Joe Taylor K1JT; test recordings: WSJT-X's samples"],
   [false, "NAVTEX written from ITU-R M.625-4 (SITOR mode B: the 7-unit code, time diversity, phasing) and M.540-2 (the NAVTEX format)"],
