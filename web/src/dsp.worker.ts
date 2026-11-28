@@ -68,7 +68,7 @@ import { CwDecoder, RttyDecoder, Psk31Decoder, type DigitalDecoder } from './dsp
 import { Ft8Decoder } from './dsp/ham/ft8.js';
 import { Ft4Decoder } from './dsp/ham/ft4.js';   // FORK: FT4
 import { WsprDecoder } from './dsp/ham/wspr.js';   // FORK: WSPR
-import { Fst4wDecoder } from './dsp/ham/fst4w.js';   // FORK: FST4W
+import { Fst4Decoder, Fst4wDecoder } from './dsp/ham/fst4w.js';   // FORK: FST4W, FST4
 import { WefaxDecoder } from './dsp/ham/wefax.js';   // FORK: WEFAX
 import { Msk144Decoder } from './dsp/ham/msk144.js';   // FORK: MSK144
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
@@ -251,7 +251,10 @@ ft4.onDecodes = (list, slot) => post({ type: 'ft8', list, slot, mode: 'FT4' }); 
 const wspr = new WsprDecoder();
 wspr.onText = (t, meta) => { if (digiMode === 'wspr') post({ type: 'digi', from: 'WSPR', text: t, meta }); };
 wspr.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'WSPR', slot, list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.drift ? `${d.text} · drift ${d.drift > 0 ? '+' : ''}${d.drift} Hz` : d.text })) });
-const fst4w = new Fst4wDecoder();   // FST4W-120: the same 2-minute slots and list
+const fst4w = new Fst4wDecoder();   // FST4W: WSPR's band and list, any period
+const fst4 = new Fst4Decoder(false, 60);   // FST4: FT8's messages, any period, around an Rx frequency
+fst4.onText = (t, meta) => { if (digiMode === 'fst4') post({ type: 'digi', from: 'FST4', text: t, meta }); };
+fst4.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'FST4', slot, list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.text })) });
 fst4w.onText = (t, meta) => { if (digiMode === 'fst4w') post({ type: 'digi', from: 'FST4W', text: t, meta }); };
 fst4w.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'FST4W', slot, list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.text })) });
 // FORK: end WSPR
@@ -328,8 +331,11 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   if (typeof opts.pitch === 'number') cw.setPitch(opts.pitch);
   if (typeof opts.pskHz === 'number') psk.setCenter(opts.pskHz);
   if (typeof opts.wefaxLpm === 'number') wefax.lpm = opts.wefaxLpm;   // FORK: WEFAX
+  if (typeof opts.fst4wPeriod === 'number') fst4w.setPeriod(opts.fst4wPeriod);   // FORK: FST4W / FST4
+  if (typeof opts.fst4Period === 'number') fst4.setPeriod(opts.fst4Period);
+  if (typeof opts.fst4Rx === 'number') fst4.setCentre(opts.fst4Rx);
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
-  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
+  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();
   ham.digital = wanted;
 }
@@ -348,7 +354,7 @@ setInterval(() => {
     if (autoSettled !== was) { applyTaps(); if (!autoSettled) dmr.reset(); }
   } else { autoSettled = false; autoCarrierSince = 0; }
   if (ham.digital.length === 0 && !dv) return;
-  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'WEFAX' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
+  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'FST4' && d.name !== 'WEFAX' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
   if (digiMode === 'auto') digiWinner = dv?.locked ? 'DMR' : best && best.confidence > 0.35 ? best.name : '';
   const conf: [string, number][] = ham.digital.map(d => [d.name, Math.round(d.confidence * 100)]);
   if (dv) conf.push(['DMR', dv.locked ? 100 : 0]);
