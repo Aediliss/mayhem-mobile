@@ -80,6 +80,7 @@ export const CREDITS: [boolean, string][] = [
   [false, "FT4 after ft8_lib by Kārlis Goba (MIT: the FT4 sync blocks, Gray map, scrambling sequence and decoding approach; its encoder used to check ours)"],
   [false, "WSPR after WSJT-X's wsprd by Joe Taylor K1JT and Steven Franke K9AN (GPL-3.0-or-later: sync vector, code, interleaving, message packing, search); hash: lookup3 by Bob Jenkins (public domain); test recording: WSJT-X's samples"],
   [false, "FST4W after WSJT-X (GPL-3.0: frame and sync, LDPC(240,74) tables, CRC-24, packjt77's message type 0.6, the 1/2/4-symbol bit metrics); FST4 by Joe Taylor K1JT and Steven Franke K9AN"],
+  [false, "MSK144 after WSJT-X (GPL-3.0: frame and sync word, LDPC(128,90) tables, CRC-13, the short-ping decoder); MSK144 by Steven Franke K9AN and Joe Taylor K1JT; test recordings: WSJT-X's samples"],
   [false, "NAVTEX written from ITU-R M.625-4 (SITOR mode B: the 7-unit code, time diversity, phasing) and M.540-2 (the NAVTEX format)"],
   [false, "406 MHz beacon frames (Cospas-Sarsat first generation: protocols, BCH, locations, IDs) ported from PortaPack Mayhem's EPIRB receiver by Frederic Borry, ADRASEC 31 (GPL-2.0-or-later); its list of reference beacon frames used in the tests"],
   [false, "Marine DSC written from ITU-R M.493-16 (the ten-bit code, time diversity, phasing, call formats, ECC)"],
