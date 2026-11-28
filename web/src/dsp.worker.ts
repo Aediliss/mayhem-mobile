@@ -12,6 +12,7 @@ import { AdslDecoder } from './dsp/adsl/adsl.js';   // FORK: ADS-L
 import { DscDecoder } from './dsp/dsc.js';   // FORK: marine DSC
 import { Beacon406Decoder, HomingProcessor } from './dsp/beacon406/beacon406.js';   // FORK: distress beacons
 import { NavtexDecoder } from './dsp/navtex.js';   // FORK: NAVTEX
+import { CarrierMeter } from './dsp/ppm.js';
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -33,6 +34,7 @@ import { Vdl2Decoder } from './dsp/vdl2.js';
 import { TrainsProcessor } from './dsp/trains.js';
 import { FleetProcessor, type TgPrefs, type KnownState } from './dsp/fleet/fleet.js';
 import { setPlans, type LcnPlan } from './dsp/fleet/plugins.js';   // FORK: plug-in protocols' channel plans
+import type { OswCustom } from './dsp/fleet/smartnet.js';
 import { AudioFader, MAKEUP } from './dsp/fleet/codec.js';
 import { CellProcessor } from './dsp/cell/cell.js';
 import { AtscProcessor } from './dsp/atsc/atsc.js';
@@ -65,6 +67,8 @@ import { GeoscanDecoder } from './dsp/geoscan.js';
 import { CwDecoder, RttyDecoder, Psk31Decoder, type DigitalDecoder } from './dsp/ham/digital.js';
 import { Ft8Decoder } from './dsp/ham/ft8.js';
 import { Ft4Decoder } from './dsp/ham/ft4.js';   // FORK: FT4
+import { WsprDecoder } from './dsp/ham/wspr.js';   // FORK: WSPR
+import { Fst4wDecoder } from './dsp/ham/fst4w.js';   // FORK: FST4W
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
 import { loadJsc } from './dsp/js8/varicode.js';
 import { DmrDecoder } from './dsp/ham/dmr.js';
@@ -241,6 +245,14 @@ let digiMode = 'off', digiWinner = '';
 for (const d of digiAll) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase() || (digiMode === 'auto' && (digiWinner === d.name || d.name === 'FT8' || d.name === 'FT4' /* FORK */ || d.name === 'SSTV'))) post({ type: 'digi', from: d.name, text: t, meta }); };
 ft8.onDecodes = (list, slot) => post({ type: 'ft8', list, slot });
 ft4.onDecodes = (list, slot) => post({ type: 'ft8', list, slot, mode: 'FT4' });   // FORK: FT4 shares FT8's list
+// FORK: WSPR (2-minute slots; not in AUTO), its spots in FT8's list with the drift after the message
+const wspr = new WsprDecoder();
+wspr.onText = (t, meta) => { if (digiMode === 'wspr') post({ type: 'digi', from: 'WSPR', text: t, meta }); };
+wspr.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'WSPR', slot, list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.drift ? `${d.text} · drift ${d.drift > 0 ? '+' : ''}${d.drift} Hz` : d.text })) });
+const fst4w = new Fst4wDecoder();   // FST4W-120: the same 2-minute slots and list
+fst4w.onText = (t, meta) => { if (digiMode === 'fst4w') post({ type: 'digi', from: 'FST4W', text: t, meta }); };
+fst4w.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'FST4W', slot, list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.text })) });
+// FORK: end WSPR
 // JS8: the whole passband at every speed, on the HAM receiver's USB audio while the JS8 app is open
 const js8 = new Js8Decoder();
 let js8On = false, js8WfAt = 0;
@@ -306,7 +318,7 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   if (typeof opts.pitch === 'number') cw.setPitch(opts.pitch);
   if (typeof opts.pskHz === 'number') psk.setCenter(opts.pskHz);
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
-  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
+  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] /* FORK: WSPR, FST4W */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();
   ham.digital = wanted;
 }
@@ -325,7 +337,7 @@ setInterval(() => {
     if (autoSettled !== was) { applyTaps(); if (!autoSettled) dmr.reset(); }
   } else { autoSettled = false; autoCarrierSince = 0; }
   if (ham.digital.length === 0 && !dv) return;
-  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' /* FORK */ && d.confidence > best.confidence) best = d;
+  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' /* FORK */ && d.confidence > best.confidence) best = d;
   if (digiMode === 'auto') digiWinner = dv?.locked ? 'DMR' : best && best.confidence > 0.35 ? best.name : '';
   const conf: [string, number][] = ham.digital.map(d => [d.name, Math.round(d.confidence * 100)]);
   if (dv) conf.push(['DMR', dv.locked ? 100 : 0]);
@@ -419,6 +431,8 @@ drainPort.port1.onmessage = () => {
   while (queue.length && performance.now() - t0 < 8) { const b = queue.shift()!; process(b); if (ackAfter.delete(b)) post({ type: 'iqAck' }); }   // FORK: ack after processing
   armDrain();
 };
+/** A frequency correction measurement under way (RADIO panel, MEASURE). */
+let meter: CarrierMeter | null = null;
 function armDrain(): void { if (!drainArmed && queue.length) { drainArmed = true; drainPort.port2.postMessage(0); } }
 function dropQueued(): void { for (const b of queue) if (ackAfter.delete(b)) post({ type: 'iqAck' }); queue.length = 0; }   // FORK: release acks
 /** FORK: queued recording buffers (fileradio.ts) to acknowledge once processed. */
@@ -433,6 +447,7 @@ self.onmessage = (e: MessageEvent) => {
       // at most about 0.2 s of samples waits (whatever the buffer size and rate): the oldest go first, so a slow
       // start never leaves the waterfall and decoders seconds behind
       const b = new Int8Array(m.buf as ArrayBuffer);
+      if (meter && meter.push(b)) { post({ type: 'measured', ...(meter.result() ?? { offsetHz: NaN, snrDb: 0 }) }); meter = null; }
       // only LoRa queues (its channels catch up in bursts); every other app processes each buffer as it arrives,
       // exactly as before the queue existed
       if (processor !== lora && queue.length === 0) { process(b); if (m.ack) post({ type: 'iqAck' }); break; }   // FORK: ack paces fileradio.ts
@@ -472,6 +487,8 @@ self.onmessage = (e: MessageEvent) => {
       else if (m.cmd === 'restore') fleet.restore(m.known as KnownState);
       else if (m.cmd === 'prefs') fleet.setPrefs(m.prefs as TgPrefs);
       else if (m.cmd === 'plans') setPlans(m.plans as LcnPlan[]);   // FORK: EDACS / MPT1327 / LTR channel plans
+      // a Type II channel plan entered (or forgotten) for a control channel: kept on the device at once
+      else if (m.cmd === 'plan') { fleet.setOswPlan(Number(m.ccHz), (m.plan as OswCustom | null) ?? null); emit({ type: 'fleetKnown', known: fleet.known() }); }
       else if (m.cmd === 'audio') { if (!m.on && fleetAudio.on) { const t = fleetFader.tail(); if (t) toAudio(t); } fleetAudio.on = !!m.on; fleetAudio.gain = Math.max(0, Math.min(1.5, Number(m.gain ?? fleetAudio.gain))); }
       else if (m.cmd === 'replay') {
         const pcm = fleet.callAudio(m.key as string);
@@ -549,6 +566,7 @@ self.onmessage = (e: MessageEvent) => {
     case 'digital': setDigital(m.mode as string, m); break;
     case 'js8Speeds': js8.enabled = { ...js8.enabled, ...(m.speeds as Record<string, boolean>) }; break;
     case 'satService': if (typeof m.baud === 'number') g3ruh.setBaud(m.baud); setSatService(m.kind as string); break;
+    case 'measure': meter = m.cancel ? null : new CarrierMeter(rate, m.offset as number, m.half as number, m.seconds as number); break;
     case 'tapFm': fmTap = new Float32Array(Math.round((m.seconds as number) * 50_000)); fmTapN = 0; applyTaps(); fmBurst = !!m.bursts; fmBurstEnd = performance.now() + ((m.wall as number) ?? m.seconds as number) * 1000; fmPre = new Float32Array(20_000); fmPreN = 0; fmHold = 0; fmAcc = 0; fmAccN = 0; fmFloor = 0; fmBurstCount = 0; break;
   }
 };

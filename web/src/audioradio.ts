@@ -38,6 +38,8 @@ export class AudioRadio implements Radio {
   readonly delivery = new DeliveryMeter();
   readonly kind = 'audio' as const;
   readonly caps = NO_CAPS;
+  /** No crystal to correct: a recording / audio is played as it is. */
+  ppm = 0;
   readonly limits: RadioLimits = { minHz: 0, maxHz: 7_250_000_000, rates: [[240_000, 2_400_000]], canTransmit: false, cleanRate: 2_000_000 };
   targetFreqHz = 0;
   targetRateHz = 2_000_000;

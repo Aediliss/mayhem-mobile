@@ -112,13 +112,30 @@ object SdrEngine {
     private val _rtlAgc = MutableStateFlow(false)
     val rtlAgc: StateFlow<Boolean> = _rtlAgc.asStateFlow()
     fun setRtlAgc(on: Boolean) { _rtlAgc.value = on; RtlSdr.rtlAgc = on }
-    /** An RTL-SDR's crystal correction in parts per million, remembered across launches. */
+    /** The radio's crystal correction in parts per million, saved for each radio. */
     private val _ppm = MutableStateFlow(0)
     val ppm: StateFlow<Int> = _ppm.asStateFlow()
+    /** The radio the correction is saved for (vendor:product:serial, or host:port for rtl_tcp); null with none. */
+    @Volatile private var ppmKey: String? = null
+    private fun applyPpm(p: Int) { _ppm.value = p; RtlSdr.ppm = p; HackRfOne.ppm = p }
     fun setPpm(v: Int) {
-        val p = v.coerceIn(-200, 200)
-        _ppm.value = p; RtlSdr.ppm = p
-        prefs?.edit()?.putInt("rtl_ppm", p)?.apply()
+        val p = clampPpm(v.toDouble())
+        val was = _ppm.value
+        applyPpm(p)
+        ppmKey?.let { prefs?.edit()?.putInt("ppm.$it", p)?.apply() }
+        if (p != was) Diag.log("frequency correction ${if (p > 0) "+" else ""}$p ppm")
+    }
+    /** A radio connected: its own saved correction, or for an RTL-SDR with none yet the one all of them shared before. */
+    fun loadPpm(key: String, rtl: Boolean) {
+        ppmKey = key
+        val p = prefs
+        val v = when {
+            p == null -> 0
+            p.contains("ppm.$key") -> p.getInt("ppm.$key", 0)
+            rtl && p.contains("rtl_ppm") -> p.getInt("rtl_ppm", 0)
+            else -> 0
+        }
+        applyPpm(clampPpm(v.toDouble()))
     }
     /** Whether an R820T/R820T2 may drop into direct sampling below 24 MHz. */
     private val _directSampling = MutableStateFlow(true)
@@ -162,7 +179,6 @@ object SdrEngine {
         val dial = p.getLong("dial", 0L)
         if (dial in 76_000_000L..108_000_000L) { radioFreqHz = dial; dialSaved = true }
         rdsOn = p.getBoolean("rds", true); _rdsWanted.value = rdsOn
-        _ppm.value = p.getInt("rtl_ppm", 0).coerceIn(-200, 200); RtlSdr.ppm = _ppm.value
         hdSurroundOn = p.getBoolean("hd_surround", false); _hdSurround.value = hdSurroundOn
         watchOutputs(ctx)
     }
@@ -492,6 +508,15 @@ object SdrEngine {
     @Volatile private var muteNow = false
     fun toggleMute() { muteNow = !muteNow; _muted.value = muteNow }
 
+    /**
+     * The active app's output gain for the apps that play the built-in demod straight to the speaker - Audio, HD
+     * Radio and Home. It scales that audio in software (0 to 1.5), after the squelch so the gate still reads the raw
+     * signal. Every other app drives its own level in its processor, so the UI sets this to 1 for them. The top-bar
+     * MUTE (muteNow) is separate and downstream; a per-app mute is this set to 0.
+     */
+    @Volatile private var appGainNow = 1f
+    fun setAppGain(g: Float) { appGainNow = g.coerceIn(0f, 1.5f) }
+
     fun setSquelch(db: Int) {
         _squelchDb.value = db.coerceIn(0, 40)
         if (db <= 0) { sqOpen = true; _squelchOpen.value = true }
@@ -588,9 +613,11 @@ object SdrEngine {
     private val queue = ArrayBlockingQueue<ByteArray>(512)
     private val pool = ArrayBlockingQueue<ByteArray>(512)
 
+    /** Counts every start of streaming, so a radio switch can tell one that never opened. */
+    @Volatile var streamStarts = 0; private set
     fun setActive(on: Boolean) {
         _active.value = on
-        if (on) startWorker()
+        if (on) { streamStarts++; startWorker() }
         else {
             stopWorker()
             streamStart(0, 0, 1)
@@ -676,12 +703,56 @@ object SdrEngine {
         HackRfOne.ovrLnaDb = _radioLna.value
         HackRfOne.ovrVgaDb = _radioVga.value
         HackRfOne.ovrAmp = if (_radioAmp.value) 1 else 0
-        HackRfOne.targetFreqHz = _freqHz.value
+        HackRfOne.targetFreqHz = measureCenter ?: _freqHz.value
         // A dongle has one tuner gain where a HackRF has three stages; the VGA is that knob, which is also the one
         // the AGC moves first, so the automatic gain drives a dongle with no special case.
         RtlSdr.targetRateHz = if (wideScan) WIDE_SCAN_RTL else Radio.nearestRate(Radio.RTLSDR, _rateHz.value)
-        RtlSdr.targetFreqHz = _freqHz.value
+        RtlSdr.targetFreqHz = measureCenter ?: _freqHz.value
         RtlSdr.targetGainTenthDb = (_radioVga.value * 10).coerceIn(0, (RtlSdr.MAX_GAIN_DB * 10).toInt())
+    }
+
+    // ---- Frequency correction: MEASURE in the RADIO panel ----
+    /** Where a measurement holds the radio, over the app's own tuning; null when none is under way. */
+    @Volatile private var measureCenter: Long? = null
+    @Volatile private var meter: CarrierMeter? = null
+    @Volatile private var meterDone: ((CarrierResult?) -> Unit)? = null
+    private fun mhzTxt(hz: Long) = "%.3f".format(java.util.Locale.US, hz / 1e6).trimEnd('0').trimEnd('.') + " MHz"
+
+    /**
+     * Measure the correction on a steady carrier at [knownHz]: the span moves just under it for a few seconds, then
+     * back. Blocks for up to 8 s, so call it off the UI thread. Returns the note the panel shows.
+     */
+    fun measurePpm(knownHz: Long?): String {
+        if (Radio.caps == null) return "Connect a radio first."
+        if (!_active.value) return "Start the radio first: open any app so it is receiving."
+        val l = Radio.limits
+        val lo = l.minHz + 400_000
+        if (knownHz == null || knownHz < lo || knownHz > l.maxHz) return "Type a frequency in MHz this radio can tune, from ${mhzTxt(lo)} to ${mhzTxt(l.maxHz)}."
+        val rate = sampleRate
+        val plan = measurePlan(rate)
+        val center = knownHz - plan.offset
+        val prev = _freqHz.value; val old = _ppm.value
+        val got = java.util.concurrent.CompletableFuture<CarrierResult?>()
+        meterDone = { r -> got.complete(r) }
+        measureCenter = center
+        HackRfOne.targetFreqHz = center; RtlSdr.targetFreqHz = center
+        meter = CarrierMeter(rate, plan.offset, plan.half, 2.5)
+        val heard = runCatching { got.get(8, java.util.concurrent.TimeUnit.SECONDS) }
+        val done = heard.isSuccess; val r = heard.getOrNull()
+        meter = null; meterDone = null
+        val moved = _freqHz.value != prev || HackRfOne.targetFreqHz != center || RtlSdr.targetFreqHz != center
+        // the radio goes back to where the app has it
+        measureCenter = null
+        HackRfOne.targetFreqHz = _freqHz.value; RtlSdr.targetFreqHz = _freqHz.value
+        if (moved) return "The app moved the radio while measuring. Try again, or pause the app first."
+        if (!done) return "Nothing came in from the radio. Is it receiving?"
+        if (r == null || !r.offsetHz.isFinite() || r.snrDb < 15) return "No steady carrier heard at ${mhzTxt(knownHz)}. Pick a stronger one, or one that is always on."
+        val next = clampPpm(ppmAfter(old.toDouble(), center.toDouble(), plan.offset.toDouble(), r.offsetHz))
+        val off = r.offsetHz - plan.offset
+        setPpm(next)
+        fun sign(v: Int) = "${if (v > 0) "+" else ""}$v"
+        return "Heard %.2f kHz %s, %.0f dB over the noise. Correction set to %s ppm (was %s).".format(java.util.Locale.US,
+            abs(off) / 1000, if (off < 0) "low" else "high", r.snrDb, sign(next), sign(old))
     }
 
     /** The top of the VGA knob for the radio attached: a dongle's tuner stops at 48.8 dB. */
@@ -1011,8 +1082,8 @@ object SdrEngine {
             if (hdA.size < n) { hdA = FloatArray(n); for (c in 0 until 6) hdCh[c] = ShortArray(n) }
             for (i in 0 until n) hdA[i] = buf[i] / 32768f
             val o = hm.output(hdA, n)
-            val ch = trackCh; val nc = minOf(ch, o.size)
-            for (c in 0 until nc) { val src = o[c]; val dst = hdCh[c]; for (i in 0 until n) dst[i] = pcm16(src[i]) }
+            val ch = trackCh; val nc = minOf(ch, o.size); val g = appGainNow
+            for (c in 0 until nc) { val src = o[c]; val dst = hdCh[c]; for (i in 0 until n) dst[i] = pcm16(src[i] * g) }
             val t = track
             val srcs: Array<ShortArray>; var k = n
             if (driftAudio && t != null) {
@@ -1043,7 +1114,9 @@ object SdrEngine {
                 val sampI = rsOut[i].coerceIn(-32000f, 32000f).toInt()
                 val am = if (sampI < 0) -sampI else sampI; if (am > audioPeak) audioPeak = am
                 if (voiceOn) voiceDet.push(sampI / 32768f)      // judged before the squelch gates it
-                audioBuf[audioLen++] = if (sqOpen) sampI.toShort() else 0
+                // the per-app volume scales the audio here, after the squelch has read the raw level
+                val gated = if (sqOpen) (sampI * appGainNow).toInt().coerceIn(-32767, 32767) else 0
+                audioBuf[audioLen++] = gated.toShort()
                 if (audioLen >= audioBuf.size) { emitAudio(audioBuf, audioLen); audioLen = 0 }
             }
         }
@@ -1059,6 +1132,7 @@ object SdrEngine {
                     continue
                 }
                 if (dropGap) { dropGap = false; (processor as? com.rocketgod.mayhem.core.lora.LoraScanner)?.gap(0, (item.size / 2).toLong()) }
+                meter?.let { mt -> if (mt.push(item, item.size)) { meter = null; meterDone?.invoke(mt.result()) } }
                 try {
                     val len = item.size
                     val nSamp = len / 2
@@ -1404,9 +1478,13 @@ object SdrEngine {
                     val i1 = System.nanoTime(); stAll += i1 - i0
                     if (i1 - stLast >= 1_000_000_000L) {
                         val sec = (i1 - stLast) / 1e9; fun ms(v: Long) = v / 1e6 / sec
+                        // All three pop causes on one line, so a click is attributable: audio underruns (the output
+                        // ran dry), overflow drops (the output's queue was full), and the radio's own USB sample loss.
+                        val usbLost = deliveryNote()
                         Diag.log("DSP per s: %d bufs (%.0f KB) · busy %.0f ms · spectrum %.0f · HD %.0f · demod %.0f · audio write %.0f (%d samples, want %d, dropped %d, underruns %d) · %s %.0f · idle %.0f".format(
                             (stItems / sec).toInt(), stBytes / 1024.0 / sec, ms(stAll), ms(stSpec), ms(stHd), ms(stDemod), ms(stEmit), (stAudio / sec).toLong(), AUDIO_RATE,
-                            (stDropped / sec).toLong(), underruns(), p?.javaClass?.simpleName ?: "no processor", ms(stProc), ms(stWait)))
+                            (stDropped / sec).toLong(), underruns(), p?.javaClass?.simpleName ?: "no processor", ms(stProc), ms(stWait)) +
+                            (if (usbLost.isEmpty()) "" else " · $usbLost"))
                         // an output that says it plays but whose position has not moved for 2 s while audio was refused
                         // has stopped: it is opened again (the next buffer does it)
                         val tk = track
@@ -1446,7 +1524,8 @@ object SdrEngine {
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         // writes never wait (the radio thread must not), so the output keeps its own cushion instead: it starts, and
-        // resumes after running dry, only with 0.2 s queued (an empty one stuttered on every late buffer)
+        // resumes after running dry, only with 0.2 s queued (an empty one stuttered on every late buffer). The deeper
+        // USB pool now feeds it more steadily, so underruns are rarer to begin with.
         runCatching { t.setStartThresholdInFrames(AUDIO_RATE / 5) }
         runCatching { t.play() }
         return t
