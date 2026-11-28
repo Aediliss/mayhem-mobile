@@ -60,6 +60,8 @@ import { beaconLine, type Beacon406 } from './dsp/beacon406/frame.js';   // FORK
 import { CellWatch, type WatchFinding } from './cell-watch.js';   // FORK: rogue-cell heuristics
 import type { JamAlert, JamStatus } from './dsp/jam.js';   // FORK: jamming detection
 import { GPS_FS, GPS_L1_HZ, type GpsResult } from './dsp/gps/acq.js';   // FORK: GPS L1 monitor
+import type { SurveyPass } from './dsp/survey.js';   // FORK: Site Survey
+import { SiteSurvey, type SiteData } from './site-survey.js';   // FORK: Site Survey
 import { NAVTEX_CENTRE_HZ, type NavtexMessage } from './dsp/navtex.js';   // FORK: NAVTEX
 import { ADSL_CATEGORY, ADSL_EMERGENCY, ADSL_STATE, amtName, econList, type AdslPacket } from './dsp/adsl/frame.js';   // FORK: ADS-L (Gliders)
 import { dmeFor, navKind, pairedIls, type NavaidMsg } from './dsp/navaid.js';   // FORK: Navaids (pure helpers; the processor lives in the worker)
@@ -137,7 +139,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'adsl' | 'dsc' | 'beacons' | 'navtex' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings' | 'jam' | 'gps';   // FORK: + jam, gps, droneid, fpv, iridium, navaid, adsl, dsc, beacons, navtex, hfdl
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'adsl' | 'dsc' | 'beacons' | 'navtex' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings' | 'jam' | 'gps' | 'survey';   // FORK: + jam, gps, survey, droneid, fpv, iridium, navaid, adsl, dsc, beacons, navtex, hfdl
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -183,6 +185,7 @@ const APPS: AppDef[] = [
   { id: 'search', title: 'Search', blurb: 'find active channels', cat: 'Analyze' },
   { id: 'jam', title: 'Jamming', blurb: 'alarm bands · GPS L1 · alerts', cat: 'Analyze' },   // FORK: jamming detection
   { id: 'gps', title: 'GPS Monitor', blurb: 'satellites · jamming · spoofing', cat: 'Analyze' },   // FORK: GPS L1 monitor
+  { id: 'survey', title: 'Site Survey', blurb: 'RF baseline · new emitters · report', cat: 'Analyze' },   // FORK: Site Survey
   { id: 'capture', title: 'Capture', blurb: 'record raw IQ', cat: 'Tools' },
   { id: 'transmit', title: 'Transmit', blurb: 'OOK · morse · replay', cat: 'Transmit' },
   { id: 'troll', title: 'Troll', blurb: 'novelty transmitters', cat: 'Transmit' },
@@ -1187,6 +1190,7 @@ function open(app: AppId | null): void {
     case 'dsc': configure('NFM', DSC_CH70_HZ, 2e6, 32, 32, false, 'dsc'); narrowShift(); requestGeo(); break;   // FORK: marine DSC on channel 70
     case 'beacons': beaconsTune(); break;   // FORK: distress beacons
     case 'jam': jamTune(); break;   // FORK: jamming detection
+    case 'survey': surveyTune(); break;   // FORK: Site Survey
     case 'gps': configure('NONE', GPS_L1_HZ, GPS_FS, 40, 40, true, 'gps'); break;   // FORK: GPS L1 monitor at 2.048 MS/s
     case 'navtex': configure('NONE', NAVTEX_CENTRE_HZ, 2e6, 40, 40, true, 'navtex'); break;   // FORK: NAVTEX, 490 and 518 kHz at once from 1 MHz
     case 'iridium': { const sp = IRIDIUM_SPANS[iriUi.span]; configure('NONE', sp.centreHz, sp.rateHz, 32, 32, true, 'iridium'); break; }   // FORK: Iridium
@@ -1944,6 +1948,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   iridium: ['iridium', 'No Iridium satellites heard yet', ['Ring alerts come several times a second from every Iridium satellite in view: an antenna that sees the sky (a patch or an active GPS-style antenna outside) hears them within a minute', 'The whole band (10 MS/s) needs a HackRF and a fast computer; an RTL-SDR covers the ring-alert span at 2 MS/s']],   // FORK: Iridium
   navtex: ['navtex', 'No NAVTEX message yet', ['Every NAVTEX station sends on a schedule, in its own ten-minute slots every four hours; 518 kHz is in English, 490 kHz national; at night they carry hundreds of kilometers', 'This is long wave: a long wire outside (10 m or more) does much better than a whip. 518 kHz is under the HackRF\'s rated 1 MHz floor: it still hears strong stations; an upconverter, or an RTL-SDR that samples HF directly, hears more']],   // FORK: NAVTEX
+  survey: ['survey', 'No new emitters', ['LEARN first, where you will watch: each span is visited in turn for 3 s, and every signal heard goes into the site\'s baseline (several passes, ideally at different times of day)', 'Then WATCH: a signal 10 dB or more above anything the baseline held at that frequency is a new emitter, listed here and in the report', 'SAVE keeps the site\'s baseline on this device; REPORT downloads a printable page, JSON the data'],],   // FORK: Site Survey
   gps: ['gps', 'No satellites yet', ['The first search covers ±40 kHz (a radio\'s clock can be that far off at 1.5 GHz) and takes about a minute; after it, searches are quick and follow the clock', 'A GPS antenna with a view of the sky: an active patch needs bias-tee power (HackRF: RADIO → bias tee; an RTL-SDR Blog V3/V4: its bias tee). Indoors, expect nothing', 'Satellites show at 35-50 dB-Hz. Four or more at the same strength, or one far above 50, is how a GPS simulator or spoofer looks'],],   // FORK: GPS L1 monitor
   jam: ['jam', 'No jamming seen', ['It learns each band first (10 s: keep it quiet), then alerts on a jammer: the noise floor up (BARRAGE), a steady carrier that was not there (CARRIER), or a signal sweeping the band (SWEEP)', 'Alarm sensors, key fobs and remotes send short bursts: they never count. A carrier that was there while it learned (a neighbour\'s beacon, a birdie) is left alone', 'GPS L1 needs a GPS antenna; an active one needs bias-tee power (HackRF: enable it in RADIO). 319.5 / 345 / 433.92 / 915 MHz: any radio here reaches them'],],   // FORK: jamming detection
   beacons: ['beacons', 'No beacon heard yet', ['406 MHz beacons (EPIRB on ships, PLB on people, ELT on aircraft) send a half-second burst every 50 seconds when set off; owners test them now and then (a self-test burst, marked TEST here)', 'A beacon on the ground or the water is heard a few kilometers away; one on an aircraft, much further: any radio here reaches 406 MHz and 121.5 MHz']],   // FORK: distress beacons
@@ -2209,6 +2214,7 @@ function render(app: AppId | null): void {
     case 'beacons': renderBeacons(view); break;   // FORK: distress beacons
     case 'jam': renderJam(view); break;   // FORK: jamming detection
     case 'gps': renderGps(view); break;   // FORK: GPS L1 monitor
+    case 'survey': renderSurvey(view); break;   // FORK: Site Survey
     case 'navtex': renderNavtex(view); break;   // FORK: NAVTEX
     case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
@@ -4709,6 +4715,84 @@ function refreshGps(): void {
   if (sats) sats.innerHTML = r && r.sats.length ? r.sats.map((s, i) => `<div class="li row2 ${i % 2 ? 'alt' : ''}"${s.second || s.cn0 > 51 ? ' style="color:var(--danger)"' : ''}><b>PRN ${String(s.prn).padStart(2, '0')} · ${s.cn0.toFixed(0)} dB-Hz</b><span>Doppler ${s.dopplerHz >= 0 ? '+' : ''}${(s.dopplerHz / 1000).toFixed(1)} kHz · code ${s.codeChips.toFixed(1)} chips${s.second ? ` · ALSO at ${s.second.codeChips.toFixed(1)} chips, ${s.second.cn0.toFixed(0)} dB-Hz` : ''}</span><i style="display:block;height:4px;margin-top:3px;background:var(--accent);width:${Math.max(4, Math.min(100, (s.cn0 - 30) * 4)).toFixed(0)}%"></i></div>`).join('') : emptyState('gps');
 }
 // FORK: end GPS L1 monitor
+
+// FORK: ------------------------------------------------------------------------- Site Survey (dsp/survey.ts, site-survey.ts)
+const SURVEY_SITES_KEY = 'mad.survey.sites';
+type SurveyPreset = 'security' | 'uhf' | 'custom';
+const surveyUi = { preset: 'security' as SurveyPreset, fromMhz: 400, toMhz: 470, idx: 0, timer: 0, dwellMs: 3000, site: new SiteSurvey('My site'), passes: 0, lastGone: [] as string[], note: '' };
+/** The spans a preset visits: [centre, rate]. Alarm bands at 2 MS/s (tuned 500 kHz off, away from the DC spike); wide
+ *  ranges in steps of 80 % of the rate (20 MS/s on a HackRF). */
+function surveySpans(): [number, number][] {
+  const u = surveyUi, wide = radioCan(20e6) ? 20e6 : 2e6;
+  if (u.preset === 'security') return [...[315, 319.5, 345, 390, 418, 433.92, 868.3].map(f => [f * 1e6 + 500_000, 2e6] as [number, number]), wide > 2e6 ? [917e6, 20e6] : [915.5e6, 2e6]];
+  const lo = (u.preset === 'uhf' ? 400 : u.fromMhz) * 1e6, hi = (u.preset === 'uhf' ? 470 : u.toMhz) * 1e6, step = 0.8 * wide, out: [number, number][] = [];
+  for (let c = lo + step / 2; c - step / 2 < hi && out.length < 200; c += step) out.push([c, wide]);
+  return out;
+}
+function surveyTune(): void {
+  const spans = surveySpans(), u = surveyUi; u.idx %= Math.max(1, spans.length);
+  const [c, r] = spans[u.idx];
+  configure('NONE', c, r, 32, 32, true, 'survey', { surveyHz: c });
+  clearTimeout(u.timer);
+  u.timer = window.setTimeout(() => { if (state.app !== 'survey') return; u.idx = (u.idx + 1) % surveySpans().length; surveyTune(); refreshSurvey(); }, u.dwellMs);
+}
+function surveySites(): Record<string, SiteData> { try { return JSON.parse(localStorage.getItem(SURVEY_SITES_KEY) ?? '{}') as Record<string, SiteData>; } catch { return {}; } }
+function onSurveyPass(p: SurveyPass): void {
+  const u = surveyUi; u.passes++;
+  const news = u.site.add(p);
+  if (!u.site.learning) u.lastGone = u.site.gone(p).map(e => `${(e.hz / 1e6).toFixed(3)} MHz`);
+  for (const e of news) {   // into the app's log, as a decoder's line would go
+    const list = (logs['survey'] ??= []); list.unshift(`NEW EMITTER ${(e.hz / 1e6).toFixed(3)} MHz · ${(e.bwHz / 1e3).toFixed(0)} kHz wide · +${e.relDb.toFixed(0)} dB over the floor`); if (list.length > 300) list.length = 300;
+    counts['survey'] = (counts['survey'] ?? 0) + 1; refreshList('survey');
+  }
+  if (state.app === 'survey') refreshSurvey();
+}
+function renderSurvey(view: HTMLElement): void {
+  const u = surveyUi, sites = Object.keys(surveySites());
+  view.innerHTML = `
+    <section class="${visCls('survey')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">
+      <div class="ctlrow">${segHtml([['security', 'ALARM / ISM BANDS'], ['uhf', 'UHF 400–470'], ['custom', 'CUSTOM']].map(([k, l]) => `<button data-svp="${k}" class="${u.preset === k ? 'on' : ''}">${l}</button>`))}</div>
+      ${u.preset === 'custom' ? `<div class="ctlrow"><span class="rl">MHZ</span><input id="sv-from" class="txin num" type="number" value="${u.fromMhz}" style="width:90px"> – <input id="sv-to" class="txin num" type="number" value="${u.toMhz}" style="width:90px"></div>` : ''}
+      <div class="ctlrow"><span class="rl">SITE</span><input id="sv-site" class="txin" value="${esc(u.site.site)}" style="width:140px">${segHtml([`<button data-svm="learn" class="${u.site.learning ? 'on' : ''}">LEARN</button>`, `<button data-svm="watch" class="${u.site.learning ? '' : 'on'}">WATCH</button>`])}</div>
+      <div class="ctlrow">${segHtml(['<button data-svdo="save">SAVE</button>', `<button data-svdo="load"${sites.length ? '' : ' disabled'}>LOAD</button>`, '<button data-svdo="report">REPORT</button>', '<button data-svdo="json">JSON</button>', '<button data-svdo="new">NEW SITE</button>'])}</div>
+      <div id="sv-stats" class="caption"></div>
+      <div id="sv-now" class="panel"></div>
+      <div id="sv-cards"></div>
+      <div id="sv-log">${logHtml('survey', 'surveying…')}</div>
+      <div class="note about">Site survey, receive only. LEARN visits each span in turn (3 s each) and keeps, for every frequency, the highest level heard above the noise floor: the site's baseline. WATCH compares each new pass with it: a signal 10 dB or more above anything the baseline held at that frequency (and 15 dB over the floor) is a NEW EMITTER; baseline signals no longer there are listed as gone. Levels are relative to each pass's floor, so a different gain does not read as a change. Learn over several passes and times of day: key fobs, sensors and radios used now and then only show when they happen to transmit. SAVE keeps the baseline on this device (nothing is sent anywhere); REPORT downloads a printable page, JSON the data. The alarm/ISM preset covers 315, 319.5, 345, 390, 418, 433.92, 868.3 MHz and 902-928 MHz (20 MS/s on a HackRF); UHF and CUSTOM step across a range (a HackRF steps 16 MHz, a dongle 1.6 MHz).</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  const retune = () => { u.idx = 0; surveyTune(); render('survey'); };
+  qa<HTMLButtonElement>('[data-svp]', view).forEach(b => b.onclick = () => { u.preset = b.dataset.svp as SurveyPreset; retune(); });
+  qa<HTMLButtonElement>('[data-svm]', view).forEach(b => b.onclick = () => { u.site.learning = b.dataset.svm === 'learn'; render('survey'); });
+  const site = $('sv-site') as HTMLInputElement; site.onchange = () => { u.site.site = site.value.trim() || 'My site'; };
+  const fr = q('#sv-from') as HTMLInputElement | null, to = q('#sv-to') as HTMLInputElement | null;
+  if (fr && to) fr.onchange = to.onchange = () => { const a = Number(fr.value), b = Number(to.value); if (a > 0 && b > a) { u.fromMhz = a; u.toMhz = b; retune(); } };
+  qa<HTMLButtonElement>('[data-svdo]', view).forEach(b => b.onclick = () => {
+    const name = u.site.site.replace(/[^\w.-]+/g, '_');
+    switch (b.dataset.svdo) {
+      case 'save': { const all = surveySites(); all[u.site.site] = u.site.toJSON(); try { localStorage.setItem(SURVEY_SITES_KEY, JSON.stringify(all)); u.note = `saved "${u.site.site}"`; } catch { u.note = 'could not save (storage full or blocked)'; } break; }
+      case 'load': { const all = surveySites(), names = Object.keys(all), pick = names.length === 1 ? names[0] : prompt(`Load which site?\n${names.join('\n')}`, names[0]); if (pick && all[pick]) { u.site = SiteSurvey.fromJSON(all[pick]); u.note = `loaded "${pick}" (watching)`; render('survey'); return; } break; }
+      case 'report': download(`site-survey-${name}.html`, u.site.reportHtml(), 'text/html'); break;
+      case 'json': download(`site-survey-${name}.json`, JSON.stringify(u.site.toJSON()), 'application/json'); break;
+      case 'new': u.site = new SiteSurvey(u.site.site); u.note = 'new baseline: learning'; render('survey'); return;
+    }
+    refreshSurvey();
+  });
+  refreshList('survey'); refreshSurvey();
+}
+function refreshSurvey(): void {
+  if (state.app !== 'survey') return;
+  const u = surveyUi, spans = surveySpans(), [c, r] = spans[u.idx % spans.length] ?? [0, 0], learned = spans.filter(([cc, rr]) => u.site.passesOf(cc, rr) > 0).length, al = u.site.alertList(), now = Date.now();
+  const st = q('#sv-stats'); if (st) st.textContent = `${u.site.learning ? 'LEARNING' : 'WATCHING'} · ${learned}/${spans.length} SPANS LEARNED · ${al.length} NEW EMITTER${al.length === 1 ? '' : 'S'}${u.note ? ` · ${u.note.toUpperCase()}` : ''}`;
+  const nowEl = q('#sv-now');
+  if (nowEl) nowEl.innerHTML = `<div class="navaid-big"${!u.site.learning && al.some(a => now - a.lastMs < 60_000) ? ' style="color:var(--danger)"' : ''}>${u.site.learning ? 'LEARNING' : 'WATCHING'}<small>${esc(u.site.site)} · span ${u.idx % spans.length + 1} of ${spans.length}: ${((c - r / 2) / 1e6).toFixed(1)}–${((c + r / 2) / 1e6).toFixed(1)} MHz · ${u.site.passesOf(c, r)} learning pass${u.site.passesOf(c, r) === 1 ? '' : 'es'} here</small></div>`
+    + (u.lastGone.length && !u.site.learning ? `<div class="caption">gone from the last span: ${esc(u.lastGone.join(', '))}</div>` : '');
+  const cards = q('#sv-cards');
+  if (cards) cards.innerHTML = al.length ? al.slice(0, 40).map(a => `<div class="mt-card ${now - a.lastMs < 120_000 ? '' : 'dim'}"${now - a.lastMs < 60_000 ? ' style="border-color:var(--danger)"' : ''}><div class="mt-h"><span class="mt-id">${(a.hz / 1e6).toFixed(3)} MHz</span><span class="mt-k"><b>NEW EMITTER</b><small>${(a.bwHz / 1e3).toFixed(0)} kHz wide · +${a.relDb.toFixed(0)} dB over the floor</small></span><span class="mt-live ${now - a.lastMs < 60_000 ? 'on' : ''}"><i></i>${bleAgo(now - a.lastMs)}</span></div><div class="mt-clk"><b>${a.passes}×</b><small>first ${new Date(a.firstMs).toTimeString().slice(0, 8)}</small><em>${((a.spanHz) / 1e6).toFixed(1)} MHz span</em></div></div>`).join('') : emptyState('survey');
+}
+// FORK: end Site Survey
 
 // FORK: ------------------------------------------------------------------------------------------- NAVTEX (dsp/navtex.ts)
 const navtexUi = { msgs: [] as { m: NavtexMessage; ms: number; n: number }[] };
@@ -11298,6 +11382,7 @@ function clearApp(id: string): void {
   if (id === 'fpv') { fpvUi.seen.clear(); refreshFpv(); }   // FORK: analog FPV video
   if (id === 'navtex') { navtexUi.msgs = []; refreshNavtex(); }   // FORK: NAVTEX
   if (id === 'beacons') { beaconUi.seen.clear(); beaconUi.sel = ''; refreshBeacons(); }   // FORK: distress beacons
+  if (id === 'survey') { surveyUi.site.clearAlerts(); surveyUi.lastGone = []; refreshSurvey(); }   // FORK: Site Survey (the baseline stays: NEW SITE starts another)
   if (id === 'gps') { gpsUi.result = null; gpsUi.history = []; refreshGps(); }   // FORK: GPS L1 monitor (the worker searches wide again)
   if (id === 'jam') { jamUi.alerts.clear(); jamUi.status = null; refreshJam(); }   // FORK: jamming detection (the worker forgets its baselines on CLEAR)
   if (id === 'dsc') { dscUi.calls = []; dscUi.sel = -1; refreshDsc(); }   // FORK: marine DSC
@@ -11861,6 +11946,8 @@ function ensureWorker(): Worker {
       case 'jam': jamUi.status = m as unknown as JamStatusMsg; jamUi.statusAt = Date.now(); refreshJam(); break;   // FORK: jamming detection
       case 'jamAlert': onJamAlert(String(m.band ?? ''), m.alert as JamAlert); break;   // FORK: jamming detection
       case 'gps': onGps(m); break;   // FORK: GPS L1 monitor
+      case 'surveyPass': onSurveyPass(m.pass as SurveyPass); break;   // FORK: Site Survey
+      case 'surveyTick': if (state.app === 'survey') refreshSurvey(); break;
       case 'homing': beaconUi.homing = m.s as HomingState; beaconUi.homingAt = Date.now(); refreshBeacons(); break;   // FORK: 121.5 MHz homing
       case 'adsl': onAdsl(m.p as AdslPacket, m.mhz as number, m.levelDb as number); break;   // FORK: ADS-L
       case 'adslStats': if (adslUi.ogn !== m.ogn) { adslUi.ogn = m.ogn as number; refreshAdsl(); } break;   // FORK: ADS-L (packets are counted as they arrive)
@@ -12674,7 +12761,7 @@ const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
 const APP_TECH: Partial<Record<AppId, string>> = {
   audio: 'WFM · NFM · AM · SSB · RDS', hd: 'NRSC-5 · IBOC · FM HYBRID', fleet: 'P25 · DMR · NXDN · TETRA · SMARTNET',
   pager: 'POCSAG · FLEX · REFLEX', lora: 'LORA · MESHTASTIC · MESHCORE · LORAWAN', adsb: 'ADS-B · MODE S · 1090 MHZ',
-  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, adsl: 'ADS-L · 868.2 / 868.4 MHZ' /* FORK */, dsc: 'DSC · CH 70 · 156.525 MHZ' /* FORK */, beacons: '406.0–406.1 MHZ · 121.5 MHZ' /* FORK */, jam: '319.5 · 345 · 433.92 · 915 MHZ · GPS L1' /* FORK */, gps: 'GPS L1 C/A · 1575.42 MHZ' /* FORK */, navtex: 'NAVTEX · 518 / 490 KHZ' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
+  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, adsl: 'ADS-L · 868.2 / 868.4 MHZ' /* FORK */, dsc: 'DSC · CH 70 · 156.525 MHZ' /* FORK */, beacons: '406.0–406.1 MHZ · 121.5 MHZ' /* FORK */, jam: '319.5 · 345 · 433.92 · 915 MHZ · GPS L1' /* FORK */, gps: 'GPS L1 C/A · 1575.42 MHZ' /* FORK */, survey: 'SPECTRUM BASELINE · 300 MHZ–6 GHZ' /* FORK */, navtex: 'NAVTEX · 518 / 490 KHZ' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
   ais: 'AIS · 161.975 / 162.025 MHZ', satcom: 'INMARSAT · STD-C EGC · AERO · L-BAND', cell: 'LTE · SIB · WEA · ETWS', devices: 'OOK · FSK · TPMS · Z-WAVE · 315–915 MHZ',
   js8: 'JS8 · 8-FSK · HF USB', ham: 'SSB · CW · FM · FT8 · SSTV',
   hamplus: 'FM · DMR · D-STAR · FUSION · P25 · NXDN · M17', cb: 'CB · 26.965–27.405 MHZ · AM · FM · SSB', gmrs: 'GMRS · FRS · MURS · NFM · CTCSS · DCS', aprs: 'APRS · AX.25 · 144.390 MHZ',

@@ -133,7 +133,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | Jamming detection (319.5/345/433.92/915 MHz, GNSS L1): sustained floor rise / CW carrier → alert card + bus event | own | — |
 | [x] | ★ | GPS L1 C/A monitor: acquisition (PRN, Doppler, C/N0), jamming + spoofing flags; fix = stretch (not done) | IS-GPS-200; GNSS-SDR | spec · GNSS-SDR GPL-3.0 ✔ |
 | [x] | ★ | Rogue cell heuristics on the LTE decoder (identity/metadata only) | 3GPP TS 36.331; SeaGlass/Crocodile Hunter papers | spec · ideas from the SeaGlass and Crocodile Hunter papers, no code used ✔ |
-| [ ] | | RF baseline per site + new-emitter alerts, JSON + printable HTML report | own | — |
+| [x] | | RF baseline per site + new-emitter alerts, JSON + printable HTML report | own | — |
 | [ ] | | PowerG presence + supervision timing only (encrypted) | own measurements | — |
 | [ ] | | Fox hunt / DF: RSSI vs compass bearing plot | Mayhem fox hunt / signal hunter | GPL-3.0 ✔ |
 
@@ -1109,6 +1109,25 @@ for "or later" first.
   you are), 2G / GSM (where most catchers downgrade phones: no GSM decoder here yet), NR. Hardware: AUTO for a few
   minutes in a familiar place should flag nothing (or only UNKNOWN OPERATOR for a small carrier); a lab cell (srsRAN or
   an LTE test set with PLMN 001-01 into a dummy load / shielded box, never over the air) should raise TEST PLMN.
+- **Site Survey** (`dsp/survey.ts`, `src/site-survey.ts`; FORK edits in the worker (the processor: each retune hands the
+  last span's pass to the page), main.ts (the Site Survey app: presets, LEARN / WATCH, SAVE / LOAD / NEW SITE, REPORT,
+  JSON, new-emitter cards, the log), radio.ts (APP_NEEDS); `test/survey.test.ts`): our own design. Each span is visited
+  for 3 s (the first 0.25 s skipped: IQ still in flight from the last tuning): 100 ms spectra (16 × 1024 points), every
+  bin's highest level above the tick's floor (the median) and its share of ticks 10 dB over it. LEARN merges passes
+  into the site's baseline (the highest per bin); WATCH reports a NEW EMITTER where a pass stands 10 dB or more above
+  anything the baseline held within ±2 bins and 15 dB over the floor (grouped by adjacent bins, keyed per 25 kHz,
+  counted per pass), and lists baseline signals now gone. Relative to each pass's floor, so gain changes do not read
+  as changes. Presets: alarm / ISM bands (315, 319.5, 345, 390, 418, 433.92, 868.3 MHz at 2 MS/s, 500 kHz off the
+  DC spike; 902-928 MHz at 20 MS/s on a HackRF), UHF 400-470 MHz and a custom range (steps of 80 % of the rate).
+  Sites saved in localStorage (nothing sent anywhere); the report is a self-contained printable HTML page (spans with
+  their floor, baseline emitters and new ones; the new emitters with first and last seen). Tests: a span learned with
+  two signals finds a third at its frequency, raises nothing for 12 dB more gain, counts a repeat without raising it
+  again, lists a stopped signal as gone; the JSON round trip and the report (escaped site name); the worker hands over
+  a pass on retune. Browser: presets, custom range, WATCH, SAVE and REPORT (a download), no console errors. Not done:
+  new emitters on the export bus (they are found on the page, not in the worker); bursts shorter than a pass's ticks
+  are only caught when they fall in one; no absolute power calibration. Hardware: LEARN for 3-4 passes in a room, then
+  WATCH and key a handheld or press a key fob on one of the preset frequencies: a NEW EMITTER at its frequency; SAVE,
+  reload the page, LOAD: the baseline is back; REPORT opens and prints.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The
