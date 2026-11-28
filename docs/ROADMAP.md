@@ -104,7 +104,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 |---|---|---|---|---|
 | [x] | ★ | FT4 (reuses FT8's LDPC, OSD, CRC and unpacking) in Ham Radio → DIGITAL | ft8_lib (constants.c FT4 Costas/Gray/XOR, encode.c ft4_encode, decode.c ft4 sync and symbols); its C encoder run to give the test vectors | ft8_lib MIT ✔ (LICENSE, Kārlis Goba) |
 | [x] | ★ | WSPR-2 in Ham Radio → DIGITAL (2-minute beacons: call, grid, dBm, SNR, DT, drift) | WSJT-X lib/wsprd (wsprd.c, wsprd_utils.c, wsprsim_utils.c); its wsprsim built and run for the test vectors | WSJT-X GPL-3.0 ✔ (COPYING is GPLv3; wsprd.c, wsprd_utils.c and nhash.c say GPL v3 or later). fano.c (Phil Karn, 1994) carries no licence line, so the sequential decoder is written here from the textbook stack algorithm instead; nhash is lookup3 (Bob Jenkins, public domain) |
-| [ ] | | WSPRnet spot upload (off by default; needs the STATION call and grid, and Settings' "nothing is sent anywhere else" text changed) | WSJT-X WSPRNet.cpp (form fields to check) | GPL-3.0 ✔ |
+| [-] | | WSPRnet spot upload — **skipped** (owner's decision, 2026-11-28: nothing is sent to wsprnet.org) (off by default; needs the STATION call and grid, and Settings' "nothing is sent anywhere else" text changed) | WSJT-X WSPRNet.cpp (form fields to check) | GPL-3.0 ✔ |
 | [x] | ★ | FST4W-120 in Ham Radio → DIGITAL (the 2-minute beacons on WSPR's dials) | WSJT-X lib/fst4 (genfst4, get_crc24, ldpc_240_74_*, decode240_74, get_fst4_bitmetrics), lib/fst4_decode.f90, lib/77bit/packjt77.f90 (type 0.6) | GPL-3.0 ✔ (WSJT-X COPYING; these files carry no header of their own) |
 | [x] | ★ | MSK144 (meteor scatter) in Ham Radio → DIGITAL | WSJT-X lib/genmsk_128_90, encode_128_90, crc13.cpp, ldpc_128_90_*, bpdecode128_90, msk144spd / msk144sync / msk144_freq_search / msk144decodeframe | GPL-3.0 ✔ (WSJT-X COPYING) |
 | [x] | ★ | FST4 (15 s to 30 min) and FST4W-300/900/1800 in Ham Radio → DIGITAL | WSJT-X lib/fst4 (ldpc_240_101_*, genfst4's message scrambling), lib/fst4_decode.f90 (the periods' timing) | GPL-3.0 ✔ |
@@ -130,7 +130,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
-| [ ] | ★ | Jamming detection (319.5/345/433.92/915 MHz, GNSS L1): sustained floor rise / CW carrier → alert card + bus event | own | — |
+| [x] | ★ | Jamming detection (319.5/345/433.92/915 MHz, GNSS L1): sustained floor rise / CW carrier → alert card + bus event | own | — |
 | [ ] | ★ | GPS L1 C/A monitor: acquisition (PRN, Doppler, C/N0), jamming + spoofing flags; fix = stretch | IS-GPS-200; GNSS-SDR | spec · GNSS-SDR GPL-3.0 ✔ |
 | [ ] | ★ | Rogue cell heuristics on the LTE decoder (identity/metadata only) | 3GPP TS 36.331; SeaGlass/Crocodile Hunter papers | spec · check any code |
 | [ ] | | RF baseline per site + new-emitter alerts, JSON + printable HTML report | own | — |
@@ -1056,6 +1056,26 @@ for "or later" first.
   700D / 700E need codec2's OFDM modem, its LDPC code and the 700C codec (newamp1 with its VQ tables). Each is a port of
   its own. HamDRM (EasyPal / QSSTV) is DRM mode B OFDM, MSC with multilevel coding and a file layer; QSSTV's receiver
   leans on Numerical Recipes code that cannot be copied. All three stay open items.
+- **Jamming detection** (`dsp/jam.ts`; FORK edits in the worker (the processor; the band and tuning come with the app
+  message), main.ts (the Jamming app: band chips 319.5 / 345 / 433.92 / 915 / GPS L1 and SCAN ALL, the status panel,
+  alert cards, log), radio.ts (APP_NEEDS), export/event.ts (`jam.alert`); `test/jam.test.ts`): our own design. 1024-point
+  spectra (16 a 100 ms tick, at any rate), the edges and the DC spike left out; each band learned first (10 s: its median
+  floor, and carriers already there marked known), then BARRAGE = the floor ≥ 8 dB over the learned level for 2 s,
+  CARRIER = one new carrier ≥ 20 dB over the floor at the same frequency for 4 s, SWEEP = a narrow signal (each ~1 ms
+  frame's peak ≥ 15 dB over the frame's mean) that covers ≥ 30 % of the band within a second, for 2 s (found while
+  testing: frames a fixed time apart alias with a sweep's period and land on the same few places, so the span covered
+  counts once ten places differ; a sweep spread over a tick also lifts the floor, so it is not also called a barrage).
+  An alert closes after 2 s without it. Bands tuned 500 kHz off (2 MHz off at 20 MS/s for 902-928 MHz) so the target
+  is not on the DC spike; SCAN ALL dwells 20 s a band, keeps each band's learned baseline, and stays on a jammed band.
+  Tests: noise, a sensor's bursts every 2 s and a 0.6 s key fob raise nothing; a 12 dB floor rise for 5 s (start and end
+  within 0.4 s); a carrier 300 kHz up for 6 s found at its frequency, and none for a carrier there all along; chirps
+  across ±400 kHz at 10 and 27 sweeps a second; the worker processor on int8 IQ with a remembered baseline per band, its
+  log lines, and `jam.alert` on the export bus. Browser (Chromium): the tile, band chips, SCAN ALL, the empty state, no
+  console errors. Not done: frequency-hopping systems that transmit continuously could look like a sweep (alarm radios
+  send bursts, so they do not); no position or direction for the jammer (the fox hunt row). Hardware: a signal generator
+  or a second SDR transmitting into a dummy load next to the receiver (never over the air): a steady carrier on 433.92
+  MHz for 5 s → CARRIER; wideband noise → BARRAGE; a swept tone → SWEEP; then a real alarm sensor's test button and a
+  key fob held down → nothing.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The

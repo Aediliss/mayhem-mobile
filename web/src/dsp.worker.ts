@@ -11,6 +11,7 @@ import { NavaidProcessor } from './dsp/navaid.js';   // FORK: Navaids
 import { AdslDecoder } from './dsp/adsl/adsl.js';   // FORK: ADS-L
 import { DscDecoder } from './dsp/dsc.js';   // FORK: marine DSC
 import { Beacon406Decoder, HomingProcessor } from './dsp/beacon406/beacon406.js';   // FORK: distress beacons
+import { JamProcessor } from './dsp/jam.js';   // FORK: jamming detection
 import { NavtexDecoder } from './dsp/navtex.js';   // FORK: NAVTEX
 import { CarrierMeter } from './dsp/ppm.js';
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
@@ -163,6 +164,7 @@ const dsc = new DscDecoder(emit);   // FORK: marine DSC (dsp/dsc.ts)
 const beacon406 = new Beacon406Decoder(emit);   // FORK: 406 MHz beacons (dsp/beacon406/)
 const homing = new HomingProcessor(emit);   // FORK: 121.5 MHz homing
 const navtex = new NavtexDecoder(emit);   // FORK: NAVTEX (dsp/navtex.ts)
+const jam = new JamProcessor(emit);   // FORK: jamming detection (dsp/jam.ts)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -658,6 +660,7 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'beacon406': beacon406.centerHz = centreHz; return beacon406;   // FORK: 406 MHz beacons
     case 'homing': homing.centerHz = centreHz; return homing;   // FORK: 121.5 MHz homing
     case 'navtex': navtex.centerHz = centreHz; return navtex;   // FORK: NAVTEX
+    case 'jam': jam.retune(Number(m.jamHz) || centreHz, String(m.jamBand ?? '')); return jam;   // FORK: jamming detection (the band and its tuning come with the app)
     case 'navaid': navaid.centerHz = centreHz; navaid.tunedHz = centreHz + offsetHz; return navaid;   // FORK: Navaids
     case 'sonde': sonde.setCenter(centreHz); return sonde;
     case 'uat': return uat;

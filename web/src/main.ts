@@ -57,6 +57,7 @@ import { DSC_CH70_HZ, dscLine, type DscCall } from './dsp/dsc.js';   // FORK: ma
 import { B406_CENTRE_HZ } from './dsp/beacon406/phy.js';   // FORK: 406 MHz beacons
 import { HOMING_HZ, type HomingState } from './dsp/beacon406/homing.js';   // FORK: 121.5 MHz homing
 import { beaconLine, type Beacon406 } from './dsp/beacon406/frame.js';   // FORK: 406 MHz beacons
+import type { JamAlert, JamStatus } from './dsp/jam.js';   // FORK: jamming detection
 import { NAVTEX_CENTRE_HZ, type NavtexMessage } from './dsp/navtex.js';   // FORK: NAVTEX
 import { ADSL_CATEGORY, ADSL_EMERGENCY, ADSL_STATE, amtName, econList, type AdslPacket } from './dsp/adsl/frame.js';   // FORK: ADS-L (Gliders)
 import { dmeFor, navKind, pairedIls, type NavaidMsg } from './dsp/navaid.js';   // FORK: Navaids (pure helpers; the processor lives in the worker)
@@ -134,7 +135,7 @@ type Mode = 'WFM' | 'NFM' | 'AM' | 'USB' | 'LSB' | 'NONE';
  * decoders (ADS-B, BTLE, …) keep their own 2 Msps — their timing is built around it and they make no audio.
  */
 const RX_RATE = 1_920_000;
-type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'adsl' | 'dsc' | 'beacons' | 'navtex' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings';   // FORK: + droneid, fpv, iridium, navaid, adsl, dsc, beacons, navtex, hfdl
+type AppId = 'transmit' | 'troll' | 'ham' | 'hamplus' | 'cb' | 'gmrs' | 'js8' | 'audio' | 'hd' | 'prowl' | 'sat' | 'satcom' | 'adsb' | 'uat' | 'ais' | 'aprs' | 'pager' | 'ert' | 'lora' | 'btle' | 'droneid' | 'fpv' | 'iridium' | 'navaid' | 'adsl' | 'dsc' | 'beacons' | 'navtex' | 'vdl2' | 'hfdl' | 'acars' | 'trains' | 'fleet' | 'cell' | 'atsc' | 'sondes' | 'devices' | 'spectrum' | 'analyzer' | 'lookingglass' | 'search' | 'capture' | 'settings' | 'jam';   // FORK: + jam, droneid, fpv, iridium, navaid, adsl, dsc, beacons, navtex, hfdl
 interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'Analyze' | 'Tools' | 'Transmit'; }
 
 const APPS: AppDef[] = [
@@ -178,6 +179,7 @@ const APPS: AppDef[] = [
   { id: 'analyzer', title: 'Analyzer', blurb: 'bursts to bits', cat: 'Analyze' },
   { id: 'lookingglass', title: 'Looking Glass', blurb: 'wideband sweep', cat: 'Analyze' },
   { id: 'search', title: 'Search', blurb: 'find active channels', cat: 'Analyze' },
+  { id: 'jam', title: 'Jamming', blurb: 'alarm bands · GPS L1 · alerts', cat: 'Analyze' },   // FORK: jamming detection
   { id: 'capture', title: 'Capture', blurb: 'record raw IQ', cat: 'Tools' },
   { id: 'transmit', title: 'Transmit', blurb: 'OOK · morse · replay', cat: 'Transmit' },
   { id: 'troll', title: 'Troll', blurb: 'novelty transmitters', cat: 'Transmit' },
@@ -1181,6 +1183,7 @@ function open(app: AppId | null): void {
     case 'adsl': configure('NONE', ADSL_CENTRE_HZ, ADSL_RATE, 32, 32, true, 'adsl'); break;   // FORK: ADS-L, both M-band channels at once
     case 'dsc': configure('NFM', DSC_CH70_HZ, 2e6, 32, 32, false, 'dsc'); narrowShift(); requestGeo(); break;   // FORK: marine DSC on channel 70
     case 'beacons': beaconsTune(); break;   // FORK: distress beacons
+    case 'jam': jamTune(); break;   // FORK: jamming detection
     case 'navtex': configure('NONE', NAVTEX_CENTRE_HZ, 2e6, 40, 40, true, 'navtex'); break;   // FORK: NAVTEX, 490 and 518 kHz at once from 1 MHz
     case 'iridium': { const sp = IRIDIUM_SPANS[iriUi.span]; configure('NONE', sp.centreHz, sp.rateHz, 32, 32, true, 'iridium'); break; }   // FORK: Iridium
     case 'fpv': configure('NONE', fpvUi.hz, 20e6, 24, 30, true, 'fpv'); worker?.postMessage({ type: 'fpvTune', ch: fpvUi.ch, watch: true }); break;   // FORK: analog FPV video at 20 MS/s
@@ -1937,6 +1940,7 @@ const EMPTY: Record<string, [string, string, string[]]> = {
   droneid: ['droneid', 'No DJI drones heard yet', ['A DJI drone sends DroneID about every 600 ms while it is powered, on one of a few 2.4 GHz channels: AUTO steps through them', 'It needs a HackRF at 15.36 MS/s (each burst is 10 MHz wide); an RTL-SDR cannot reach 2.4 GHz or that rate', 'Newer DJI models encrypt DroneID: those show nothing here']],   // FORK: DJI DroneID
   iridium: ['iridium', 'No Iridium satellites heard yet', ['Ring alerts come several times a second from every Iridium satellite in view: an antenna that sees the sky (a patch or an active GPS-style antenna outside) hears them within a minute', 'The whole band (10 MS/s) needs a HackRF and a fast computer; an RTL-SDR covers the ring-alert span at 2 MS/s']],   // FORK: Iridium
   navtex: ['navtex', 'No NAVTEX message yet', ['Every NAVTEX station sends on a schedule, in its own ten-minute slots every four hours; 518 kHz is in English, 490 kHz national; at night they carry hundreds of kilometers', 'This is long wave: a long wire outside (10 m or more) does much better than a whip. 518 kHz is under the HackRF\'s rated 1 MHz floor: it still hears strong stations; an upconverter, or an RTL-SDR that samples HF directly, hears more']],   // FORK: NAVTEX
+  jam: ['jam', 'No jamming seen', ['It learns each band first (10 s: keep it quiet), then alerts on a jammer: the noise floor up (BARRAGE), a steady carrier that was not there (CARRIER), or a signal sweeping the band (SWEEP)', 'Alarm sensors, key fobs and remotes send short bursts: they never count. A carrier that was there while it learned (a neighbour\'s beacon, a birdie) is left alone', 'GPS L1 needs a GPS antenna; an active one needs bias-tee power (HackRF: enable it in RADIO). 319.5 / 345 / 433.92 / 915 MHz: any radio here reaches them'],],   // FORK: jamming detection
   beacons: ['beacons', 'No beacon heard yet', ['406 MHz beacons (EPIRB on ships, PLB on people, ELT on aircraft) send a half-second burst every 50 seconds when set off; owners test them now and then (a self-test burst, marked TEST here)', 'A beacon on the ground or the water is heard a few kilometers away; one on an aircraft, much further: any radio here reaches 406 MHz and 121.5 MHz']],   // FORK: distress beacons
   dsc: ['dsc', 'No DSC calls heard yet', ['Channel 70 (156.525 MHz) carries every VHF DSC call: distress alerts, their relays and acknowledgements from coast stations, and routine calls between ships; it is quiet most of the time', 'Near a coast or a harbour, coast stations and ships make routine and test calls through the day: an antenna up high with a view of the water hears them for tens of kilometers']],   // FORK: marine DSC
   adsl: ['adsl', 'No ADS-L aircraft heard yet', ['ADS-L is a European standard: gliders, light aircraft, paragliders and drones with a newer FLARM, an OGN tracker, SkyEcho or similar send it on 868.2 and 868.4 MHz; outside Europe expect silence', 'They send once a second at 25 mW: an 868 MHz antenna with a view of the sky, near a gliding site, hears them tens of kilometers out']],   // FORK: ADS-L
@@ -2198,6 +2202,7 @@ function render(app: AppId | null): void {
     case 'adsl': renderAdsl(view); break;   // FORK: ADS-L
     case 'dsc': renderDsc(view); break;   // FORK: marine DSC
     case 'beacons': renderBeacons(view); break;   // FORK: distress beacons
+    case 'jam': renderJam(view); break;   // FORK: jamming detection
     case 'navtex': renderNavtex(view); break;   // FORK: NAVTEX
     case 'fpv': renderFpv(view); break;   // FORK: analog FPV video
     case 'vdl2': renderAcars(view, 'vdl2'); break;
@@ -4586,6 +4591,79 @@ function refreshBeacons(): void {
   if (geo) geo.update(list.filter(h => h.b.lat !== undefined).map(h => ({ id: h.b.id, lat: h.b.lat!, lon: h.b.lon!, label: `${h.b.type} ${h.b.id.slice(0, 6)}${h.b.selfTest ? ' (test)' : ''}`, kind: 'station' as const, cls: h.b.selfTest ? undefined : 'talk' })), u.sel);
 }
 // FORK: end distress beacons
+
+// FORK: ---------------------------------------------------------------------------------- jamming detection (dsp/jam.ts)
+type JamStatusMsg = JamStatus & { band: string };
+/** The watched bands: [id, label, the frequency targeted, who uses it]. Tuned 500 kHz off so the target is not on the
+ *  radio's DC spike (a jammer sits right on it); 902-928 MHz at 20 MS/s where the radio can (a HackRF). */
+const JAM_BANDS: { id: string; label: string; hz: number; what: string }[] = [
+  { id: '319', label: '319.5', hz: 319_500_000, what: 'Interlogix / GE / 2GIG alarm sensors' },
+  { id: '345', label: '345', hz: 345_000_000, what: 'Honeywell 5800 alarm sensors' },
+  { id: '433', label: '433.92', hz: 433_920_000, what: '433 MHz sensors and remotes (alarms in Europe)' },
+  { id: '915', label: '915', hz: 915_000_000, what: '902-928 MHz alarm and IoT radios (PowerG, Z-Wave)' },
+  { id: 'gps', label: 'GPS L1', hz: 1_575_420_000, what: 'GPS L1 C/A (needs a GPS antenna)' },
+];
+const JAM_DWELL_MS = 20_000;
+interface JamHeard { band: string; a: JamAlert; at: number }
+const jamUi = { band: '433', scan: false, status: null as JamStatusMsg | null, statusAt: 0, alerts: new Map<string, JamHeard>(), timer: 0, dwellAt: 0 };
+function jamTune(): void {
+  const b = JAM_BANDS.find(x => x.id === jamUi.band) ?? JAM_BANDS[2];
+  const wide = b.id === '915' && radioCan(20e6), rate = wide ? 20e6 : 2e6, centre = b.hz + (wide ? 2_000_000 : 500_000);
+  configure('NONE', centre, rate, 32, 32, b.id === 'gps', 'jam', { jamBand: b.label + (b.id === 'gps' ? '' : ' MHz'), jamHz: centre });
+  jamUi.dwellAt = Date.now();
+  clearInterval(jamUi.timer); jamUi.timer = 0;
+  if (jamUi.scan) jamUi.timer = window.setInterval(() => {
+    if (state.app !== 'jam' || !jamUi.scan) { clearInterval(jamUi.timer); jamUi.timer = 0; return; }
+    if (Date.now() - jamUi.dwellAt < JAM_DWELL_MS || [...jamUi.alerts.values()].some(h => h.a.endS === null && h.band.startsWith(JAM_BANDS.find(x => x.id === jamUi.band)!.label))) return;   // stay on a band while it is jammed
+    const i = JAM_BANDS.findIndex(x => x.id === jamUi.band); jamUi.band = JAM_BANDS[(i + 1) % JAM_BANDS.length].id; jamTune(); refreshJam();
+  }, 1000);
+}
+function renderJam(view: HTMLElement): void {
+  const u = jamUi;
+  view.innerHTML = `
+    <section class="${visCls('jam')}">${readoutHtml()}<div id="scope" class="panel short"></div></section>
+    <section class="controls">
+      <div class="ctlrow">${segHtml([...JAM_BANDS.map(b => `<button data-jamb="${b.id}" class="${!u.scan && u.band === b.id ? 'on' : ''}">${b.label}</button>`), `<button data-jamb="scan" class="${u.scan ? 'on' : ''}">SCAN ALL</button>`])}</div>
+      <div id="jam-stats" class="caption"></div>
+      <div id="jam-now" class="panel"></div>
+      <div id="jam-cards"></div>
+      <div id="jam-log">${logHtml('jam', 'watching…')}</div>
+      <div class="note about">Jamming detection, receive only. Each band is learned first (10 s, while it is quiet), then watched for what a jammer does that nothing legitimate does: the noise floor held well above its learned level (BARRAGE), one carrier that was not there before held for seconds (CARRIER), or a narrow signal sweeping across much of the band within a second (SWEEP). Alarm sensors, key fobs and remotes send bursts under a second and never count; carriers present while it learned are left alone. SCAN ALL watches each band for 20 s in turn and remembers what it learned of each (it stays on a band while it is jammed). Alerts also go out on the export bus (Settings → EXPORT) as jam.alert events. Radios: any radio here reaches 319.5-915 MHz and GPS L1 (1575.42 MHz); a HackRF watches 905-925 MHz at once, a dongle 2 MHz of it. GPS needs a GPS antenna, an active one bias-tee power. Jamming is illegal almost everywhere: an alert is evidence to note (when, where, what), not proof of who.</div>
+    </section>`;
+  scope = attach(new Scope($('scope'), 0, { rows: 80, spectrumHeight: 70 }));
+  qa<HTMLButtonElement>('[data-jamb]', view).forEach(b => b.onclick = () => {
+    const id = b.dataset.jamb!;
+    if (id === 'scan') u.scan = !u.scan; else { u.scan = false; u.band = id; }
+    jamTune(); render('jam');
+  });
+  refreshList('jam'); refreshJam();
+}
+function onJamAlert(band: string, a: JamAlert): void {
+  const key = `${band}#${a.id}`, old = jamUi.alerts.get(key);
+  jamUi.alerts.set(key, { band, a, at: old?.at ?? Date.now() });
+  if (jamUi.alerts.size > 100) jamUi.alerts.delete(jamUi.alerts.keys().next().value!);
+  if (state.app === 'jam') refreshJam();
+}
+function refreshJam(): void {
+  if (state.app !== 'jam') return;
+  const u = jamUi, now = Date.now(), list = [...u.alerts.values()].sort((x, y) => y.at - x.at), live = list.filter(h => h.a.endS === null);
+  const band = JAM_BANDS.find(b => b.id === u.band)!, s = u.status && now - u.statusAt < 3000 ? u.status : null;
+  const st = q('#jam-stats'); if (st) st.textContent = `${u.scan ? 'SCAN ALL · ' : ''}${band.label}${band.id === 'gps' ? '' : ' MHz'} · ${live.length ? `${live.length} ACTIVE` : 'NO JAMMING'}${list.length ? ` · ${list.length} ALERT${list.length === 1 ? '' : 'S'} SEEN` : ''}`;
+  const nowEl = q('#jam-now');
+  if (nowEl) nowEl.innerHTML = !s ? `<div class="caption">${esc(band.what)} · waiting for IQ…</div>`
+    : s.learning ? `<div class="navaid-big">LEARNING<small>${esc(s.band)} · ${s.learnLeftS.toFixed(0)} s left · keep the band quiet</small></div><div class="caption">${esc(band.what)}</div>`
+    : `<div class="navaid-big"${s.active.length ? ' style="color:var(--danger)"' : ''}>${s.active.length ? `JAMMED: ${s.active.map(k => k.toUpperCase()).join(' + ')}` : 'WATCHING'}<small>${esc(s.band)} · ${esc(band.what)}</small></div>`
+      + `<div class="kv"><span>floor</span><b>${s.floorDb.toFixed(1)} dB (learned ${s.baseDb.toFixed(1)}, ${s.riseDb >= 0 ? '+' : ''}${s.riseDb.toFixed(1)})</b><span>strongest new signal</span><b>${s.carrierDb.toFixed(0)} dB over the floor</b><span>sweep coverage</span><b>${s.sweepPct}% of the band in 1 s</b></div>`;
+  const cards = q('#jam-cards');
+  if (cards) cards.innerHTML = list.length ? list.slice(0, 30).map(h => {
+    const a = h.a, on = a.endS === null, mhz = (x: number) => (x / 1e6).toFixed(3);
+    const where = a.kind === 'sweep' && a.spanHz ? `${mhz(a.spanHz[0])}–${mhz(a.spanHz[1])} MHz` : a.kind === 'barrage' ? 'whole span' : `${mhz(a.hz)} MHz`;
+    const lasted = on ? `for ${Math.round((now - h.at) / 1000 + 2)} s` : `lasted ${Math.max(1, Math.round(a.endS! - a.startS))} s`;
+    return `<div class="mt-card ${on ? '' : 'dim'}"${on ? ' style="border-color:var(--danger)"' : ''}><div class="mt-h"><span class="mt-id"${on ? ' style="color:var(--danger)"' : ''}>${a.kind.toUpperCase()}</span><span class="mt-k"><b>${esc(h.band)}</b><small>${esc(where)}</small></span><span class="mt-live ${on ? 'on' : ''}"><i></i>${on ? 'NOW' : bleAgo(now - h.at)}</span></div>`
+      + `<div class="mt-clk"><b>${new Date(h.at).toTimeString().slice(0, 8)}</b><small>${lasted}</small><em>${a.kind === 'barrage' ? `+${a.riseDb.toFixed(0)} dB floor` : `${a.peakDb.toFixed(0)} dB`}</em></div></div>`;
+  }).join('') : emptyState('jam');
+}
+// FORK: end jamming detection
 
 // FORK: ------------------------------------------------------------------------------------------- NAVTEX (dsp/navtex.ts)
 const navtexUi = { msgs: [] as { m: NavtexMessage; ms: number; n: number }[] };
@@ -11162,6 +11240,7 @@ function clearApp(id: string): void {
   if (id === 'fpv') { fpvUi.seen.clear(); refreshFpv(); }   // FORK: analog FPV video
   if (id === 'navtex') { navtexUi.msgs = []; refreshNavtex(); }   // FORK: NAVTEX
   if (id === 'beacons') { beaconUi.seen.clear(); beaconUi.sel = ''; refreshBeacons(); }   // FORK: distress beacons
+  if (id === 'jam') { jamUi.alerts.clear(); jamUi.status = null; refreshJam(); }   // FORK: jamming detection (the worker forgets its baselines on CLEAR)
   if (id === 'dsc') { dscUi.calls = []; dscUi.sel = -1; refreshDsc(); }   // FORK: marine DSC
   if (id === 'adsl') { adslUi.ac.clear(); adslUi.packets = 0; adslUi.sel = ''; refreshAdsl(); }   // FORK: ADS-L
   if (id === 'iridium') { iriUi.sats.clear(); iriUi.counts = {}; iriUi.time = 0; iriUi.sel = ''; refreshIridium(); }   // FORK: Iridium
@@ -11720,6 +11799,8 @@ function ensureWorker(): Worker {
       case 'dsc': onDsc(m.call as DscCall); break;   // FORK: marine DSC
       case 'navtex': onNavtex(m.m as NavtexMessage); break;   // FORK: NAVTEX
       case 'beacon406': onBeacon(m.b as Beacon406, m.hz as number, m.levelDb as number); break;   // FORK: 406 MHz beacons
+      case 'jam': jamUi.status = m as unknown as JamStatusMsg; jamUi.statusAt = Date.now(); refreshJam(); break;   // FORK: jamming detection
+      case 'jamAlert': onJamAlert(String(m.band ?? ''), m.alert as JamAlert); break;   // FORK: jamming detection
       case 'homing': beaconUi.homing = m.s as HomingState; beaconUi.homingAt = Date.now(); refreshBeacons(); break;   // FORK: 121.5 MHz homing
       case 'adsl': onAdsl(m.p as AdslPacket, m.mhz as number, m.levelDb as number); break;   // FORK: ADS-L
       case 'adslStats': if (adslUi.ogn !== m.ogn) { adslUi.ogn = m.ogn as number; refreshAdsl(); } break;   // FORK: ADS-L (packets are counted as they arrive)
@@ -12533,7 +12614,7 @@ const CARD_TITLE: Partial<Record<AppId, [string, string]>> = {
 const APP_TECH: Partial<Record<AppId, string>> = {
   audio: 'WFM · NFM · AM · SSB · RDS', hd: 'NRSC-5 · IBOC · FM HYBRID', fleet: 'P25 · DMR · NXDN · TETRA · SMARTNET',
   pager: 'POCSAG · FLEX · REFLEX', lora: 'LORA · MESHTASTIC · MESHCORE · LORAWAN', adsb: 'ADS-B · MODE S · 1090 MHZ',
-  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, adsl: 'ADS-L · 868.2 / 868.4 MHZ' /* FORK */, dsc: 'DSC · CH 70 · 156.525 MHZ' /* FORK */, beacons: '406.0–406.1 MHZ · 121.5 MHZ' /* FORK */, navtex: 'NAVTEX · 518 / 490 KHZ' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
+  uat: 'UAT · FIS-B · 978 MHZ', navaid: 'VOR · ILS · DME' /* FORK */, adsl: 'ADS-L · 868.2 / 868.4 MHZ' /* FORK */, dsc: 'DSC · CH 70 · 156.525 MHZ' /* FORK */, beacons: '406.0–406.1 MHZ · 121.5 MHZ' /* FORK */, jam: '319.5 · 345 · 433.92 · 915 MHZ · GPS L1' /* FORK */, navtex: 'NAVTEX · 518 / 490 KHZ' /* FORK */, iridium: 'IRIDIUM · 1616–1626.5 MHZ' /* FORK */, acars: 'ACARS · VHF AIRBAND', vdl2: 'VDL MODE 2 · 136.975 MHZ', hfdl: 'HFDL · 3-22 MHZ' /* FORK */, trains: 'EOT · HOT · PTC 220 MHZ',
   ais: 'AIS · 161.975 / 162.025 MHZ', satcom: 'INMARSAT · STD-C EGC · AERO · L-BAND', cell: 'LTE · SIB · WEA · ETWS', devices: 'OOK · FSK · TPMS · Z-WAVE · 315–915 MHZ',
   js8: 'JS8 · 8-FSK · HF USB', ham: 'SSB · CW · FM · FT8 · SSTV',
   hamplus: 'FM · DMR · D-STAR · FUSION · P25 · NXDN · M17', cb: 'CB · 26.965–27.405 MHZ · AM · FM · SSB', gmrs: 'GMRS · FRS · MURS · NFM · CTCSS · DCS', aprs: 'APRS · AX.25 · 144.390 MHZ',
