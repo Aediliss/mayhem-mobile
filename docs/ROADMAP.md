@@ -108,7 +108,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | FST4W-120 in Ham Radio → DIGITAL (the 2-minute beacons on WSPR's dials) | WSJT-X lib/fst4 (genfst4, get_crc24, ldpc_240_74_*, decode240_74, get_fst4_bitmetrics), lib/fst4_decode.f90, lib/77bit/packjt77.f90 (type 0.6) | GPL-3.0 ✔ (WSJT-X COPYING; these files carry no header of their own) |
 | [x] | ★ | MSK144 (meteor scatter) in Ham Radio → DIGITAL | WSJT-X lib/genmsk_128_90, encode_128_90, crc13.cpp, ldpc_128_90_*, bpdecode128_90, msk144spd / msk144sync / msk144_freq_search / msk144decodeframe | GPL-3.0 ✔ (WSJT-X COPYING) |
 | [x] | ★ | FST4 (15 s to 30 min) and FST4W-300/900/1800 in Ham Radio → DIGITAL | WSJT-X lib/fst4 (ldpc_240_101_*, genfst4's message scrambling), lib/fst4_decode.f90 (the periods' timing) | GPL-3.0 ✔ |
-| [ ] | ★ | JT65/JT9/Q65, MSK40 short messages | WSJT-X | GPL-3.0 ✔ |
+| [x] | ★ | JT65 (A, B, C) in Ham Radio → DIGITAL | WSJT-X lib/gen65, setup65, interleave63, igray.c, wrapkarn.c, packjt.f90; Karn's init_rs / encode_rs / decode_rs | WSJT-X GPL-3.0 ✔; Karn's RS: "may be used under the terms of the GNU General Public License (GPL)" (no version: any, so 3 ✔) |
+| [ ] | ★ | JT9, Q65, MSK40 short messages | WSJT-X | GPL-3.0 ✔ |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
@@ -955,3 +956,26 @@ for "or later" first.
   Hardware: FST4/FST4W are mostly on 2200 m (136 kHz) and 630 m (474.2 kHz), below the HackRF's 1 MHz: an RTL-SDR with
   direct sampling (or an upconverter) and a large antenna; FST4W also on the WSPR dials above 1.8 MHz with a HackRF.
   Compare with WSJT-X in the same mode and T/R period.
+- **JT65** (`dsp/ham/jt65.ts`; FORK edits in the worker and main.ts beside FT8's: the DIGITAL tile, A/B/C chips, the HF
+  JT65 dials plus 6 m and 2 m EME, the 60 s countdown, its own empty text; not Ham Map spots; `test/jt65.test.ts`):
+  after WSJT-X and Karn's RS codec (ported). 60 s slots; 126 symbols of 0.3715 s, the sync tone on the pattern's 63
+  symbols, the data 2-65 spacings above it (2.69 Hz ×1/×2/×4); RS(63,12) over GF(64), 7×9 interleave, Gray code;
+  packjt's 72-bit messages (calls, grid / report / RO / RRR / 73, CQ nnn, QRZ, free text; the v2 CQ/QRZ/DE prefix and
+  suffix forms on receive). Audio at 5512.5 Hz (a symbol = 2048 samples); half-symbol spectra, each bin against its
+  median; the sync pattern searched over 200-2700 Hz and DT −2..+4 s; refined; 64 tone powers a data symbol; hard
+  decisions ranked by reliability; Karn's Berlekamp-Massey with 0-48 of the least reliable erased, then 1500 random
+  reliability-weighted erasure sets. Against false decodes (each found while building): the sync tone must be on in the
+  sync symbols and off in the data ones (ratio ≥ 2: a carrier or another mode gives ~1); the decoded tones must average
+  ≥ 3.5× their symbols' medians (5× for free text); no tone value more than 12 times in the codeword (a near-all-zero
+  message is a steady tone); nothing inside an already decoded signal's band. Tests: messages pack and unpack back;
+  RS corrects 25 errors and fills 51 erasures, 26 errors do not give the message; interleaving undoes itself; the
+  frame's sync and data tones; three JT65A stations (−8, −16, −22 dB in 2500 Hz) decode with frequency (±1 Hz), DT (±0.1
+  s) and SNR (±2 dB), no echo of the strong one; JT65B and C at −22 dB; noise, a carrier and a strong random 9-tone
+  signal give nothing in A, B and C; the live path (48 kHz, clock stubbed) decodes 52 s into its minute. Measured while
+  building: A and C decode every time at −23 dB, none at −24 (WSJT-X's KV decoder reaches about −25); 24 noise-only
+  slots gave nothing; about 0.4 s a slot. In Chromium: the JT65 tile, its submode chips and dials.
+  Not done: no real JT65 recording decodes here to check against: WSJT-X's JT65B samples are weak EME meant to be averaged
+  over several transmissions, and DL7UAE's is 26 s long (a JT65 transmission is 47 s); WSJT-X's JT9 sample gave no JT65
+  decode, as it should. Also not done: averaging, deep search, EME shorthand messages, type-1 prefix / suffix calls.
+  Hardware: a HackRF with a wire antenna on 14.076 MHz USB (JT65A; less busy than in its day, so try evenings or 10 m /
+  6 m openings); compare with WSJT-X in JT65 mode.
