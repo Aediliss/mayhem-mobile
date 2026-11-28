@@ -319,7 +319,11 @@ export class Jt65Decoder implements DigitalDecoder {
       P.push(row);
     }
     // each bin against its median over time (the waterfall flattened)
-    for (let b = 0; b < W; b++) { const col = Float32Array.from(P, r => r[b]).sort(), m = col[col.length >> 1] || 1e-20; for (const r of P) r[b] /= m; }
+    // each bin against its median over time (the waterfall flattened); bins far below the band's typical level (outside
+    // the receiver's audio filter, or empty) are left out rather than blown up
+    const meds = Float32Array.from({ length: W }, (_, b) => Float32Array.from(P, r => r[b]).sort()[P.length >> 1]);
+    const typical = Float32Array.from(meds).sort()[W >> 1] || 1e-20;
+    for (let b = 0; b < W; b++) { const m = meds[b]; for (const r of P) r[b] = m > 1e-3 * typical ? r[b] / m : 0; }
     // sync: the pattern's 1s against its 0s, symbol i at frame t0 + 2i, for DT −2..+4 s
     const lag0 = Math.round((1 - 2) * FS / HALF), lag1 = Math.round((1 + 4) * FS / HALF);
     const best = new Float32Array(W), bestLag = new Int32Array(W);

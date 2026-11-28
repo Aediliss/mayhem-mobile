@@ -110,7 +110,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | FST4 (15 s to 30 min) and FST4W-300/900/1800 in Ham Radio → DIGITAL | WSJT-X lib/fst4 (ldpc_240_101_*, genfst4's message scrambling), lib/fst4_decode.f90 (the periods' timing) | GPL-3.0 ✔ |
 | [x] | ★ | JT65 (A, B, C) in Ham Radio → DIGITAL | WSJT-X lib/gen65, setup65, interleave63, igray.c, wrapkarn.c, packjt.f90; Karn's init_rs / encode_rs / decode_rs | WSJT-X GPL-3.0 ✔; Karn's RS: "may be used under the terms of the GNU General Public License (GPL)" (no version: any, so 3 ✔) |
 | [x] | ★ | MSK40 short messages (in MSK144) | WSJT-X lib/genmsk40, encode_msk40, bpdecode40, msk40decodeframe | GPL-3.0 ✔ |
-| [ ] | ★ | JT9, Q65 | WSJT-X | GPL-3.0 ✔ |
+| [x] | ★ | JT9 (JT9-1) in Ham Radio → DIGITAL | WSJT-X lib/gen9, jt9sync, entail, encode232 / conv232, interleave9, symspec2, jt9fano | GPL-3.0 ✔ |
+| [ ] | ★ | Q65 | WSJT-X | GPL-3.0 ✔ |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
@@ -957,6 +958,20 @@ for "or later" first.
   Hardware: FST4/FST4W are mostly on 2200 m (136 kHz) and 630 m (474.2 kHz), below the HackRF's 1 MHz: an RTL-SDR with
   direct sampling (or an upconverter) and a large antenna; FST4W also on the WSPR dials above 1.8 MHz with a HackRF.
   Compare with WSJT-X in the same mode and T/R period.
+- **JT9** (`dsp/ham/jt9.ts`; `wsprStackDecode` takes the code's length (WSPR 81 bits, JT9 103); FORK edits in the worker
+  and main.ts beside JT65's (the DIGITAL tile, JT65's dials); `test/jt9.test.ts`, fixture
+  `test/fixtures/wsjtx-jt9-130418_1742-4000sps.wav`): after WSJT-X. 85 symbols of 0.576 s, 9-FSK at 1.736 Hz (tone 0
+  sync on 16 symbols, tones 1-8 three Gray-coded bits each); packjt's 72 bits + 31-bit tail through the K=32 code
+  (WSPR's polynomials); bit-reversal interleaving. Audio at 7111 Hz (a symbol is 4096 samples); half-symbol spectra
+  with half-tone bins; the sync tone searched over 200-2700 Hz, DT −2.5..+5 s, required on in the sync symbols and off in
+  the data ones; refined; symspec2's bit soft values; the WSPR stack decoder; JT65's unpacking; one line per message
+  (a strong signal's weaker copies elsewhere are dropped). Also, JT9 and JT65: bins far below the band's typical level
+  are left out instead of being normalised up (found with audio band-limited to 2 kHz: they took every candidate).
+  Tests: the frame's sync and data tones; three stations at −10, −18, −24 dB decode with frequency, DT and SNR (±3 dB);
+  noise gives nothing; WSJT-X's real JT9 sample (samples/JT9/130418_1742.wav, resampled to 4000 Hz for the fixture)
+  gives seven stations: K1JT N5KDV EM41, JA1KAU PD0JAC −23, TF3G N7MQ CN84, G7CNF N4HFA EL89, K1JT KF4RWA 73,
+  CQ M0WAY IO82, CQ GM7GAX IO75 (calls and grids that agree with each other, so real, not chance). The recording also
+  checks JT65's message packing, which JT9 shares. Hardware: as JT65 (14.076 / 14.078 MHz USB); compare with WSJT-X.
 - **MSK40** (in `dsp/ham/msk144.ts`; the frame search generalised over frame length, sync positions and frame decoder;
   `test/msk144.test.ts`): after WSJT-X. When no MSK144 frame decodes in a ping, its 20 ms frames are tried as MSK40: the
   reversed sync word, matched-filtered bits, BP over the (32,16) code (bpdecode40's checks, encode_msk40's generator and

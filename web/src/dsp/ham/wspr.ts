@@ -241,8 +241,9 @@ const METTAB: Int32Array[] = (() => {
 const CAP = 1 << 19;
 const nMetric = new Int32Array(CAP), nState = new Uint32Array(CAP), nParent = new Int32Array(CAP), nDepth = new Uint8Array(CAP);
 const heap = new Int32Array(CAP);
-/** Deinterleaved soft symbols (162, 0-255) → the 11 data bytes, or null when the search gives up. */
-export function wsprStackDecode(sym: Uint8Array, maxPops = 120_000): Uint8Array | null {
+/** Deinterleaved soft symbols (2 × [nbits], 0-255) → the data bytes (the first [ndata] bits free, then the zero tail),
+ *  or null when the search gives up. WSPR: 81 bits, 50 of data; JT9 (same code): 103 bits, 72 of data. */
+export function wsprStackDecode(sym: Uint8Array, maxPops = 120_000, nbits = NBITS, ndata = 50): Uint8Array | null {
   let nn = 0, hn = 0;
   const push = (x: number) => { let i = hn++; heap[i] = x; while (i > 0) { const p = (i - 1) >> 1; if (nMetric[heap[p]] >= nMetric[heap[i]]) break; const t = heap[p]; heap[p] = heap[i]; heap[i] = t; i = p; } };
   const pop = () => {
@@ -253,14 +254,14 @@ export function wsprStackDecode(sym: Uint8Array, maxPops = 120_000): Uint8Array 
   nMetric[0] = 0; nState[0] = 0; nParent[0] = -1; nDepth[0] = 0; nn = 1; push(0);
   for (let pops = 0; pops < maxPops && hn > 0; pops++) {
     const x = pop(), d = nDepth[x];
-    if (d === NBITS) {
-      const bits = new Uint8Array(NBITS); for (let y = x; nParent[y] >= 0; y = nParent[y]) bits[nDepth[y] - 1] = nState[y] & 1;
-      const out = new Uint8Array(11); for (let i = 0; i < NBITS; i++) out[i >> 3] |= bits[i] << (7 - (i & 7));
+    if (d === nbits) {
+      const bits = new Uint8Array(nbits); for (let y = x; nParent[y] >= 0; y = nParent[y]) bits[nDepth[y] - 1] = nState[y] & 1;
+      const out = new Uint8Array(Math.ceil(nbits / 8)); for (let i = 0; i < nbits; i++) out[i >> 3] |= bits[i] << (7 - (i & 7));
       return out;
     }
     if (nn + 2 >= CAP || hn + 2 >= CAP) return null;
     const r0 = sym[2 * d], r1 = sym[2 * d + 1];
-    for (let bit = 0; bit <= (d >= 50 ? 0 : 1); bit++) {
+    for (let bit = 0; bit <= (d >= ndata ? 0 : 1); bit++) {
       const st = ((nState[x] << 1) | bit) >>> 0, y = nn++;
       nState[y] = st; nParent[y] = x; nDepth[y] = d + 1;
       nMetric[y] = nMetric[x] + METTAB[parity(st & POLY1)][r0] + METTAB[parity(st & POLY2)][r1];

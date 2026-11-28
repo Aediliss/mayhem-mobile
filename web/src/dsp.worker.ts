@@ -72,6 +72,7 @@ import { Fst4Decoder, Fst4wDecoder } from './dsp/ham/fst4w.js';   // FORK: FST4W
 import { WefaxDecoder } from './dsp/ham/wefax.js';   // FORK: WEFAX
 import { Msk144Decoder } from './dsp/ham/msk144.js';   // FORK: MSK144
 import { Jt65Decoder } from './dsp/ham/jt65.js';   // FORK: JT65
+import { Jt9Decoder } from './dsp/ham/jt9.js';   // FORK: JT9
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
 import { loadJsc } from './dsp/js8/varicode.js';
 import { DmrDecoder } from './dsp/ham/dmr.js';
@@ -267,6 +268,9 @@ wefax.onText = (t, meta) => { if (digiMode === 'wefax') post({ type: 'digi', fro
 const jt65 = new Jt65Decoder();
 jt65.onText = (t, meta) => { if (digiMode === 'jt65') post({ type: 'digi', from: 'JT65', text: t, meta }); };
 jt65.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT65', slot, list });
+const jt9 = new Jt9Decoder();   // FORK: JT9
+jt9.onText = (t, meta) => { if (digiMode === 'jt9') post({ type: 'digi', from: 'JT9', text: t, meta }); };
+jt9.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT9', slot, list });
 // FORK: MSK144: each ping's decode into FT8's list
 const msk144 = new Msk144Decoder();
 msk144.onDecodes = (list, at) => post({ type: 'ft8', mode: 'MSK144', slot: Math.floor(at / 15_000), list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.text })) });
@@ -341,7 +345,7 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   if (typeof opts.fst4Rx === 'number') fst4.setCentre(opts.fst4Rx);
   if (typeof opts.jt65Sub === 'number') jt65.sub = opts.jt65Sub;   // FORK: JT65
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
-  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
+  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'jt9' ? [jt9] : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();
   ham.digital = wanted;
 }
@@ -360,7 +364,7 @@ setInterval(() => {
     if (autoSettled !== was) { applyTaps(); if (!autoSettled) dmr.reset(); }
   } else { autoSettled = false; autoCarrierSince = 0; }
   if (ham.digital.length === 0 && !dv) return;
-  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'FST4' && d.name !== 'JT65' && d.name !== 'WEFAX' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
+  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'FST4' && d.name !== 'JT65' && d.name !== 'JT9' && d.name !== 'WEFAX' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
   if (digiMode === 'auto') digiWinner = dv?.locked ? 'DMR' : best && best.confidence > 0.35 ? best.name : '';
   const conf: [string, number][] = ham.digital.map(d => [d.name, Math.round(d.confidence * 100)]);
   if (dv) conf.push(['DMR', dv.locked ? 100 : 0]);
