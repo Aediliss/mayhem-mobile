@@ -111,8 +111,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | JT65 (A, B, C) in Ham Radio → DIGITAL | WSJT-X lib/gen65, setup65, interleave63, igray.c, wrapkarn.c, packjt.f90; Karn's init_rs / encode_rs / decode_rs | WSJT-X GPL-3.0 ✔; Karn's RS: "may be used under the terms of the GNU General Public License (GPL)" (no version: any, so 3 ✔) |
 | [x] | ★ | MSK40 short messages (in MSK144) | WSJT-X lib/genmsk40, encode_msk40, bpdecode40, msk40decodeframe | GPL-3.0 ✔ |
 | [x] | ★ | JT9 (JT9-1) in Ham Radio → DIGITAL | WSJT-X lib/gen9, jt9sync, entail, encode232 / conv232, interleave9, symspec2, jt9fano | GPL-3.0 ✔ |
-| [ ] | ★ | Q65 | WSJT-X | GPL-3.0 ✔ |
-| [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
+| [x] | ★ | Q65 (T/R 15-120 s, submodes A-E) in Ham Radio → DIGITAL | WSJT-X lib/qra/q65 (q65.c, qracodes.c, qra15_65_64_irr_e23.c by Nico Palermo IV3NWV), genq65.f90, q65.f90 | GPL-3.0-or-later ✔ (file headers) |
+| [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) — not started: own item (see the note under Q65) | codec2 | LGPL-2.1 ✔ (COPYING) |
 | [x] | | PSK63, PSK125, QPSK31 in Ham Radio → DIGITAL | fldigi src/psk/psk.cxx, src/filters/viterbi.cxx (QPSK) | GPL-3.0-or-later ✔ (COPYING GPLv3; file headers "version 3 or later") |
 | [x] | | Feld Hell in Ham Radio → DIGITAL | the mode's definition (fldigi, the Feld Hell Club); nothing ported | — |
 | [x] | | Olivia and Contestia in Ham Radio → DIGITAL | fldigi src/include/jalocha/pj_mfsk.h, pj_fht.h, pj_gray.h, src/olivia/olivia.cxx | GPL-3.0 ✔ (fldigi COPYING; pj_mfsk.h has no header of its own) |
@@ -122,7 +122,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | HF packet (300 Bd AX.25) in Ham Radio → DIGITAL; KISS / TNC2 out via the export bus | AX.25 2.2; the HF 1600/1800 Hz convention | spec only (Dire Wolf GPL-2.0-or-later: not ported) |
 | [ ] | | ARDOP monitor (receive only: frame types, 4FSK / PSK / QAM data frames) | ardopcf (pflarue/ardop) | MIT ✔ (LICENSE: Rick Muething, John Wiseman, Peter LaRue); a whole ARQ protocol, own item |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
-| [ ] | | digital SSTV (HamDRM / EasyPal) | QSSTV | check |
+| [ ] | | digital SSTV (HamDRM / EasyPal) — not started: own item (see the note under Q65) | QSSTV | GPL-3.0 ✔ (LICENSE; asks for a "based on QSSTV" statement) but its DRM receiver uses Numerical Recipes routines (`nrutil.h`, `ludcmp` / `lubksb` in drmrx/demodulator.cpp): not free, rewrite those from the maths |
 | [x] | | 2G ALE (MIL-STD-188-141A) in Ham Radio → DIGITAL | NTIA/ITS "HF ALE Simulator" (fec.c, golay.c, ALEmodem.c, test output) | US Government work, public domain ✔ (written from it, nothing copied but the Golay generator, a fact of the standard) |
 | [x] | | HF DSC and CCIR 493-4 selcall (CODAN / Barrett 4- and 6-digit) in Ham Radio → DIGITAL | ITU-R M.493 (HF: 100 Bd, 1615 / 1785 Hz); dsc.ts | spec only |
 
@@ -1037,6 +1037,25 @@ for "or later" first.
   not; the APRS layer chip hides them; a repeat does not count, a move does. Hardware: HAM+ on a D-STAR repeater
   output while a radio with GPS on (D-PRS) keys up: its callsign should appear on Ham Map in purple; same with a Fusion
   radio sending GPS (FT2D / FTM-400 with GPS on).
+- **Q65** (`dsp/ham/q65.ts`, `dsp/ham/q65-tables.ts`; FORK edits in the worker (the decoder, its decodes into FT8's list,
+  period / submode) and main.ts (the DIGITAL tile, label, T/R and submode chips, the empty text, JT65's dials, the clock,
+  no grid spots); `test/q65.test.ts`): Nico Palermo's codec ported (CRC-12, the (65,15) QRA code over GF(64) with its
+  tables, the Bessel metric at q65_init's Es/No, message passing with Walsh-Hadamard convolutions, MAP decision, the
+  log-likelihood check); the frame after genq65.f90 (22 sync symbols on tone 0, data on tones 1-64, the 77-bit payload
+  as 13 symbols) and the periods after q65_decode.f90. Receiver (written here): one-symbol spectra a quarter symbol
+  apart, the sync tone over every start (−1 … +5.5 s, so EME echoes are found) and frequency, up to 20 candidates
+  decoded, FT8's unpacker. Found while testing: WSJT-X's EME sample was 2.8 s late, past a first +3 s search. Tests: the
+  encoder against q65_encode's generator matrix (q65_encoding_modules.f90) for 50 random messages; decoding clean /
+  noisy energies, none from noise; Q65-60A two stations at −12 dB, 15C at −6, 30B at −8; noise decodes nothing;
+  WSJT-X's real 6 m EME sample (60A, 210106_1621) gives all four callers (W7GJ VE1JF RRR, W1VD FN31, N0TB -15, N8JX
+  EN73) at 1620 Hz / 2.8 s as WSJT-X shows. Not done: WSJT-X's a-priori and list decoding, averaging, the fast-fading
+  metric (its 30A ionoscatter and 60B troposcatter samples do not decode here), T/R 300 s (too heavy in a browser).
+  Hardware: 6 m Q65-30A around 50.275 MHz USB, or 2 m / 70 cm EME nets on 60A/B with a big antenna; compare with WSJT-X.
+- **FreeDV and HamDRM (not started, recorded here):** FreeDV 1600 needs the FDMDV modem (16 DQPSK carriers + pilot,
+  codec2's fdmdv.c) and the Codec 2 1300 mode (codec2.ts has 3200 and 1600; 1300 reuses 1600's scalar LSP tables);
+  700D / 700E need codec2's OFDM modem, its LDPC code and the 700C codec (newamp1 with its VQ tables). Each is a port of
+  its own. HamDRM (EasyPal / QSSTV) is DRM mode B OFDM, MSC with multilevel coding and a file layer; QSSTV's receiver
+  leans on Numerical Recipes code that cannot be copied. All three stay open items.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The

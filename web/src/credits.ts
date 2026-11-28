@@ -88,6 +88,7 @@ export const CREDITS: [boolean, string][] = [
   [false, "HF packet written from AX.25 2.2 and the 300 baud HF convention (1600 / 1800 Hz); its HDLC deframer shared with APRS"],
   [false, "2G ALE written from MIL-STD-188-141A as NTIA/ITS's HF ALE Simulator implements it (US Government work, public domain: its Golay generator and test words)"],
   [false, "HF DSC and CCIR 493-4 selcall written from ITU-R M.493 (HF tones and rate), on the marine DSC decoder"],
+  [false, "Q65 after WSJT-X (GPL-3.0-or-later): the QRA codec by Nico Palermo IV3NWV (q65.c, qracodes.c, the (65,15) GF(64) code tables), the frame and periods by Joe Taylor K1JT; test recording: WSJT-X's samples"],
   [false, "QPSK31 after fldigi (GPL-3.0: the K=5 code's polynomials and the phase mapping); PSK63 / PSK125 as PSK31 faster"],
   [false, "MSK144 after WSJT-X (GPL-3.0: frame and sync word, LDPC(128,90) tables, CRC-13, the short-ping decoder); MSK144 by Steven Franke K9AN and Joe Taylor K1JT; test recordings: WSJT-X's samples"],
   [false, "NAVTEX written from ITU-R M.625-4 (SITOR mode B: the 7-unit code, time diversity, phasing) and M.540-2 (the NAVTEX format)"],

@@ -73,6 +73,7 @@ import { WefaxDecoder } from './dsp/ham/wefax.js';   // FORK: WEFAX
 import { Msk144Decoder } from './dsp/ham/msk144.js';   // FORK: MSK144
 import { Jt65Decoder } from './dsp/ham/jt65.js';   // FORK: JT65
 import { Jt9Decoder } from './dsp/ham/jt9.js';   // FORK: JT9
+import { Q65Decoder } from './dsp/ham/q65.js';   // FORK: Q65
 import { PskDecoder } from './dsp/ham/psk.js';   // FORK: PSK63 / PSK125 / QPSK31
 import { HellDecoder } from './dsp/ham/hell.js';   // FORK: Feld Hell
 import { OliviaDecoder } from './dsp/ham/olivia.js';   // FORK: Olivia / Contestia
@@ -297,6 +298,9 @@ for (const d of [olivia, contestia]) d.onText = (t, meta) => { if (digiMode === 
 for (const d of textMore) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase()) post({ type: 'digi', from: d.name, text: t, meta }); };
 jt9.onText = (t, meta) => { if (digiMode === 'jt9') post({ type: 'digi', from: 'JT9', text: t, meta }); };
 jt9.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT9', slot, list });
+const q65 = new Q65Decoder();   // FORK: Q65: each slot's decodes into FT8's list
+q65.onText = (t, meta) => { if (digiMode === 'q65') post({ type: 'digi', from: 'Q65', text: t, meta }); };
+q65.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'Q65', slot, list });
 // FORK: MSK144: each ping's decode into FT8's list
 const msk144 = new Msk144Decoder();
 msk144.onDecodes = (list, at) => post({ type: 'ft8', mode: 'MSK144', slot: Math.floor(at / 15_000), list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.text })) });
@@ -371,9 +375,11 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   if (typeof opts.fst4Period === 'number') fst4.setPeriod(opts.fst4Period);
   if (typeof opts.fst4Rx === 'number') fst4.setCentre(opts.fst4Rx);
   if (typeof opts.jt65Sub === 'number') jt65.sub = opts.jt65Sub;   // FORK: JT65
+  if (typeof opts.q65Period === 'number') q65.setPeriod(opts.q65Period);   // FORK: Q65
+  if (typeof opts.q65Sub === 'number') q65.sub = opts.q65Sub;
   if (typeof opts.ifkSpeed === 'number') for (const d of ifk) d.setSpeed(opts.ifkSpeed);   // FORK: DominoEX / Thor
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
-  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'jt9' ? [jt9] : mode === 'hell' ? [hell] : mode === 'olivia' ? [olivia] : mode === 'contestia' ? [contestia] : textMore.some(d => d.name.toLowerCase() === mode) ? textMore.filter(d => d.name.toLowerCase() === mode) : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] : mode === 'packet' ? [hfpacket] : mode === 'ale' ? [ale] : mode === 'selcall' ? [selcall] /* FORK: WSPR, FST4W, WEFAX, MSK144, HF packet, ALE, selcall */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
+  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'jt9' ? [jt9] : mode === 'q65' ? [q65] /* FORK: Q65 */ : mode === 'hell' ? [hell] : mode === 'olivia' ? [olivia] : mode === 'contestia' ? [contestia] : textMore.some(d => d.name.toLowerCase() === mode) ? textMore.filter(d => d.name.toLowerCase() === mode) : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] : mode === 'packet' ? [hfpacket] : mode === 'ale' ? [ale] : mode === 'selcall' ? [selcall] /* FORK: WSPR, FST4W, WEFAX, MSK144, HF packet, ALE, selcall */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();
   ham.digital = wanted;
 }
@@ -392,7 +398,7 @@ setInterval(() => {
     if (autoSettled !== was) { applyTaps(); if (!autoSettled) dmr.reset(); }
   } else { autoSettled = false; autoCarrierSince = 0; }
   if (ham.digital.length === 0 && !dv) return;
-  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'FST4' && d.name !== 'JT65' && d.name !== 'JT9' && d.name !== 'WEFAX' && d.name !== 'HELL' && d.name !== 'OLIVIA' && d.name !== 'CONTESTIA' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
+  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'FST4' && d.name !== 'JT65' && d.name !== 'JT9' && d.name !== 'Q65' && d.name !== 'WEFAX' && d.name !== 'HELL' && d.name !== 'OLIVIA' && d.name !== 'CONTESTIA' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
   if (digiMode === 'auto') digiWinner = dv?.locked ? 'DMR' : best && best.confidence > 0.35 ? best.name : '';
   const conf: [string, number][] = ham.digital.map(d => [d.name, Math.round(d.confidence * 100)]);
   if (dv) conf.push(['DMR', dv.locked ? 100 : 0]);
