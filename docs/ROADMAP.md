@@ -123,7 +123,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [ ] | | ARDOP monitor (receive only: frame types, 4FSK / PSK / QAM data frames) | ardopcf (pflarue/ardop) | MIT ✔ (LICENSE: Rick Muething, John Wiseman, Peter LaRue); a whole ARQ protocol, own item |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
 | [ ] | | digital SSTV (HamDRM / EasyPal) | QSSTV | check |
-| [ ] | | 2G ALE (MIL-STD-188-141A), CODAN selcall | spec | spec |
+| [x] | | 2G ALE (MIL-STD-188-141A) in Ham Radio → DIGITAL | NTIA/ITS "HF ALE Simulator" (fec.c, golay.c, ALEmodem.c, test output) | US Government work, public domain ✔ (written from it, nothing copied but the Golay generator, a fact of the standard) |
+| [x] | | HF DSC and CCIR 493-4 selcall (CODAN / Barrett 4- and 6-digit) in Ham Radio → DIGITAL | ITU-R M.493 (HF: 100 Bd, 1615 / 1785 Hz); dsc.ts | spec only |
 
 ## Phase 8 — Security and situational awareness
 
@@ -1005,6 +1006,27 @@ for "or later" first.
   TNC2 text and the exact bytes, 45 Hz off tune at 6 dB in 2500 Hz, noise and a corrupted frame give nothing.
   Hardware: 10.1476 MHz USB (HF APRS, tones 1600/1800) or 14.105 MHz; with EXPORT on in Settings, a KISS sink should
   get the frames (compare with Dire Wolf on the same audio, `-B 300`).
+- **2G ALE** (`dsp/ham/ale.ts`; FORK edits in the worker and main.ts (the DIGITAL tile); `test/ale.test.ts`): written
+  from MIL-STD-188-141A as NTIA/ITS's HF ALE simulator implements it: 8-FSK 750-2500 Hz, 125 baud; 24-bit words
+  (3-bit preamble, three 7-bit characters); (24,12) Golay per half with the second half's check bits inverted, the two
+  interleaved bit by bit with a stuff bit (49 bits), sent three times. Found while porting: the scanned listing's Golay
+  generator has one OCR slip (the tenth row); fixed against the cyclic code, minimum distance 8 checked. The tone map
+  (natural or Gray) is a table the simulator does not show, so both are decoded side by side. Receiver: 8 kHz, Goertzel
+  at the 8 tones every quarter symbol, a 147-bit vote at each symbol; a word counts when both halves decode with ≤ 1
+  error, ≥ 40 of 48 votes are unanimous, and the characters are the basic set; words join into "TO SAM TIS JOE" or
+  "SOUNDING TWAS KARL1" (DATA / REP continue long addresses). Not done: CMD words (LQA, AMD text, which use other
+  sets), 3G ALE, link protection. Tests: Golay distance and 3-error correction; the simulator's own words (TO SAM =
+  25160315, TO JOE = 24523705 octal); an individual call in either tone map, and at 3 dB in 2500 Hz; a sounding with a
+  long address; 30 s of noise give no words. Hardware: ALE nets (HFN / amateur ALE on 3.596, 7.102, 10.145, 14.109,
+  18.106 MHz USB): soundings every hour or so; compare with PC-ALE / MARS-ALE or a Wavecom decode.
+- **HF DSC / selcall** (`dsp/ham/selcall.ts`; a FORK hook in dsc.ts (`onInfo`: every call's characters before parsing);
+  the worker and main.ts (the DIGITAL tile); `test/selcall.test.ts`): ITU-R M.493 on HF is the VHF code at 100 baud
+  on 1615 (Y) / 1785 Hz (B) audio, so dsc.ts's framer and parser are reused. ECC-checked calls print as DSC when they
+  carry MMSIs; short individual calls (format 120 / 123 with a 2- or 3-character address) as "SELCALL to 1234 from
+  5678 · category". CODAN's proprietary call types beyond those formats are not published (not decoded). Tests: a
+  4- and a 6-digit selcall and an HF DSC call, clean and at 8 dB; a bad ECC and noise give nothing. Hardware: marine
+  HF DSC on 2187.5 / 8414.5 kHz (tune 1.7 kHz below in USB); selcall on outback / NGO HF networks (e.g. Australian RFDS,
+  VKS-737) heard on their channels in USB.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The
