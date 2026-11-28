@@ -3,10 +3,10 @@
  * square. The decoders feed this one store wherever they run (the Ham Radio DIGI tab, the JS8 app), so the map shows
  * what was heard while it was closed. Stations age out and are capped the way the APRS receiver keeps its own.
  */
-import { gridToLatLon } from './callsign.js';
+import { gridToLatLon, latLonToGrid } from './callsign.js';   // FORK: + latLonToGrid (DV positions)
 import { bandOf } from './bands.js';
 
-export type SpotMode = 'FT8' | 'JS8';
+export type SpotMode = 'FT8' | 'JS8' | 'DV';   // FORK: DV: a D-STAR D-PRS / GPS or Fusion position (on the APRS layer)
 export type HamLayer = 'aprs' | 'ft8' | 'js8';
 export type HamLayers = Record<HamLayer, boolean>;
 
@@ -117,7 +117,7 @@ export class HamSpots {
     if (old && at.ms < old.lastMs) { s.grid = old.grid; s.lat = old.lat; s.lon = old.lon; s.snr = old.snr; s.dial = old.dial; s.offset = old.offset; s.text = old.text; }
     this.spots.delete(id); this.spots.set(id, s);
     const band = bandLabel(at.dial);
-    this.log.unshift({ ms: at.ms, mode, call: c, text: at.text, line: `${mode} ${c} ${g} · ${[band, `${at.snr > 0 ? '+' : ''}${at.snr} dB`].filter(Boolean).join(' · ')} · ${at.text}` });
+    this.log.unshift({ ms: at.ms, mode, call: c, text: at.text, line: `${mode} ${c} ${g} · ${[band, Number.isFinite(at.snr) ? `${at.snr > 0 ? '+' : ''}${at.snr} dB` : '' /* FORK: DV has no SNR */].filter(Boolean).join(' · ')} · ${at.text}` });
     if (this.log.length > SPOT_LOG_CAP) this.log.length = SPOT_LOG_CAP;
     this.trim(at.ms);
     this.changed();
@@ -130,6 +130,14 @@ export class HamSpots {
   /** A JS8 message as the message layer assembled it. */
   js8(m: Js8Said, at: { snr: number; hz: number; ms: number; text: string }, dial: number): HamSpot | null {
     const x = js8Spot(m); return x ? this.add('JS8', x.call, x.grid, { snr: at.snr, dial, offset: at.hz, ms: at.ms, text: at.text }) : null;
+  }
+  /** FORK: a digital-voice station's own position (D-STAR D-PRS or GPS, Fusion): exact, not a square's centre. [text]
+   *  says how it came ("D-STAR D-PRS", "YSF GPS"). Shown on the APRS layer. */
+  dv(call: string, lat: number, lon: number, at: { dial: number; ms: number; text: string }): HamSpot | null {
+    if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180) || (lat === 0 && lon === 0)) return null;
+    const s = this.add('DV', call, latLonToGrid(lat, lon, 6), { snr: NaN, dial: at.dial, offset: 0, ms: at.ms, text: at.text });
+    if (s && s.lastMs === at.ms) { s.lat = lat; s.lon = lon; }
+    return s;
   }
   /** Newest first, without the aged ones. */
   list(now = Date.now()): HamSpot[] { this.trim(now); return [...this.spots.values()].sort((a, b) => b.lastMs - a.lastMs); }
@@ -157,5 +165,5 @@ export function loadLayers(s: Store | null = store()): HamLayers {
   return { ...DEFAULT_LAYERS };
 }
 export function saveLayers(l: HamLayers, s: Store | null = store()): void { try { s?.setItem(LAYERS_KEY, JSON.stringify(l)); } catch { /* private window */ } }
-export const spotLayer = (m: SpotMode): HamLayer => m === 'FT8' ? 'ft8' : 'js8';
+export const spotLayer = (m: SpotMode): HamLayer => m === 'FT8' ? 'ft8' : m === 'DV' ? 'aprs' /* FORK: DV positions */ : 'js8';
 export function visibleSpots(spots: HamSpot[], l: HamLayers): HamSpot[] { return spots.filter(s => l[spotLayer(s.mode)]); }

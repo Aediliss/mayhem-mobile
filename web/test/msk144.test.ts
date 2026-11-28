@@ -104,3 +104,22 @@ for (const [name, want] of [['181211_120500', ['K1JT WA4CQG EM72']], ['181211_12
     for (const g of got) assert.ok(Math.abs(Number(g.split('@')[1]) - 1500) <= 100);
   });
 }
+
+// ---- MSK40 ----------------------------------------------------------------------------------------------------------
+import { msk40Audio, msk40Encode, msk40Hash, MSK40_RPT } from '../src/dsp/ham/msk144.js';
+
+test('MSK40: the (32,16) generator and bpdecode40\'s parity checks agree for every report and many hashes', () => {
+  const CODE40 = { n: 32, m: 16, colw: 3, roww: 7, mn: new Uint8Array(0), nm: Uint8Array.from([1, 7, 12, 18, 21, 27, 31, 2, 8, 13, 18, 24, 28, 0, 2, 9, 14, 19, 23, 29, 0, 3, 8, 12, 20, 23, 30, 0, 4, 8, 15, 19, 22, 31, 0, 1, 6, 13, 19, 25, 30, 0, 5, 9, 16, 21, 25, 26, 0, 3, 10, 11, 18, 26, 32, 0, 6, 9, 15, 20, 27, 32, 0, 5, 10, 13, 22, 27, 0, 0, 4, 7, 14, 20, 26, 28, 0, 4, 10, 12, 17, 25, 29, 0, 1, 11, 16, 22, 28, 29, 0, 2, 11, 15, 17, 21, 30, 0, 3, 6, 14, 16, 24, 31, 0, 5, 7, 17, 23, 24, 32, 0]), nrw: Uint8Array.from([7, 6, 6, 6, 6, 6, 6, 6, 6, 5, 6, 6, 6, 6, 6, 6]) };
+  for (let h = 0; h < 4096; h += 97) for (let r = 0; r < 16; r++) assert.equal(ldpcChecks(CODE40, msk40Encode(16 * h + r)), 0, `${h}/${r}`);
+});
+
+test('MSK40: after an MSK144 message, a short "<CALL1 CALL2> RRR" ping decodes; one from an unknown pair does not', () => {
+  const R = 48000, a = new Float32Array(R * 5);
+  const add = (x: Float32Array, at: number) => { for (let k = 0; k < x.length; k++) a[at + k] += x[k] * Math.min(1, k / 240, (x.length - k) / 240); };
+  add(msk144Audio(packStandard('K1ABC W9XYZ R-09')!, 5, R, 1530, 0.06), Math.round(0.8 * R));
+  add(msk40Audio(16 * msk40Hash('W9XYZ K1ABC') + MSK40_RPT.indexOf('RRR'), 12, R, 1530, 0.06), Math.round(2.4 * R));
+  add(msk40Audio(16 * msk40Hash('G4ABC DL1XYZ') + MSK40_RPT.indexOf('73'), 12, R, 1470, 0.06), Math.round(3.8 * R));
+  let s = 21; for (let k = 0; k < a.length; k++) { s = (s * 1664525 + 1013904223) >>> 0; const u = s / 2 ** 32; s = (s * 1664525 + 1013904223) >>> 0; a[k] += 0.1 * Math.sqrt(-2 * Math.log(u + 1e-12)) * Math.cos(2 * Math.PI * s / 2 ** 32); }
+  const got = feed(new Msk144Decoder(), a).map(g => g.split('@')[0]);
+  assert.deepEqual(got, ['K1ABC W9XYZ R-09', '<W9XYZ K1ABC> RRR']);
+});

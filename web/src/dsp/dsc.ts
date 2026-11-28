@@ -142,6 +142,8 @@ const MAX_INFO = 40;
 /** Bits → calls: phasing found from the DX/RX characters, then DX and RX copies combined. */
 export class DscFramer {
   onCall: (c: DscCall) => void = () => undefined;
+  /** Every complete call's information characters, before parsing (HF selcall reads its own formats from them). */
+  onInfo: (info: number[]) => void = () => undefined;
   private hist: number[] = [];   // the last 40 bits, for phasing
   private stream: number[] | null = null; private cur: number[] = []; private slot0 = 0;
   push(bit: number): void {
@@ -182,7 +184,7 @@ export class DscFramer {
         // characters that only the RX copy saved, and any a later RX copy can still fix
         for (let i = 0; i < full.length; i++) if (full[i] < 0) { const v = rx(8 + i); if (v >= 0) full[i] = v; }
         this.stream = null;
-        if (full.every(v => v >= 0)) { const c = parseDsc(full); if (c && c.eccOk) this.onCall(c); }
+        if (full.every(v => v >= 0)) { this.onInfo(full); const c = parseDsc(full); if (c && c.eccOk) this.onCall(c); }
         return;
       }
     }

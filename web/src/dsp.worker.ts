@@ -71,6 +71,17 @@ import { WsprDecoder } from './dsp/ham/wspr.js';   // FORK: WSPR
 import { Fst4Decoder, Fst4wDecoder } from './dsp/ham/fst4w.js';   // FORK: FST4W, FST4
 import { WefaxDecoder } from './dsp/ham/wefax.js';   // FORK: WEFAX
 import { Msk144Decoder } from './dsp/ham/msk144.js';   // FORK: MSK144
+import { Jt65Decoder } from './dsp/ham/jt65.js';   // FORK: JT65
+import { Jt9Decoder } from './dsp/ham/jt9.js';   // FORK: JT9
+import { Q65Decoder } from './dsp/ham/q65.js';   // FORK: Q65
+import { PskDecoder } from './dsp/ham/psk.js';   // FORK: PSK63 / PSK125 / QPSK31
+import { HellDecoder } from './dsp/ham/hell.js';   // FORK: Feld Hell
+import { OliviaDecoder } from './dsp/ham/olivia.js';   // FORK: Olivia / Contestia
+import { MfskDecoder } from './dsp/ham/mfsk.js';   // FORK: MFSK16 / MFSK32
+import { IfkDecoder } from './dsp/ham/ifk.js';   // FORK: DominoEX / Thor
+import { HfPacketDecoder } from './dsp/ham/hfpacket.js';   // FORK: HF packet
+import { AleDecoder } from './dsp/ham/ale.js';   // FORK: 2G ALE
+import { SelcallDecoder } from './dsp/ham/selcall.js';   // FORK: HF DSC / selcall
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
 import { loadJsc } from './dsp/js8/varicode.js';
 import { DmrDecoder } from './dsp/ham/dmr.js';
@@ -262,6 +273,34 @@ fst4w.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'FST4W', slot, list:
 const wefax = new WefaxDecoder();
 wefax.onImage = img => post({ type: 'sstv', ...img }, [img.rows.buffer]);
 wefax.onText = (t, meta) => { if (digiMode === 'wefax') post({ type: 'digi', from: 'WEFAX', text: t, meta }); };
+// FORK: JT65: 60 s slots into FT8's list
+const jt65 = new Jt65Decoder();
+jt65.onText = (t, meta) => { if (digiMode === 'jt65') post({ type: 'digi', from: 'JT65', text: t, meta }); };
+jt65.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT65', slot, list });
+const jt9 = new Jt9Decoder();   // FORK: JT9
+// FORK: PSK63, PSK125, QPSK31: their text into the DIGITAL text panel, on PSK31's centre frequency
+const pskMore = [new PskDecoder(62.5, false), new PskDecoder(125, false), new PskDecoder(31.25, true)];
+// FORK: the fldigi text modes on PSK31's centre (PSK63 / 125, QPSK31, MFSK16 / 32, DominoEX, Thor), one DIGITAL mode each, by name
+const ifk = [new IfkDecoder('dominoex'), new IfkDecoder('thor')];
+const textMore = [...pskMore, new MfskDecoder(15.625), new MfskDecoder(31.25), ...ifk];
+// FORK: HF packet (300 Bd AX.25, mark 1600 / space 1800 Hz): TNC2 text into DIGITAL, each frame to the export bus (KISS / TNC2)
+const hfpacket = new HfPacketDecoder();
+hfpacket.onText = (t, meta) => { if (digiMode === 'packet') post({ type: 'digi', from: 'PACKET', text: t, meta }); };
+hfpacket.onFrame = bytes => post({ type: 'ax25', bytes });
+// FORK: 2G ALE and HF DSC / CCIR 493 selcall: their calls into DIGITAL's text
+const ale = new AleDecoder(), selcall = new SelcallDecoder();
+for (const d of [ale, selcall]) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase()) post({ type: 'digi', from: d.name, text: t, meta }); };
+const hell = new HellDecoder();   // FORK: Feld Hell: its strip goes to the SSTV picture panel
+hell.onImage = img => post({ type: 'sstv', ...img }, [img.rows.buffer]);
+// FORK: Olivia and Contestia: text into the DIGITAL panel, centred on PSK31's frequency
+const olivia = new OliviaDecoder({ tones: 8, bandwidth: 250, contestia: false }), contestia = new OliviaDecoder({ tones: 8, bandwidth: 250, contestia: true });
+for (const d of [olivia, contestia]) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase()) post({ type: 'digi', from: d.name, text: t, meta }); };
+for (const d of textMore) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase()) post({ type: 'digi', from: d.name, text: t, meta }); };
+jt9.onText = (t, meta) => { if (digiMode === 'jt9') post({ type: 'digi', from: 'JT9', text: t, meta }); };
+jt9.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT9', slot, list });
+const q65 = new Q65Decoder();   // FORK: Q65: each slot's decodes into FT8's list
+q65.onText = (t, meta) => { if (digiMode === 'q65') post({ type: 'digi', from: 'Q65', text: t, meta }); };
+q65.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'Q65', slot, list });
 // FORK: MSK144: each ping's decode into FT8's list
 const msk144 = new Msk144Decoder();
 msk144.onDecodes = (list, at) => post({ type: 'ft8', mode: 'MSK144', slot: Math.floor(at / 15_000), list: list.map(d => ({ utc: d.utc, snr: d.snr, dt: d.dt, hz: d.hz, text: d.text })) });
@@ -329,13 +368,18 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   digiMode = mode;
   ham.analogMute = mode === 'dmr' || mode === 'p25' || satKind === 'lrpt';
   if (typeof opts.pitch === 'number') cw.setPitch(opts.pitch);
-  if (typeof opts.pskHz === 'number') psk.setCenter(opts.pskHz);
+  if (typeof opts.pskHz === 'number') { psk.setCenter(opts.pskHz); for (const d of textMore) d.setCenter(opts.pskHz); hell.setCenter(opts.pskHz); olivia.setCenter(opts.pskHz); contestia.setCenter(opts.pskHz); }
+  if (typeof opts.olivia === 'string') { const [t, b] = opts.olivia.split('/').map(Number); if (t && b) { if (t !== olivia.config.tones || b !== olivia.config.bandwidth) olivia.setConfig({ tones: t, bandwidth: b, contestia: false }); if (t !== contestia.config.tones || b !== contestia.config.bandwidth) contestia.setConfig({ tones: t, bandwidth: b, contestia: true }); } }   // FORK: Olivia   // FORK: + PSK63 / 125, QPSK31
   if (typeof opts.wefaxLpm === 'number') wefax.lpm = opts.wefaxLpm;   // FORK: WEFAX
   if (typeof opts.fst4wPeriod === 'number') fst4w.setPeriod(opts.fst4wPeriod);   // FORK: FST4W / FST4
   if (typeof opts.fst4Period === 'number') fst4.setPeriod(opts.fst4Period);
   if (typeof opts.fst4Rx === 'number') fst4.setCentre(opts.fst4Rx);
+  if (typeof opts.jt65Sub === 'number') jt65.sub = opts.jt65Sub;   // FORK: JT65
+  if (typeof opts.q65Period === 'number') q65.setPeriod(opts.q65Period);   // FORK: Q65
+  if (typeof opts.q65Sub === 'number') q65.sub = opts.q65Sub;
+  if (typeof opts.ifkSpeed === 'number') for (const d of ifk) d.setSpeed(opts.ifkSpeed);   // FORK: DominoEX / Thor
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
-  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
+  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'jt9' ? [jt9] : mode === 'q65' ? [q65] /* FORK: Q65 */ : mode === 'hell' ? [hell] : mode === 'olivia' ? [olivia] : mode === 'contestia' ? [contestia] : textMore.some(d => d.name.toLowerCase() === mode) ? textMore.filter(d => d.name.toLowerCase() === mode) : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] : mode === 'packet' ? [hfpacket] : mode === 'ale' ? [ale] : mode === 'selcall' ? [selcall] /* FORK: WSPR, FST4W, WEFAX, MSK144, HF packet, ALE, selcall */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();
   ham.digital = wanted;
 }
@@ -354,7 +398,7 @@ setInterval(() => {
     if (autoSettled !== was) { applyTaps(); if (!autoSettled) dmr.reset(); }
   } else { autoSettled = false; autoCarrierSince = 0; }
   if (ham.digital.length === 0 && !dv) return;
-  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'FST4' && d.name !== 'WEFAX' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
+  let best = ham.digital[0]; for (const d of ham.digital) if (d.name !== 'FT8' && d.name !== 'FT4' && d.name !== 'WSPR' && d.name !== 'FST4W' && d.name !== 'FST4' && d.name !== 'JT65' && d.name !== 'JT9' && d.name !== 'Q65' && d.name !== 'WEFAX' && d.name !== 'HELL' && d.name !== 'OLIVIA' && d.name !== 'CONTESTIA' && d.name !== 'MSK144' /* FORK */ && d.confidence > best.confidence) best = d;
   if (digiMode === 'auto') digiWinner = dv?.locked ? 'DMR' : best && best.confidence > 0.35 ? best.name : '';
   const conf: [string, number][] = ham.digital.map(d => [d.name, Math.round(d.confidence * 100)]);
   if (dv) conf.push(['DMR', dv.locked ? 100 : 0]);

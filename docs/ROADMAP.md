@@ -108,14 +108,23 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | FST4W-120 in Ham Radio → DIGITAL (the 2-minute beacons on WSPR's dials) | WSJT-X lib/fst4 (genfst4, get_crc24, ldpc_240_74_*, decode240_74, get_fst4_bitmetrics), lib/fst4_decode.f90, lib/77bit/packjt77.f90 (type 0.6) | GPL-3.0 ✔ (WSJT-X COPYING; these files carry no header of their own) |
 | [x] | ★ | MSK144 (meteor scatter) in Ham Radio → DIGITAL | WSJT-X lib/genmsk_128_90, encode_128_90, crc13.cpp, ldpc_128_90_*, bpdecode128_90, msk144spd / msk144sync / msk144_freq_search / msk144decodeframe | GPL-3.0 ✔ (WSJT-X COPYING) |
 | [x] | ★ | FST4 (15 s to 30 min) and FST4W-300/900/1800 in Ham Radio → DIGITAL | WSJT-X lib/fst4 (ldpc_240_101_*, genfst4's message scrambling), lib/fst4_decode.f90 (the periods' timing) | GPL-3.0 ✔ |
-| [ ] | ★ | JT65/JT9/Q65, MSK40 short messages | WSJT-X | GPL-3.0 ✔ |
-| [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
-| [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
-| [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
-| [ ] | | HF packet (300 Bd), ARDOP; KISS out via export bus | Dire Wolf; ARDOP spec | check |
+| [x] | ★ | JT65 (A, B, C) in Ham Radio → DIGITAL | WSJT-X lib/gen65, setup65, interleave63, igray.c, wrapkarn.c, packjt.f90; Karn's init_rs / encode_rs / decode_rs | WSJT-X GPL-3.0 ✔; Karn's RS: "may be used under the terms of the GNU General Public License (GPL)" (no version: any, so 3 ✔) |
+| [x] | ★ | MSK40 short messages (in MSK144) | WSJT-X lib/genmsk40, encode_msk40, bpdecode40, msk40decodeframe | GPL-3.0 ✔ |
+| [x] | ★ | JT9 (JT9-1) in Ham Radio → DIGITAL | WSJT-X lib/gen9, jt9sync, entail, encode232 / conv232, interleave9, symspec2, jt9fano | GPL-3.0 ✔ |
+| [x] | ★ | Q65 (T/R 15-120 s, submodes A-E) in Ham Radio → DIGITAL | WSJT-X lib/qra/q65 (q65.c, qracodes.c, qra15_65_64_irr_e23.c by Nico Palermo IV3NWV), genq65.f90, q65.f90 | GPL-3.0-or-later ✔ (file headers) |
+| [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) — not started: own item (see the note under Q65) | codec2 | LGPL-2.1 ✔ (COPYING) |
+| [x] | | PSK63, PSK125, QPSK31 in Ham Radio → DIGITAL | fldigi src/psk/psk.cxx, src/filters/viterbi.cxx (QPSK) | GPL-3.0-or-later ✔ (COPYING GPLv3; file headers "version 3 or later") |
+| [x] | | Feld Hell in Ham Radio → DIGITAL | the mode's definition (fldigi, the Feld Hell Club); nothing ported | — |
+| [x] | | Olivia and Contestia in Ham Radio → DIGITAL | fldigi src/include/jalocha/pj_mfsk.h, pj_fht.h, pj_gray.h, src/olivia/olivia.cxx | GPL-3.0 ✔ (fldigi COPYING; pj_mfsk.h has no header of its own) |
+| [x] | | MFSK16 and MFSK32 in Ham Radio → DIGITAL | fldigi src/mfsk/mfsk.cxx, interleave.cxx, mfskvaricode.cxx, src/include/mfsk.h | GPL-3.0-or-later ✔ (file headers) |
+| [x] | | DominoEX and Thor in Ham Radio → DIGITAL | fldigi src/dominoex/dominoex.cxx, dominovar.cxx, src/thor/thor.cxx, thorvaricode.cxx | GPL-3.0-or-later ✔ (file headers) |
+| [x] | | D-STAR slow data + DPRS → Ham Map; Fusion data | JARL spec (already decoded upstream in hamid/dstar.ts, ysf.ts) | spec ✔ |
+| [x] | | HF packet (300 Bd AX.25) in Ham Radio → DIGITAL; KISS / TNC2 out via the export bus | AX.25 2.2; the HF 1600/1800 Hz convention | spec only (Dire Wolf GPL-2.0-or-later: not ported) |
+| [ ] | | ARDOP monitor (receive only: frame types, 4FSK / PSK / QAM data frames) | ardopcf (pflarue/ardop) | MIT ✔ (LICENSE: Rick Muething, John Wiseman, Peter LaRue); a whole ARQ protocol, own item |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
-| [ ] | | digital SSTV (HamDRM / EasyPal) | QSSTV | check |
-| [ ] | | 2G ALE (MIL-STD-188-141A), CODAN selcall | spec | spec |
+| [ ] | | digital SSTV (HamDRM / EasyPal) — not started: own item (see the note under Q65) | QSSTV | GPL-3.0 ✔ (LICENSE; asks for a "based on QSSTV" statement) but its DRM receiver uses Numerical Recipes routines (`nrutil.h`, `ludcmp` / `lubksb` in drmrx/demodulator.cpp): not free, rewrite those from the maths |
+| [x] | | 2G ALE (MIL-STD-188-141A) in Ham Radio → DIGITAL | NTIA/ITS "HF ALE Simulator" (fec.c, golay.c, ALEmodem.c, test output) | US Government work, public domain ✔ (written from it, nothing copied but the Golay generator, a fact of the standard) |
+| [x] | | HF DSC and CCIR 493-4 selcall (CODAN / Barrett 4- and 6-digit) in Ham Radio → DIGITAL | ITU-R M.493 (HF: 100 Bd, 1615 / 1785 Hz); dsc.ts | spec only |
 
 ## Phase 8 — Security and situational awareness
 
@@ -955,3 +964,161 @@ for "or later" first.
   Hardware: FST4/FST4W are mostly on 2200 m (136 kHz) and 630 m (474.2 kHz), below the HackRF's 1 MHz: an RTL-SDR with
   direct sampling (or an upconverter) and a large antenna; FST4W also on the WSPR dials above 1.8 MHz with a HackRF.
   Compare with WSJT-X in the same mode and T/R period.
+- **Olivia / Contestia** (`dsp/ham/olivia.ts`; FORK edits in the worker (two decoders on PSK31's centre buttons, the
+  preset) and main.ts (the DIGITAL tiles, an OLIVIA presets row: 8/250, 16/500, 32/1000, 4/125, 8/500, 16/1000, 4/250);
+  `test/olivia.test.ts`): after Jalocha's code in fldigi: N tones over B Hz, Gray-coded; b characters a block, each a
+  ±1 Walsh-Hadamard row (Jalocha's own butterflies), scrambled by 0xE257E6D0291574EC (Contestia 0xEDB88320) shifted 13
+  (5) a character, spread over 64 (32) symbols with the bit rotating each symbol; Contestia's 6-bit character set.
+  Receiver (written here): 8 kHz; one-symbol spectra with half-tone bins every quarter symbol; 4 symbol phases × ±60 Hz
+  of offsets as hypotheses with pj_mfsk's energy-weighted soft bits; each hypothesis's latest block decoded (de-scramble,
+  forward transform, the peak) and scored by its peaks over the rest; a block prints when its hypothesis and alignment
+  are within 90 % of the best and it is clean, once a block period (found while testing: printing only the single best
+  lost a block when a neighbouring phase briefly led). Tests: Olivia 32/1000, 8/250 and 16/500 clean (all of the text)
+  and at −10 dB in 2500 Hz 7 Hz off; Contestia 8/250 (upper case, its set); noise prints nothing. Hardware: Olivia nets
+  on 14.072-14.074 / 7.072 MHz USB (8/250 and 16/500 are common); compare with fldigi.
+- **MFSK16 / MFSK32** (`dsp/ham/mfsk.ts`, `dsp/ham/mfsk-varicode.ts`; FORK edits in the worker (two decoders on PSK31's
+  centre buttons, beside PSK63/125 and QPSK31) and main.ts (the DIGITAL tiles); `test/mfsk.test.ts`): after fldigi: 16
+  Gray-coded tones at 8 kHz, 512 / 256 samples a symbol; IZ8BLY's varicode → the K=7 rate-1/2 code (0x6d, 0x4f) → 4 bits
+  a symbol through fldigi's diagonal interleaver (4×4, 10 deep; REV at the receiver). Receiver: one-symbol spectra with
+  half-tone bins every quarter symbol; 4 symbol phases × ±2 tones of offset decoded side by side (soft bits as fldigi,
+  Viterbi, varicode); the text comes from the stream the code fits best (found while testing: picking by the strongest
+  tone chose streams a whole tone off, whose symbols are all wrong), squelched until one tone stands out above noise.
+  Tests: the text clean, MFSK16 at −10 dB and MFSK32 at −8 dB in 2500 Hz 4 Hz off; noise prints (almost) nothing.
+  Hardware: MFSK16 around 14.080 / 7.080 MHz USB (also used for MFSK pictures, not decoded here); compare with fldigi.
+- **DominoEX / Thor** (`dsp/ham/ifk.ts`, `dsp/ham/domino-varicode.ts`; FORK edits in the worker (two decoders on PSK31's
+  centre buttons, the speed) and main.ts (the DIGITAL tiles, a DOMINO/THOR speed row: 4, 5, 8, 11, 16, 22);
+  `test/ifk.test.ts`): after fldigi: 18 tones, IFK+ (each 4-bit symbol moves the tone up by symbol + 2, mod 18);
+  DominoEX sends its varicode's 1-3 nibbles as symbols; Thor sends MFSK's varicode through the K=7 code and the 4×4×10
+  interleaver (MFSK's, reused). Receiver (written here): a one-symbol DFT on 3 bins a tone step, every quarter symbol,
+  over the band ±6 tones; four symbol phases decoded side by side; the phase whose tones stand out most prints,
+  squelched against noise. IFK+ is differential, so tuning need not be exact. Not done: Thor's K=15 fast modes (25×4,
+  50×1/2, 100), DominoEX's MultiPSK FEC option, Micro modes, the secondary (idle) text and Thor's pictures.
+  Tests: DominoEX 11 / 22 / 8 and Thor 11 / 22 / 16 clean and through noise (−3 to −9 dB in 2500 Hz) 47 Hz off; noise
+  prints (almost) nothing. Hardware: DominoEX 11 / Thor 11 and 22 on 3.583 / 7.073 / 14.073 MHz USB and NBEMS nets
+  (Thor 22 / DominoEX 11 are common there); compare with fldigi.
+- **HF packet** (`dsp/ham/hfpacket.ts`; FORK edits in the worker (the decoder, its text into DIGITAL, each frame posted as
+  `ax25` for the export bus) and main.ts (the DIGITAL tile); `test/hfpacket.test.ts`): written from AX.25 and the HF
+  convention (300 baud, mark 1600 Hz, space 1800 Hz on USB audio): 8 kHz, five tunings −60..+60 Hz each with one-bit
+  sliding DFTs at mark and space, a bit clock and core.ts's HDLC deframer (shared with APRS); good frames de-duplicated
+  by FCS, printed as TNC2 text (connected-mode frames as addresses, the control field and any I-frame text). KISS out:
+  nothing new, the export bus already turns `ax25` messages into `aprs.frame` events and KISS / TNC2 lines. Not done:
+  HF APRS positions on Ham Map; ARDOP (own row). Tests: the Transmit app's AX.25 encoder → 300 Bd AFSK: two frames to
+  TNC2 text and the exact bytes, 45 Hz off tune at 6 dB in 2500 Hz, noise and a corrupted frame give nothing.
+  Hardware: 10.1476 MHz USB (HF APRS, tones 1600/1800) or 14.105 MHz; with EXPORT on in Settings, a KISS sink should
+  get the frames (compare with Dire Wolf on the same audio, `-B 300`).
+- **2G ALE** (`dsp/ham/ale.ts`; FORK edits in the worker and main.ts (the DIGITAL tile); `test/ale.test.ts`): written
+  from MIL-STD-188-141A as NTIA/ITS's HF ALE simulator implements it: 8-FSK 750-2500 Hz, 125 baud; 24-bit words
+  (3-bit preamble, three 7-bit characters); (24,12) Golay per half with the second half's check bits inverted, the two
+  interleaved bit by bit with a stuff bit (49 bits), sent three times. Found while porting: the scanned listing's Golay
+  generator has one OCR slip (the tenth row); fixed against the cyclic code, minimum distance 8 checked. The tone map
+  (natural or Gray) is a table the simulator does not show, so both are decoded side by side. Receiver: 8 kHz, Goertzel
+  at the 8 tones every quarter symbol, a 147-bit vote at each symbol; a word counts when both halves decode with ≤ 1
+  error, ≥ 40 of 48 votes are unanimous, and the characters are the basic set; words join into "TO SAM TIS JOE" or
+  "SOUNDING TWAS KARL1" (DATA / REP continue long addresses). Not done: CMD words (LQA, AMD text, which use other
+  sets), 3G ALE, link protection. Tests: Golay distance and 3-error correction; the simulator's own words (TO SAM =
+  25160315, TO JOE = 24523705 octal); an individual call in either tone map, and at 3 dB in 2500 Hz; a sounding with a
+  long address; 30 s of noise give no words. Hardware: ALE nets (HFN / amateur ALE on 3.596, 7.102, 10.145, 14.109,
+  18.106 MHz USB): soundings every hour or so; compare with PC-ALE / MARS-ALE or a Wavecom decode.
+- **HF DSC / selcall** (`dsp/ham/selcall.ts`; a FORK hook in dsc.ts (`onInfo`: every call's characters before parsing);
+  the worker and main.ts (the DIGITAL tile); `test/selcall.test.ts`): ITU-R M.493 on HF is the VHF code at 100 baud
+  on 1615 (Y) / 1785 Hz (B) audio, so dsc.ts's framer and parser are reused. ECC-checked calls print as DSC when they
+  carry MMSIs; short individual calls (format 120 / 123 with a 2- or 3-character address) as "SELCALL to 1234 from
+  5678 · category". CODAN's proprietary call types beyond those formats are not published (not decoded). Tests: a
+  4- and a 6-digit selcall and an HF DSC call, clean and at 8 dB; a bad ECC and noise give nothing. Hardware: marine
+  HF DSC on 2187.5 / 8414.5 kHz (tune 1.7 kHz below in USB); selcall on outback / NGO HF networks (e.g. Australian RFDS,
+  VKS-737) heard on their channels in USB.
+- **D-STAR / Fusion positions on Ham Map** (`src/dv-spots.ts`; FORK edits in ham-spots.ts (a DV spot mode with an
+  exact position, on the APRS layer; no SNR in its log line), main.ts (HAM+'s snapshots → dvSpots; the log filter by
+  layer; the DV colour; no grid square drawn for DV) and styles.css; `test/dvspots.test.ts`): the slow data (D-PRS with
+  its CRC checked, GPS NMEA, the 20-character message) and Fusion's data units were already read by the identity layer
+  upstream; what was missing was the map. Each D-STAR / Fusion talker with a position in HAM+ becomes a Ham Map station
+  at that position ("D-STAR D-PRS", "Fusion GPS", plus the slow data message), counted again only when it moves or a
+  minute passes. Tests: two talkers become DV spots at their exact positions and grids, others (DMR, no position) do
+  not; the APRS layer chip hides them; a repeat does not count, a move does. Hardware: HAM+ on a D-STAR repeater
+  output while a radio with GPS on (D-PRS) keys up: its callsign should appear on Ham Map in purple; same with a Fusion
+  radio sending GPS (FT2D / FTM-400 with GPS on).
+- **Q65** (`dsp/ham/q65.ts`, `dsp/ham/q65-tables.ts`; FORK edits in the worker (the decoder, its decodes into FT8's list,
+  period / submode) and main.ts (the DIGITAL tile, label, T/R and submode chips, the empty text, JT65's dials, the clock,
+  no grid spots); `test/q65.test.ts`): Nico Palermo's codec ported (CRC-12, the (65,15) QRA code over GF(64) with its
+  tables, the Bessel metric at q65_init's Es/No, message passing with Walsh-Hadamard convolutions, MAP decision, the
+  log-likelihood check); the frame after genq65.f90 (22 sync symbols on tone 0, data on tones 1-64, the 77-bit payload
+  as 13 symbols) and the periods after q65_decode.f90. Receiver (written here): one-symbol spectra a quarter symbol
+  apart, the sync tone over every start (−1 … +5.5 s, so EME echoes are found) and frequency, up to 20 candidates
+  decoded, FT8's unpacker. Found while testing: WSJT-X's EME sample was 2.8 s late, past a first +3 s search. Tests: the
+  encoder against q65_encode's generator matrix (q65_encoding_modules.f90) for 50 random messages; decoding clean /
+  noisy energies, none from noise; Q65-60A two stations at −12 dB, 15C at −6, 30B at −8; noise decodes nothing;
+  WSJT-X's real 6 m EME sample (60A, 210106_1621) gives all four callers (W7GJ VE1JF RRR, W1VD FN31, N0TB -15, N8JX
+  EN73) at 1620 Hz / 2.8 s as WSJT-X shows. Not done: WSJT-X's a-priori and list decoding, averaging, the fast-fading
+  metric (its 30A ionoscatter and 60B troposcatter samples do not decode here), T/R 300 s (too heavy in a browser).
+  Hardware: 6 m Q65-30A around 50.275 MHz USB, or 2 m / 70 cm EME nets on 60A/B with a big antenna; compare with WSJT-X.
+- **FreeDV and HamDRM (not started, recorded here):** FreeDV 1600 needs the FDMDV modem (16 DQPSK carriers + pilot,
+  codec2's fdmdv.c) and the Codec 2 1300 mode (codec2.ts has 3200 and 1600; 1300 reuses 1600's scalar LSP tables);
+  700D / 700E need codec2's OFDM modem, its LDPC code and the 700C codec (newamp1 with its VQ tables). Each is a port of
+  its own. HamDRM (EasyPal / QSSTV) is DRM mode B OFDM, MSC with multilevel coding and a file layer; QSSTV's receiver
+  leans on Numerical Recipes code that cannot be copied. All three stay open items.
+- **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
+  centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
+  `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The
+  envelope against a slowly decaying peak and floor, 14 pixels a column, a 300-column strip with each column drawn twice
+  (the Hell display: readable whatever the column phase). No font needed: Hell is a picture of the text. Tests: random
+  glyph-like columns come back with ≤ 2 % of pixels wrong clean and ≤ 8 % at 0 dB in 2500 Hz (best alignment). In
+  Chromium: "HI 73 HI 73" drawn by a 5×7 font, played through AUDIO IN, reads in the strip. Hardware: Feld Hell nets
+  around 3.580, 7.077, 14.063 MHz USB (and the Feld Hell Club's sprints); compare with fldigi.
+- **PSK63 / PSK125 / QPSK31** (`dsp/ham/psk.ts`, beside the upstream PSK31 decoder, untouched; FORK edits in the worker
+  (three decoders on PSK31's centre buttons) and main.ts (the DIGITAL tiles, USB/LSB)), `test/psk.test.ts`): BPSK at 62.5
+  and 125 baud as PSK31; QPSK31 after fldigi: the K=5 code (0x17, 0x19), fldigi's phase mapping (pair 0 → 180°, 1 → +90°,
+  2 → 0°, 3 → 270°), soft bits from the phase change and a Viterbi decoder (30-bit traceback). Demodulator (written here,
+  better than the upstream structure it started from, found while testing): the symbol centre from the smoothed
+  per-phase envelope, chosen once a symbol; a pulse-shaped matched filter over the whole symbol around it; and a real
+  frequency-tracking AFC (a tracked rate whose running total turns each symbol back; a fixed phase, as the upstream loop
+  applies, cancels in differential detection and corrects nothing), fast for the first 64 symbols. Tests: clean text
+  exactly in all three; PSK63 at −4 dB and PSK125 at −1 dB in 2500 Hz, 3 Hz off; QPSK31 at −6 dB, 2 Hz off (measured:
+  clean to −4 dB at 0-4 Hz off, a character or so lost at −8); noise and a plain carrier give no text. Hardware: 14.070
+  MHz USB (PSK63/125 around 14.070-14.073, QPSK31 rarer); compare with fldigi.
+- **JT9** (`dsp/ham/jt9.ts`; `wsprStackDecode` takes the code's length (WSPR 81 bits, JT9 103); FORK edits in the worker
+  and main.ts beside JT65's (the DIGITAL tile, JT65's dials); `test/jt9.test.ts`, fixture
+  `test/fixtures/wsjtx-jt9-130418_1742-4000sps.wav`): after WSJT-X. 85 symbols of 0.576 s, 9-FSK at 1.736 Hz (tone 0
+  sync on 16 symbols, tones 1-8 three Gray-coded bits each); packjt's 72 bits + 31-bit tail through the K=32 code
+  (WSPR's polynomials); bit-reversal interleaving. Audio at 7111 Hz (a symbol is 4096 samples); half-symbol spectra
+  with half-tone bins; the sync tone searched over 200-2700 Hz, DT −2.5..+5 s, required on in the sync symbols and off in
+  the data ones; refined; symspec2's bit soft values; the WSPR stack decoder; JT65's unpacking; one line per message
+  (a strong signal's weaker copies elsewhere are dropped). Also, JT9 and JT65: bins far below the band's typical level
+  are left out instead of being normalised up (found with audio band-limited to 2 kHz: they took every candidate).
+  Tests: the frame's sync and data tones; three stations at −10, −18, −24 dB decode with frequency, DT and SNR (±3 dB);
+  noise gives nothing; WSJT-X's real JT9 sample (samples/JT9/130418_1742.wav, resampled to 4000 Hz for the fixture)
+  gives seven stations: K1JT N5KDV EM41, JA1KAU PD0JAC −23, TF3G N7MQ CN84, G7CNF N4HFA EL89, K1JT KF4RWA 73,
+  CQ M0WAY IO82, CQ GM7GAX IO75 (calls and grids that agree with each other, so real, not chance). The recording also
+  checks JT65's message packing, which JT9 shares. Hardware: as JT65 (14.076 / 14.078 MHz USB); compare with WSJT-X.
+- **MSK40** (in `dsp/ham/msk144.ts`; the frame search generalised over frame length, sync positions and frame decoder;
+  `test/msk144.test.ts`): after WSJT-X. When no MSK144 frame decodes in a ping, its 20 ms frames are tried as MSK40: the
+  reversed sync word, matched-filtered bits, BP over the (32,16) code (bpdecode40's checks, encode_msk40's generator and
+  column order), then msk40decodeframe's tests (≤ 3 sync bits wrong, ≤ 4 code bits off the hard decisions, their summed
+  reliability < 0.65, an R / RRR / 73 report). Shown only when the 12-bit hash (WSJT-X's lookup3 over the 37-character
+  "CALL1 CALL2") matches a pair of calls seen together in an MSK144 decode lately: tried at every offset, a 32-bit code
+  matches by chance (WSJT-X's own sample gave three such "<hash>" decodes when bare hashes were shown, so they are not).
+  Tests: the generator and the parity checks agree for every report and a spread of hashes; after "K1ABC W9XYZ R-09",
+  a "<W9XYZ K1ABC> RRR" ping decodes, and a ping from a pair never seen gives nothing; the two real recordings still give
+  exactly their three messages. Hardware: as MSK144; short messages follow a QSO's full ones.
+- **JT65** (`dsp/ham/jt65.ts`; FORK edits in the worker and main.ts beside FT8's: the DIGITAL tile, A/B/C chips, the HF
+  JT65 dials plus 6 m and 2 m EME, the 60 s countdown, its own empty text; not Ham Map spots; `test/jt65.test.ts`):
+  after WSJT-X and Karn's RS codec (ported). 60 s slots; 126 symbols of 0.3715 s, the sync tone on the pattern's 63
+  symbols, the data 2-65 spacings above it (2.69 Hz ×1/×2/×4); RS(63,12) over GF(64), 7×9 interleave, Gray code;
+  packjt's 72-bit messages (calls, grid / report / RO / RRR / 73, CQ nnn, QRZ, free text; the v2 CQ/QRZ/DE prefix and
+  suffix forms on receive). Audio at 5512.5 Hz (a symbol = 2048 samples); half-symbol spectra, each bin against its
+  median; the sync pattern searched over 200-2700 Hz and DT −2..+4 s; refined; 64 tone powers a data symbol; hard
+  decisions ranked by reliability; Karn's Berlekamp-Massey with 0-48 of the least reliable erased, then 1500 random
+  reliability-weighted erasure sets. Against false decodes (each found while building): the sync tone must be on in the
+  sync symbols and off in the data ones (ratio ≥ 2: a carrier or another mode gives ~1); the decoded tones must average
+  ≥ 3.5× their symbols' medians (5× for free text); no tone value more than 12 times in the codeword (a near-all-zero
+  message is a steady tone); nothing inside an already decoded signal's band. Tests: messages pack and unpack back;
+  RS corrects 25 errors and fills 51 erasures, 26 errors do not give the message; interleaving undoes itself; the
+  frame's sync and data tones; three JT65A stations (−8, −16, −22 dB in 2500 Hz) decode with frequency (±1 Hz), DT (±0.1
+  s) and SNR (±2 dB), no echo of the strong one; JT65B and C at −22 dB; noise, a carrier and a strong random 9-tone
+  signal give nothing in A, B and C; the live path (48 kHz, clock stubbed) decodes 52 s into its minute. Measured while
+  building: A and C decode every time at −23 dB, none at −24 (WSJT-X's KV decoder reaches about −25); 24 noise-only
+  slots gave nothing; about 0.4 s a slot. In Chromium: the JT65 tile, its submode chips and dials.
+  Not done: no real JT65 recording decodes here to check against: WSJT-X's JT65B samples are weak EME meant to be averaged
+  over several transmissions, and DL7UAE's is 26 s long (a JT65 transmission is 47 s); WSJT-X's JT9 sample gave no JT65
+  decode, as it should. Also not done: averaging, deep search, EME shorthand messages, type-1 prefix / suffix calls.
+  Hardware: a HackRF with a wire antenna on 14.076 MHz USB (JT65A; less busy than in its day, so try evenings or 10 m /
+  6 m openings); compare with WSJT-X in JT65 mode.

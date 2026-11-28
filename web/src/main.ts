@@ -87,7 +87,8 @@ import { enteredPlan } from './dsp/fleet/smartnet.js';
 import { clampPpm, measurePlan, ppmAfter, PPM_MAX } from './dsp/ppm.js';
 import type { FleetSnap, CallRow as FleetCall, Lock as DispatchLock, TgPrefs, UnitReport as FleetUnitReport, SystemRow as FleetSystem, SiteRow as FleetSite, CarrierRow as FleetCarrier, GrantRow as FleetGrant } from './dsp/fleet/fleet.js';
 import type { Iden as FleetIden } from './dsp/fleet/tsbk.js';
-import { hamSpots, loadLayers, saveLayers, visibleSpots, gridRing, freqText, bandLabel, type HamSpot, type HamLayer } from './ham-spots.js';
+import { hamSpots, loadLayers, saveLayers, visibleSpots, gridRing, freqText, bandLabel, spotLayer, type HamSpot, type HamLayer } from './ham-spots.js';   // FORK: + spotLayer
+import { dvSpots } from './dv-spots.js';   // FORK: D-STAR / Fusion positions → Ham Map
 import { renderJs8, js8Dial, js8SetDial, js8Speeds, js8OnDecodes, js8OnWaterfall, refreshJs8, type Js8Host } from './js8-ui.js';
 import type { Js8Decode } from './dsp/js8/decoder.js';
 import type { Js8Speed } from './dsp/js8/modes.js';
@@ -139,22 +140,22 @@ interface AppDef { id: AppId; title: string; blurb: string; cat: 'Receive' | 'An
 const APPS: AppDef[] = [
   { id: 'audio', title: 'Audio', blurb: 'WFM · NFM · AM · SSB', cat: 'Receive' },
   { id: 'hd', title: 'HD Radio', blurb: 'station data · art · traffic', cat: 'Receive' },
-  { id: 'fleet', title: 'Dispatch', blurb: 'P25 · DMR · Type II trunking and calls', cat: 'Receive' },
+  { id: 'fleet', title: 'Dispatch', blurb: 'P25 · DMR · NXDN · TETRA · Smartnet', cat: 'Receive' },
   { id: 'pager', title: 'Pagers', blurb: 'FLEX · POCSAG', cat: 'Receive' },
-  { id: 'lora', title: 'Mesh', blurb: 'LoRa · Meshtastic · MeshCore', cat: 'Receive' },
-  { id: 'adsb', title: 'Flights', blurb: 'ADS-B · 1090 MHz', cat: 'Receive' },
+  { id: 'lora', title: 'Mesh', blurb: 'Meshtastic · MeshCore · LoRaWAN', cat: 'Receive' },
+  { id: 'adsb', title: 'Flights', blurb: 'ADS-B · 1090 MHz', cat: 'Receive' },
   { id: 'uat', title: 'Flight UAT', blurb: 'UAT 978 · weather · small planes', cat: 'Receive' },
   { id: 'acars', title: 'Flight Msgs', blurb: 'ACARS · VDL2', cat: 'Receive' },
   // VDL2 has no tile or bar key of its own: it is the 136.975 band of Flight Messages (see MERGED_INTO)
   { id: 'vdl2', title: 'Flight Msgs', blurb: 'VDL Mode 2 · 136.975 MHz', cat: 'Receive' },
   { id: 'hfdl', title: 'Flight Msgs', blurb: 'HFDL · 3-22 MHz', cat: 'Receive' },   // FORK: HFDL
   { id: 'trains', title: 'Trains', blurb: 'EOT · PTC', cat: 'Receive' },
-  { id: 'ais', title: 'Ships', blurb: 'AIS · 162 MHz', cat: 'Receive' },
+  { id: 'ais', title: 'Ships', blurb: 'AIS · 162 MHz', cat: 'Receive' },
   { id: 'cell', title: 'Cell', blurb: 'LTE alerts · cell info', cat: 'Receive' },
   { id: 'devices', title: 'Devices', blurb: 'keys · remotes · TPMS', cat: 'Receive' },
   { id: 'js8', title: 'JS8', blurb: 'HF chat · groups', cat: 'Receive' },
   { id: 'ham', title: 'Ham Radio', blurb: 'SSB · CW · repeaters', cat: 'Receive' },
-  { id: 'hamplus', title: 'Repeaters', blurb: 'every repeater and simplex channel at once', cat: 'Receive' },
+  { id: 'hamplus', title: 'Repeaters', blurb: 'every repeater and simplex at once', cat: 'Receive' },
   { id: 'cb', title: 'CB Radio', blurb: 'all 40 channels at once', cat: 'Receive' },
   { id: 'gmrs', title: 'GMRS', blurb: 'all 30 channels and MURS at once', cat: 'Receive' },
   { id: 'aprs', title: 'Ham Map', blurb: 'APRS · FT8 · JS8', cat: 'Receive' },
@@ -170,7 +171,7 @@ const APPS: AppDef[] = [
   { id: 'fpv', title: 'FPV', blurb: 'Analog FPV video · 5.8 GHz', cat: 'Receive' },   // FORK: analog FPV video
   { id: 'sat', title: 'Satellites', blurb: 'track and decode', cat: 'Receive' },
   { id: 'satcom', title: 'Satcom', blurb: 'Inmarsat · EGC · Aero ACARS', cat: 'Receive' },
-  { id: 'sondes', title: 'Weather Balloons', blurb: 'radiosondes · 400–406 MHz', cat: 'Receive' },
+  { id: 'sondes', title: 'Weather Balloons', blurb: 'radiosondes · 400–⁠406 MHz', cat: 'Receive' },
   { id: 'atsc', title: 'TV', blurb: 'ATSC · guide · pictures', cat: 'Receive' },
   { id: 'prowl', title: 'Prowl', blurb: 'hunts live voice', cat: 'Receive' },
   { id: 'spectrum', title: 'Spectrum', blurb: 'analyzer, zero span', cat: 'Analyze' },
@@ -217,7 +218,7 @@ const state = {
   viewLo: 0,                                   // the plain receiver's span center (radio LO); state.freq is the channel
   ham: { freq: 146_520_000, mode: 'NFM' as HamMode, lo: 300, hi: 6000, pitch: 600, agc: 'slow' as AgcMode, nr: false, anf: false, squelch: 6, volume: 1, shift: 0, rev: false, back: 0,
     db: -120, floor: -120, open: true, tone: 0, toneDb: 0, dcs: 0, dcsInv: false, gain: 1, audioPeak: 0,
-    digi: { mode: 'off' as 'off' | 'auto' | 'cw' | 'rtty' | 'psk31' | 'ft8' | 'ft4' | 'wspr' | 'fst4w' | 'fst4' | 'wefax' | 'msk144' /* FORK */ | 'dmr' | 'p25' | 'sstv', dmrSlot: 0, dmr: null as DmrStatus | null, p25: null as P25Status | null, text: '', winner: '', conf: [] as [string, number][], wpm: 0, pskHz: 1000, rttyBaud: 45.45, rttyShift: 170, rttyRev: false, ft8: [] as { utc: string; snr: number; dt: number; hz: number; text: string }[], wefaxLpm: 120 /* FORK: WEFAX */, fst4Period: 60, fst4wPeriod: 120, fst4Rx: 1500 /* FORK: FST4 / FST4W */ },
+    digi: { mode: 'off' as 'off' | 'auto' | 'cw' | 'rtty' | 'psk31' | 'ft8' | 'ft4' | 'wspr' | 'fst4w' | 'fst4' | 'jt65' | 'jt9' | 'wefax' | 'msk144' | 'psk63' | 'psk125' | 'qpsk31' | 'hell' | 'olivia' | 'contestia' | 'mfsk16' | 'mfsk32' | 'dominoex' | 'thor' | 'packet' | 'ale' | 'selcall' | 'q65' /* FORK */ | 'dmr' | 'p25' | 'sstv', dmrSlot: 0, dmr: null as DmrStatus | null, p25: null as P25Status | null, text: '', winner: '', conf: [] as [string, number][], wpm: 0, pskHz: 1000, rttyBaud: 45.45, rttyShift: 170, rttyRev: false, ft8: [] as { utc: string; snr: number; dt: number; hz: number; text: string }[], wefaxLpm: 120 /* FORK: WEFAX */, fst4Period: 60, fst4wPeriod: 120, fst4Rx: 1500 /* FORK: FST4 / FST4W */, jt65Sub: 1 /* FORK: JT65 A / B / C */, olivia: '8/250' /* FORK: Olivia / Contestia tones/bandwidth */, ifkSpeed: 11 /* FORK: DominoEX / Thor speed */, q65Period: 60, q65Sub: 0 /* FORK: Q65 T/R and submode */ },
     sat: { sel: 25544, svc: 0, view: 'track' as 'track' | 'orbcomm' | 'packet', tles: new Map<number, Tle>(), track: false, dopplerOn: true, passes: [] as Pass[], status: '', packets: [] as string[] },
     img: { mode: '', width: 0, height: 0, line: 0, done: false, apt: 0, lrpt: { planes: {} as Record<number, Uint8Array>, lines: 0, stats: '' } },
     log: { entries: loadLog(), draft: { call: '', rstS: '', rstR: '', name: '', qth: '', grid: '', notes: '', mode: '' }, info: null as CallInfo | null, editing: '' },
@@ -2240,7 +2241,7 @@ function renderLauncher(view: HTMLElement): void {
     <section class="controls launch-side"><div class="grid launch-grid">${(['Receive', 'Analyze', 'Transmit', 'Tools'] as const).map(c => {
       const apps = APPS.filter(a => a.cat === c && !MERGED_INTO[a.id]); if (!apps.length) return '';
       // each group's name over its tiles: a grid two to a row on a phone, one sideways row when wide (as on iPad)
-      return `<div class="lgrp"><div class="gcat" style="color:${tint(c)}">${c.toUpperCase()}</div><div class="lgrp-in">` + apps.map(a => `<button class="tile" data-app="${a.id}" style="--tint:${tint(a.cat)}"><span class="wm">${glyph(a.id, tintHex(a.cat), 84)}</span><div class="tile-top"><span class="badge">${glyph(a.id, tintHex(a.cat), 26)}</span><span class="cat">${a.cat.toUpperCase()}</span></div><div class="tile-title">${a.title}</div><div class="tile-blurb" data-blurb="${a.blurb}">${a.blurb}</div></button>`).join('') + '</div></div>';
+      return `<div class="lgrp"><div class="gcat" style="color:${tint(c)}">${c.toUpperCase()}</div><div class="lgrp-in">` + apps.map(a => `<button class="tile" data-app="${a.id}" style="--tint:${tint(a.cat)}"><span class="wm">${glyph(a.id, tintHex(a.cat), 84)}</span><div class="tile-top"><span class="badge">${glyph(a.id, tintHex(a.cat), 26)}</span><span class="cat">${a.cat.toUpperCase()}</span></div><div class="tile-title${a.title.length > 12 ? ' long' : ''}">${a.title}</div><div class="tile-blurb" data-blurb="${a.blurb}">${a.blurb}</div></button>`).join('') + '</div></div>';
     }).join('')}</div>
     <div class="foot"><span id="version">${versionText}</span> · <a id="release-link" href="${releaseUrl}">release</a> · ${'' /* FORK: fork source + upstream credit */}<a href="${FORK_REPO}">source</a> · GPL-3.0 · ${esc(FORK_NAME)}, from <a href="${UPSTREAM_REPO}">Mayhem Mobile</a> · a port of <a href="https://github.com/portapack-mayhem/mayhem-firmware">PortaPack Mayhem</a><br>made by <a href="https://rocketgod.dev">RocketGod</a> · The Pirates' Plunder · <a href="https://discord.gg/thepirates">discord.gg/thepirates</a></div></section>`;
   scope = attach(tunableScope('launch-scope', 70, 90));
@@ -2602,7 +2603,7 @@ function hamOpen(): void {
   // a dongle starts at 24 MHz: a channel it cannot reach (FT8 at 14.074, say) opens on the 2 m calling frequency
   if (radio && !canTune(radio.limits, h.freq)) { h.freq = 146_520_000; h.rev = false; if (h.mode !== 'NFM') hamSetMode('NFM'); }
   if (h.tab === 'monitor') { monitorOpen(); return; }
-  if (h.tab === 'digi' && (h.digi.mode === 'ft8' || h.digi.mode === 'ft4' || h.digi.mode === 'wspr' || h.digi.mode === 'fst4w' || h.digi.mode === 'fst4' || h.digi.mode === 'wefax' || h.digi.mode === 'msk144' /* FORK */) && h.mode !== 'USB') hamSetMode('USB');
+  if (h.tab === 'digi' && (h.digi.mode === 'ft8' || h.digi.mode === 'ft4' || h.digi.mode === 'wspr' || h.digi.mode === 'fst4w' || h.digi.mode === 'fst4' || h.digi.mode === 'jt65' || h.digi.mode === 'jt9' || h.digi.mode === 'q65' || h.digi.mode === 'wefax' || h.digi.mode === 'msk144' /* FORK */) && h.mode !== 'USB') hamSetMode('USB');
   if (h.tab === 'digi' && (h.digi.mode === 'dmr' || h.digi.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM');
   state.hamLo = hamLoFor(h.freq);
   configure('NONE', state.hamLo, HAM_RATES[hamRateIdx], 32, 40, false, 'ham');
@@ -2665,20 +2666,22 @@ function monitorOpen(at?: number): void {
 }
 function digiSend(): void {
   const g = state.ham.digi;
-  worker?.postMessage({ type: 'digital', mode: g.mode, pitch: state.ham.pitch, pskHz: g.pskHz, rttyBaud: g.rttyBaud, rttyShift: g.rttyShift, rttyRev: g.rttyRev, dmrSlot: g.dmrSlot, wefaxLpm: g.wefaxLpm /* FORK: WEFAX */, fst4Period: g.fst4Period, fst4wPeriod: g.fst4wPeriod, fst4Rx: g.fst4Rx /* FORK: FST4 / FST4W */ });
+  worker?.postMessage({ type: 'digital', mode: g.mode, pitch: state.ham.pitch, pskHz: g.pskHz, rttyBaud: g.rttyBaud, rttyShift: g.rttyShift, rttyRev: g.rttyRev, dmrSlot: g.dmrSlot, wefaxLpm: g.wefaxLpm /* FORK: WEFAX */, fst4Period: g.fst4Period, fst4wPeriod: g.fst4wPeriod, fst4Rx: g.fst4Rx /* FORK: FST4 / FST4W */, jt65Sub: g.jt65Sub /* FORK: JT65 */, olivia: g.olivia /* FORK: Olivia / Contestia */, ifkSpeed: g.ifkSpeed /* FORK: DominoEX / Thor */, q65Period: g.q65Period, q65Sub: g.q65Sub /* FORK: Q65 */ });
   qa('[data-digi]').forEach(b => b.classList.toggle('on', b.dataset.digi === g.mode));
   qa('[data-dmrslot]').forEach(b => b.classList.toggle('on', Number(b.dataset.dmrslot) === g.dmrSlot));
   const dp = q('#dmr-panel'); if (dp) (dp as HTMLElement).hidden = !(g.mode === 'dmr' || g.mode === 'auto');
   const pp = q('#p25-panel'); if (pp) (pp as HTMLElement).hidden = !(g.mode === 'p25' || g.mode === 'auto');
-  const sp = q('#sstv-panel'); if (sp) (sp as HTMLElement).hidden = !(g.mode === 'sstv' || g.mode === 'wefax' /* FORK */ || g.mode === 'auto');
+  const sp = q('#sstv-panel'); if (sp) (sp as HTMLElement).hidden = !(g.mode === 'sstv' || g.mode === 'wefax' || g.mode === 'hell' /* FORK */ || g.mode === 'auto');
   // FORK: WEFAX shares the picture panel; its station and LPM buttons replace SSTV's
-  const wt = q('#wefax-tiles'), st = q('#sstv-tiles'); if (wt) (wt as HTMLElement).hidden = g.mode !== 'wefax'; if (st) (st as HTMLElement).hidden = g.mode === 'wefax';
+  const wt = q('#wefax-tiles'), st = q('#sstv-tiles'); if (wt) (wt as HTMLElement).hidden = g.mode !== 'wefax'; if (st) (st as HTMLElement).hidden = g.mode === 'wefax' || g.mode === 'hell';
   qa('[data-wflpm]').forEach(b => b.classList.toggle('on', Number(b.dataset.wflpm) === g.wefaxLpm));
   // FORK: end WEFAX
   qa('[data-pskhz]').forEach(b => b.classList.toggle('on', Number(b.dataset.pskhz) === g.pskHz));
+  qa('[data-olivia]').forEach(b => b.classList.toggle('on', b.dataset.olivia === g.olivia));   // FORK: Olivia
+  qa('[data-ifk]').forEach(b => b.classList.toggle('on', Number(b.dataset.ifk) === g.ifkSpeed));   // FORK: DominoEX / Thor
   qa('[data-rtty]').forEach(b => b.classList.toggle('on', b.dataset.rtty === `${g.rttyBaud}/${g.rttyShift}`));
   const rv = q('#rtty-rev'); if (rv) rv.classList.toggle('on', g.rttyRev);
-  const ftp = q('#ft8-panel'); if (ftp) (ftp as HTMLElement).hidden = !(g.mode === 'ft8' || g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'msk144' /* FORK */ || g.mode === 'auto');
+  const ftp = q('#ft8-panel'); if (ftp) (ftp as HTMLElement).hidden = !(g.mode === 'ft8' || g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'jt65' || g.mode === 'jt9' || g.mode === 'q65' || g.mode === 'msk144' /* FORK */ || g.mode === 'auto');
   ftOpts(); refreshFt8();   // FORK: FST4 / FST4W period and Rx frequency; the list's hint follows the mode
   // FORK: FT4 and WSPR share the FT8 panel: its caption and dial buttons follow the mode
   if (ftp) {
@@ -2718,7 +2721,7 @@ function refreshP25(): void {
 }
 function refreshFt8(): void {
   const g = state.ham.digi, el = q('#ft8-list'); if (!el) return;
-  el.innerHTML = g.ft8.length ? g.ft8.slice(0, 60).map((r, i) => `<div class="li tap ${i % 2 ? 'alt' : ''} ${/^CQ /.test(r.text) ? 'gold' : ''}" data-ft8i="${i}"><span class="row2"><span>${r.utc}  ${String(r.snr).padStart(3)}  ${r.dt.toFixed(1)}  ${r.hz}</span><span>${r.text}</span></span></div>`).join('') : g.mode === 'msk144' ? '<div class="empty">MSK144 decodes each meteor ping (a fraction of a second of signal) as it comes — tune a calling frequency below in USB (1500 Hz audio) · 6 m and 2 m suit a HackRF or an RTL-SDR with a vertical or a small Yagi; pings are best around dawn and during showers · tap a decode to log the station</div>' /* FORK: MSK144 */ : g.mode === 'fst4' ? '<div class="empty">FST4 decodes at the end of each period (choose it above: 15 s to 30 min) within 100 Hz of the Rx frequency · mostly on 2200 m and 630 m, where the long periods dig signals out far below the noise · tap a decode to log the station</div>' /* FORK: FST4 */ : g.mode === 'fst4w' ? '<div class="empty">FST4W beacons decode at the end of each period (120 s to 30 min, chosen above), a few dB below WSPR\'s floor — tune a WSPR dial below (USB; 1400-1600 Hz up) · each line is call, grid, transmit power in dBm (a hashed call has none) · HF needs a HackRF (1 MHz and up) or an RTL-SDR with direct sampling or an upconverter</div>' /* FORK: FST4W */ : g.mode === 'wspr' ? '<div class="empty">WSPR beacons decode 115 s into each even UTC minute — tune a WSPR dial below (USB; the beacons are 1400-1600 Hz up) · each line is call, grid, transmit power in dBm · HF needs a HackRF (1 MHz and up) or an RTL-SDR with direct sampling or an upconverter</div>' /* FORK: WSPR */ : g.mode === 'ft4' ? '<div class="empty">FT4 decodes appear every 7.5 s — tune a band\'s FT4 frequency in USB (the buttons below) · tap a decode to log the station</div>' /* FORK: FT4 */ : '<div class="empty">FT8 decodes appear every 15 s — tune a band\'s FT8 frequency in USB (the FT8 chip does that) · tap a decode to log the station</div>';
+  el.innerHTML = g.ft8.length ? g.ft8.slice(0, 60).map((r, i) => `<div class="li tap ${i % 2 ? 'alt' : ''} ${/^CQ /.test(r.text) ? 'gold' : ''}" data-ft8i="${i}"><span class="row2"><span>${r.utc}  ${String(r.snr).padStart(3)}  ${r.dt.toFixed(1)}  ${r.hz}</span><span>${r.text}</span></span></div>`).join('') : g.mode === 'msk144' ? '<div class="empty">MSK144 decodes each meteor ping (a fraction of a second of signal) as it comes — tune a calling frequency below in USB (1500 Hz audio) · 6 m and 2 m suit a HackRF or an RTL-SDR with a vertical or a small Yagi; pings are best around dawn and during showers · tap a decode to log the station</div>' /* FORK: MSK144 */ : g.mode === 'q65' ? '<div class="empty">Q65 decodes after each T/R period, signals 200-3000 Hz (echoes up to 5.5 s late for EME) · set the period and submode the band uses · tap a decode to log the station</div>' /* FORK: Q65 */ : g.mode === 'jt9' ? '<div class="empty">JT9 decodes 53 s into each minute, signals 200-2700 Hz (on WSJT-X\'s shared JT65 / JT9 dials JT9 usually sits above JT65) · tap a decode to log the station</div>' /* FORK: JT9 */ : g.mode === 'jt65' ? '<div class="empty">JT65 decodes 52 s into each minute, signals 200-2700 Hz · tune a JT65 dial below in USB (most HF activity is JT65A) · tap a decode to log the station</div>' /* FORK: JT65 */ : g.mode === 'fst4' ? '<div class="empty">FST4 decodes at the end of each period (choose it above: 15 s to 30 min) within 100 Hz of the Rx frequency · mostly on 2200 m and 630 m, where the long periods dig signals out far below the noise · tap a decode to log the station</div>' /* FORK: FST4 */ : g.mode === 'fst4w' ? '<div class="empty">FST4W beacons decode at the end of each period (120 s to 30 min, chosen above), a few dB below WSPR\'s floor — tune a WSPR dial below (USB; 1400-1600 Hz up) · each line is call, grid, transmit power in dBm (a hashed call has none) · HF needs a HackRF (1 MHz and up) or an RTL-SDR with direct sampling or an upconverter</div>' /* FORK: FST4W */ : g.mode === 'wspr' ? '<div class="empty">WSPR beacons decode 115 s into each even UTC minute — tune a WSPR dial below (USB; the beacons are 1400-1600 Hz up) · each line is call, grid, transmit power in dBm · HF needs a HackRF (1 MHz and up) or an RTL-SDR with direct sampling or an upconverter</div>' /* FORK: WSPR */ : g.mode === 'ft4' ? '<div class="empty">FT4 decodes appear every 7.5 s — tune a band\'s FT4 frequency in USB (the buttons below) · tap a decode to log the station</div>' /* FORK: FT4 */ : '<div class="empty">FT8 decodes appear every 15 s — tune a band\'s FT8 frequency in USB (the FT8 chip does that) · tap a decode to log the station</div>';
   qa<HTMLElement>('[data-ft8i]', el).forEach(row => row.onclick = () => { const r = g.ft8[Number(row.dataset.ft8i)]; if (!r) return; const tok = r.text.replace(/^CQ (DX|POTA|SOTA|[A-Z]{2}) /, 'CQ ').split(/\s+/); const call = g.mode === 'wspr' || g.mode === 'fst4w' /* FORK: a WSPR / FST4W spot is "CALL GRID dBm" */ ? tok[0] : tok[0] === 'CQ' ? tok[1] : tok[1] ?? tok[0]; const grid = tok.find(x => /^[A-R]{2}\d{2}$/.test(x)) ?? ''; logPrefill({ call: (call ?? '').replace(/^<|>$/g, ''), grid, rstR: String(r.snr), rstS: '', mode: 'FT8', notes: r.text }); });
 }
 let ft8Timer = 0;
@@ -2931,6 +2934,8 @@ function renderHam(view: HTMLElement): void {
           <div class="dmrslots"><div class="panel dmrslot" id="dmr-s1"></div><div class="panel dmrslot" id="dmr-s2"></div></div>
           <div class="ctlrow"><span class="rl">HEAR</span>${segHtml([['0', 'LATEST'], ['1', 'SLOT 1'], ['2', 'SLOT 2']].map(([v, l]) => `<button data-dmrslot="${v}">${l}</button>`))}</div><div class="note">Both time slots are decoded; you hear one.</div></div>
         <div class="ctlrow"><span class="rl">PSK Hz</span>${segHtml([500, 1000, 1500, 2000].map(f => `<button data-pskhz="${f}">${f}</button>`))}</div>
+        <div class="ctlrow"><span class="rl">OLIVIA</span>${segHtml(OLIVIA_PRESETS.map(p => `<button data-olivia="${p}">${p}</button>`)) /* FORK: Olivia / Contestia tones/bandwidth; centre = PSK Hz */}</div>
+        <div class="ctlrow"><span class="rl">DOMINO/THOR</span>${segHtml([4, 5, 8, 11, 16, 22].map(v => `<button data-ifk="${v}">${v}</button>`)) /* FORK: DominoEX / Thor speed; centre = PSK Hz */}</div>
         <div class="ctlrow"><span class="rl">RTTY</span>${segHtml([['45.45', '170'], ['50', '170'], ['75', '170'], ['45.45', '450'], ['50', '850']].map(([b, s]) => `<button data-rtty="${b}/${s}">${b === '45.45' ? '45' : b}/${s}</button>`), 'tight')}<button id="rtty-rev" class="tog">REV</button></div>
         <div class="caption">TEXT</div><pre id="digi-text" class="panel digitext">${g.text}</pre>
         <div id="sstv-panel" hidden>${imgPanelHtml()}<div id="wefax-tiles" hidden>${wefaxTilesHtml() /* FORK: WEFAX */}</div><div id="sstv-tiles">${hsHtml(`<div class="tiles wide">${[['20m 14.230', 14_230_000, 'USB'], ['20m 14.233', 14_233_000, 'USB'], ['10m 28.680', 28_680_000, 'USB'], ['40m 7.171', 7_171_000, 'LSB'], ['ISS 145.800', 145_800_000, 'NFM']].map(([l, f, md]) => `<button class="tl" data-sstvf="${f}" data-sstvm="${md}"><b>${String(l).split(' ')[1]}</b><small>SSTV · ${String(l).split(' ')[0]} ${md}</small></button>`).join('')}</div>`)}</div></div>
@@ -2939,19 +2944,21 @@ function renderHam(view: HTMLElement): void {
       </section>`;
     scope = attach(tunableScope('scope', 200));
     qa<HTMLButtonElement>('[data-hamtab]', view).forEach(b => b.onclick = () => { h.tab = b.dataset.hamtab as typeof h.tab; open('ham'); });
-    qa<HTMLButtonElement>('[data-digi]', view).forEach(b => b.onclick = () => { g.mode = b.dataset.digi as typeof g.mode; if ((g.mode === 'ft8' || g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'wefax' || g.mode === 'msk144' /* FORK */) && h.mode !== 'USB') hamSetMode('USB'); if (g.mode === 'cw' && h.mode !== 'CW') hamSetMode('CW'); if ((g.mode === 'dmr' || g.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM'); if ((g.mode === 'psk31' || g.mode === 'rtty') && h.mode !== 'USB' && h.mode !== 'LSB') hamSetMode('USB'); digiSend(); });
+    qa<HTMLButtonElement>('[data-digi]', view).forEach(b => b.onclick = () => { g.mode = b.dataset.digi as typeof g.mode; if ((g.mode === 'ft8' || g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'jt65' || g.mode === 'jt9' || g.mode === 'q65' || g.mode === 'wefax' || g.mode === 'msk144' /* FORK */) && h.mode !== 'USB') hamSetMode('USB'); if (g.mode === 'cw' && h.mode !== 'CW') hamSetMode('CW'); if ((g.mode === 'dmr' || g.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM'); if ((g.mode === 'psk31' || g.mode === 'psk63' || g.mode === 'psk125' || g.mode === 'qpsk31' || g.mode === 'hell' || g.mode === 'olivia' || g.mode === 'contestia' || g.mode === 'mfsk16' || g.mode === 'mfsk32' || g.mode === 'dominoex' || g.mode === 'thor' || g.mode === 'packet' || g.mode === 'ale' || g.mode === 'selcall' /* FORK */ || g.mode === 'rtty') && h.mode !== 'USB' && h.mode !== 'LSB') hamSetMode('USB'); digiSend(); });
     qa<HTMLButtonElement>('[data-dmrslot]', view).forEach(b => b.onclick = () => { g.dmrSlot = Number(b.dataset.dmrslot); digiSend(); });
     bindWefax(view);   // FORK: WEFAX
     qa<HTMLButtonElement>('[data-sstvf]', view).forEach(b => b.onclick = () => { g.mode = 'sstv'; const md = b.dataset.sstvm as HamMode; if (h.mode !== md) hamSetMode(md); hamTune(Number(b.dataset.sstvf)); digiSend(); });
     imgBind();
     qa<HTMLButtonElement>('[data-hmode]', view).forEach(b => b.onclick = () => hamSetMode(b.dataset.hmode as HamMode));
+    qa<HTMLButtonElement>('[data-olivia]', view).forEach(b => b.onclick = () => { g.olivia = b.dataset.olivia!; digiSend(); });   // FORK: Olivia
+    qa<HTMLButtonElement>('[data-ifk]', view).forEach(b => b.onclick = () => { g.ifkSpeed = Number(b.dataset.ifk); digiSend(); });   // FORK: DominoEX / Thor
     qa<HTMLButtonElement>('[data-pskhz]', view).forEach(b => b.onclick = () => { g.pskHz = Number(b.dataset.pskhz); digiSend(); });
     qa<HTMLButtonElement>('[data-rtty]', view).forEach(b => b.onclick = () => { const [bd, sh] = b.dataset.rtty!.split('/'); g.rttyBaud = Number(bd); g.rttyShift = Number(sh); digiSend(); });
     $('rtty-rev').onclick = () => { g.rttyRev = !g.rttyRev; digiSend(); };
     $('digi-clear').onclick = () => { g.text = ''; g.ft8 = []; $('digi-text').textContent = ''; refreshFt8(); };
     bindFtDials(view);   // FORK: the dial buttons are rebuilt when FT8 ⇄ FT4 (digiSend)
     clearInterval(ft8Timer);
-    ft8Timer = window.setInterval(() => { const c = q('#ft8-clock'); if (!c) { clearInterval(ft8Timer); return; } const dm = state.ham.digi, P = dm.mode === 'fst4w' ? dm.fst4wPeriod : dm.mode === 'fst4' ? dm.fst4Period : dm.mode === 'wspr' ? 120 : dm.mode === 'ft4' ? 7.5 : 15 /* FORK: FT4's, WSPR's and FST4's periods */, s = (Date.now() / 1000) % P; c.textContent = state.ham.digi.mode === 'msk144' /* FORK */ ? `pings decode as they come · ${(P - s).toFixed(0)} s to the next 15 s period` : `${(P - s).toFixed(0)} s to next ${dm.mode === 'fst4' || dm.mode === 'fst4w' ? `${P} s period` : 'slot'}${dm.mode === 'wspr' ? ' (even minutes; decodes 115 s in)' : ''}`; }, 500);
+    ft8Timer = window.setInterval(() => { const c = q('#ft8-clock'); if (!c) { clearInterval(ft8Timer); return; } const dm = state.ham.digi, P = dm.mode === 'fst4w' ? dm.fst4wPeriod : dm.mode === 'fst4' ? dm.fst4Period : dm.mode === 'wspr' ? 120 : dm.mode === 'q65' ? dm.q65Period : dm.mode === 'jt65' || dm.mode === 'jt9' ? 60 : dm.mode === 'ft4' ? 7.5 : 15 /* FORK: FT4's, WSPR's and FST4's periods */, s = (Date.now() / 1000) % P; c.textContent = state.ham.digi.mode === 'msk144' /* FORK */ ? `pings decode as they come · ${(P - s).toFixed(0)} s to the next 15 s period` : `${(P - s).toFixed(0)} s to next ${dm.mode === 'fst4' || dm.mode === 'fst4w' ? `${P} s period` : 'slot'}${dm.mode === 'wspr' ? ' (even minutes; decodes 115 s in)' : dm.mode === 'jt65' ? ' (decodes 52 s in)' : dm.mode === 'jt9' ? ' (decodes 53 s in)' : ''}`; }, 500);
     refreshHamUi(); digiSend(); refreshFt8(); refreshDmr(); refreshP25();
     return;
   }
@@ -3107,7 +3114,7 @@ function onSstv(m: Record<string, unknown>): void {
   if (im.mode !== m.mode || im.width !== width || line === 0) { im.mode = m.mode as string; im.width = width; im.height = height; im.done = false; c.width = width; c.height = height; c.getContext('2d')!.fillStyle = '#000'; c.getContext('2d')!.fillRect(0, 0, width, height); }
   im.line = line + count; im.done = im.line >= height;
   c.getContext('2d')!.putImageData(new ImageData(rows, width, count), 0, line);
-  const cap = q('#img-caption'); if (cap) cap.textContent = `${im.mode.startsWith('WEFAX') ? '' : 'SSTV ' /* FORK: WEFAX charts use this panel */}${im.mode} · ${width}×${height} · line ${im.line}${im.done ? ' · complete' : ''}`;
+  const cap = q('#img-caption'); if (cap) cap.textContent = `${im.mode.startsWith('WEFAX') || im.mode.startsWith('Feld') ? '' : 'SSTV ' /* FORK: WEFAX charts and Hell use this panel */}${im.mode} · ${width}×${height} · line ${im.line}${im.done ? ' · complete' : ''}`;
 }
 /** Meteor LRPT: three spectral channels arrive as 8-row strips; keep a plane per APID and paint a color composite. */
 const LRPT_W = 1568;
@@ -3206,7 +3213,7 @@ function saveStation(): void { try { localStorage.setItem('mayhem.station', JSON
 function logModeNow(): string {
   const h = state.ham, d = h.digi.mode, ssb = h.mode === 'USB' || h.mode === 'LSB' || h.mode === 'CW';
   // a digital mode only counts when the receiver is set up for it: audio modems need sideband / CW, DMR needs NFM
-  if (ssb && (d === 'cw' || d === 'rtty' || d === 'psk31' || d === 'ft8' || d === 'ft4' || d === 'wspr' || d === 'fst4w' || d === 'fst4' || d === 'wefax' || d === 'msk144' /* FORK */ || d === 'sstv')) return d.toUpperCase();
+  if (ssb && (d === 'cw' || d === 'rtty' || d === 'psk31' || d === 'ft8' || d === 'ft4' || d === 'wspr' || d === 'fst4w' || d === 'fst4' || d === 'jt65' || d === 'jt9' || d === 'q65' || d === 'wefax' || d === 'msk144' || d === 'psk63' || d === 'psk125' || d === 'qpsk31' || d === 'hell' || d === 'olivia' || d === 'contestia' || d === 'mfsk16' || d === 'mfsk32' || d === 'dominoex' || d === 'thor' || d === 'packet' || d === 'ale' || d === 'selcall' /* FORK */ || d === 'sstv')) return d.toUpperCase();
   if (h.mode === 'NFM' && (d === 'dmr' || (d === 'auto' && h.digi.winner === 'DMR'))) return 'DMR';
   if (ssb && d === 'auto' && h.digi.winner && h.digi.winner !== 'ANALOG VOICE') return h.digi.winner.toUpperCase();
   return h.mode === 'NFM' ? 'FM' : h.mode;
@@ -3402,15 +3409,30 @@ function bindWefax(root: HTMLElement): void {
   qa<HTMLButtonElement>('[data-wflpm]', root).forEach(b => b.onclick = () => { g.wefaxLpm = Number(b.dataset.wflpm); digiSend(); });
 }
 // FORK: end WEFAX
-const ftLabel = (m: string): string => m === 'ft4' ? 'FT4' : m === 'wspr' ? 'WSPR' : m === 'fst4w' ? `FST4W-${state.ham.digi.fst4wPeriod}` : m === 'fst4' ? `FST4-${state.ham.digi.fst4Period}` : m === 'msk144' ? 'MSK144' : 'FT8';
+const ftLabel = (m: string): string => m === 'ft4' ? 'FT4' : m === 'wspr' ? 'WSPR' : m === 'fst4w' ? `FST4W-${state.ham.digi.fst4wPeriod}` : m === 'fst4' ? `FST4-${state.ham.digi.fst4Period}` : m === 'msk144' ? 'MSK144' : m === 'jt65' ? `JT65${'ABC'[[1, 2, 4].indexOf(state.ham.digi.jt65Sub)] ?? 'A'}` : m === 'jt9' ? 'JT9' : m === 'q65' ? `Q65-${state.ham.digi.q65Period}${'ABCDE'[state.ham.digi.q65Sub]}` /* FORK */ : 'FT8';
 /** Which dial buttons a mode shows (FST4W shares WSPR's). */
-const ftDialsFor = (m: string): string => m === 'ft4' || m === 'msk144' || m === 'fst4' ? m : m === 'wspr' || m === 'fst4w' ? 'wspr' : 'ft8';
+const ftDialsFor = (m: string): string => m === 'jt9' || m === 'q65' /* FORK */ ? 'jt65' : m === 'ft4' || m === 'msk144' || m === 'fst4' || m === 'jt65' ? m : m === 'wspr' || m === 'fst4w' ? 'wspr' : 'ft8';
 // FST4's usual dials: the LF and MF bands, where its long periods are used (USB; 1500 Hz audio is the usual Rx)
 const FST4_DIALS: [string, number][] = [['2200m', 136_000], ['630m', 474_200]];
+// JT65's dials (USB): the HF bands' JT65 frequencies, 6 m, and 2 m EME (JT65B)
+const JT65_DIALS: [string, number][] = [['160m', 1_838_000], ['80m', 3_576_000], ['40m', 7_076_000], ['30m', 10_138_000], ['20m', 14_076_000], ['17m', 18_102_000], ['15m', 21_076_000], ['12m', 24_917_000], ['10m', 28_076_000], ['6m', 50_276_000], ['2m EME', 144_120_000]];
 /** FST4 / FST4W options under the caption: the T/R period, and FST4's Rx audio frequency (±100 Hz searched). */
 function ftOpts(): void {
   const el = q('#ft-opts') as HTMLElement | null, g = state.ham.digi; if (!el) return;
-  if (g.mode !== 'fst4' && g.mode !== 'fst4w') { el.innerHTML = ''; return; }
+  if (g.mode === 'jt65') {
+    const key = `jt65|${g.jt65Sub}`; if (el.dataset.k === key) return; el.dataset.k = key;
+    el.innerHTML = `<div class="row" style="margin:4px 0;gap:4px"><span class="info">Submode</span>${[['A', 1], ['B', 2], ['C', 4]].map(([l, v]) => `<button class="chip${v === g.jt65Sub ? ' on' : ''}" data-jt65s="${v}">${l}</button>`).join('')}<span class="info" style="margin-left:8px">A on HF, B on 2 m EME, C higher up</span></div>`;
+    qa<HTMLButtonElement>('[data-jt65s]', el).forEach(b => b.onclick = () => { g.jt65Sub = Number(b.dataset.jt65s); digiSend(); });
+    return;
+  }
+  if (g.mode === 'q65') {   // FORK: Q65's T/R period and submode
+    const key = `q65|${g.q65Period}|${g.q65Sub}`; if (el.dataset.k === key) return; el.dataset.k = key;
+    el.innerHTML = `<div class="row" style="margin:4px 0;flex-wrap:wrap;gap:4px"><span class="info">T/R s</span>${[15, 30, 60, 120].map(p => `<button class="chip${p === g.q65Period ? ' on' : ''}" data-q65p="${p}">${p}</button>`).join('')}<span class="info" style="margin-left:8px">Submode</span>${'ABCDE'.split('').map((l, i) => `<button class="chip${i === g.q65Sub ? ' on' : ''}" data-q65s="${i}">${l}</button>`).join('')}</div><div class="caption">Q65-30A on 6 m scatter, 60A for 6 m / 2 m EME, B-E on the microwave bands; 300 s is not decoded here.</div>`;
+    qa<HTMLButtonElement>('[data-q65p]', el).forEach(b => b.onclick = () => { g.q65Period = Number(b.dataset.q65p); digiSend(); });
+    qa<HTMLButtonElement>('[data-q65s]', el).forEach(b => b.onclick = () => { g.q65Sub = Number(b.dataset.q65s); digiSend(); });
+    return;
+  }
+  if (g.mode !== 'fst4' && g.mode !== 'fst4w') { el.innerHTML = ''; el.dataset.k = ''; return; }
   const per = g.mode === 'fst4' ? [15, 30, 60, 120, 300, 900, 1800] : [120, 300, 900, 1800], cur = g.mode === 'fst4' ? g.fst4Period : g.fst4wPeriod;
   const key = `${g.mode}|${cur}|${g.fst4Rx}`; if (el.dataset.k === key) return; el.dataset.k = key;
   el.innerHTML = `<div class="row" style="margin:4px 0;flex-wrap:wrap;gap:4px"><span class="info">T/R s</span>${per.map(p => `<button class="chip${p === cur ? ' on' : ''}" data-fstp="${p}">${p}</button>`).join('')}${g.mode === 'fst4' ? `<span class="info" style="margin-left:8px">Rx Hz</span><input id="fst4-rx" class="txin num" type="number" min="300" max="2700" step="10" value="${g.fst4Rx}" style="width:80px">` : ''}</div>`
@@ -3421,12 +3443,14 @@ function ftOpts(): void {
 // FORK: end FST4
 // MSK144's meteor-scatter calling frequencies (USB)
 const MSK144_DIALS: [string, number][] = [['6m', 50_260_000], ['6m', 50_280_000], ['2m', 144_150_000], ['2m', 144_360_000]];
-function ftDialHtml(which: string): string { return (which === 'ft4' ? FT4_DIALS : which === 'wspr' ? WSPR_DIALS : which === 'msk144' ? MSK144_DIALS : which === 'fst4' ? FST4_DIALS : FT8_DIALS).map(([l, f]) => `<button class="tl" data-ft8f="${f}"><b>${l}</b><small>${(f / 1e6).toFixed(f % 1000 ? 4 : 3)}</small></button>`).join(''); }
+function ftDialHtml(which: string): string { return (which === 'ft4' ? FT4_DIALS : which === 'wspr' ? WSPR_DIALS : which === 'msk144' ? MSK144_DIALS : which === 'fst4' ? FST4_DIALS : which === 'jt65' ? JT65_DIALS : FT8_DIALS).map(([l, f]) => `<button class="tl" data-ft8f="${f}"><b>${l}</b><small>${(f / 1e6).toFixed(f % 1000 ? 4 : 3)}</small></button>`).join(''); }
 function bindFtDials(root: HTMLElement): void {
   const g = state.ham.digi, h = state.ham;
-  qa<HTMLButtonElement>('[data-ft8f]', root).forEach(b => b.onclick = () => { g.mode = g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'msk144' ? g.mode : 'ft8'; if (h.mode !== 'USB') hamSetMode('USB'); hamTune(Number(b.dataset.ft8f)); digiSend(); });
+  qa<HTMLButtonElement>('[data-ft8f]', root).forEach(b => b.onclick = () => { g.mode = g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'jt65' || g.mode === 'jt9' || g.mode === 'q65' /* FORK */ || g.mode === 'msk144' ? g.mode : 'ft8'; if (h.mode !== 'USB') hamSetMode('USB'); hamTune(Number(b.dataset.ft8f)); digiSend(); });
 }
-const DIGI_TILES: [string, string][] = [['auto', 'picks one'], ['cw', 'morse'], ['rtty', 'teletype'], ['psk31', 'keyboard chat'], ['ft8', '15 s slots'], ['ft4', '7.5 s slots'], ['wspr', '2 min beacons'], ['fst4w', 'beacons, deeper'], ['fst4', 'LF / MF QSOs'], ['wefax', 'weather charts'], ['msk144', 'meteor scatter'] /* FORK */, ['sstv', 'pictures'],
+/** FORK: Olivia / Contestia tones/bandwidth presets (the common ones on the air) */
+const OLIVIA_PRESETS = ['8/250', '16/500', '32/1000', '4/125', '8/500', '16/1000', '4/250'];
+const DIGI_TILES: [string, string][] = [['auto', 'picks one'], ['cw', 'morse'], ['rtty', 'teletype'], ['psk31', 'keyboard chat'], ['psk63', 'chat, faster'], ['psk125', 'chat, fastest'], ['qpsk31', 'chat with FEC'], ['hell', 'Feld Hell, text as a picture'], ['olivia', 'MFSK, deep FEC'], ['contestia', 'Olivia, faster'], ['mfsk16', 'MFSK, robust chat'], ['mfsk32', 'MFSK, faster'], ['dominoex', 'IFK+, drift-proof'], ['thor', 'DominoEX with FEC'], ['packet', 'HF AX.25, 300 Bd, 1600/1800 Hz'], ['ale', '2G ALE calls, soundings'], ['selcall', 'HF DSC, CCIR 493 selcall'], ['q65', 'EME, scatter, weak'] /* FORK */, ['ft8', '15 s slots'], ['ft4', '7.5 s slots'], ['wspr', '2 min beacons'], ['fst4w', 'beacons, deeper'], ['fst4', 'LF / MF QSOs'], ['jt65', '60 s, A / B / C'], ['jt9', '60 s, narrow'], ['wefax', 'weather charts'], ['msk144', 'meteor scatter'] /* FORK */, ['sstv', 'pictures'],
   ['dmr', 'digital voice'], ['p25', 'digital voice'], ['off', 'audio only']];
 function renderPtt(view: HTMLElement, tabs: string): void {
   const h = state.ham, rin = repeaterInput(h.freq);
@@ -11253,7 +11277,7 @@ function refreshAis(): void {
 /** Ham Map's layers, in the order of their chips: APRS packets, and the FT8 and JS8 stations that sent a grid. */
 const HAM_LAYERS: [HamLayer, string][] = [['aprs', 'APRS'], ['ft8', 'FT8'], ['js8', 'JS8']];
 /** FT8 and JS8 squares and markers each in their own color, so the layers tell apart on the map. */
-const SPOT_COLOR: Record<HamSpot['mode'], string> = { FT8: '#4fc3f7', JS8: '#ffb74d' };
+const SPOT_COLOR: Record<HamSpot['mode'], string> = { FT8: '#4fc3f7', JS8: '#ffb74d', DV: '#ba68c8' /* FORK */ };
 /** When each APRS log line came in (parallel to logs.aprs), so the Ham Map log interleaves it with the grid decodes. */
 const aprsLogMs: number[] = [];
 const isSpotId = (id: string) => /^(ft8|js8):/.test(id);
@@ -11266,7 +11290,7 @@ hamSpots.subscribe(() => { if (state.app === 'aprs') { refreshList('aprs'); refr
 function hamLogHtml(): string {
   const L = state.hamLayers, rows: { ms: number; sel: string; line: string }[] = [];
   if (L.aprs) (logs['aprs'] ?? []).forEach((l, i) => rows.push({ ms: aprsLogMs[i] ?? 0, sel: /^([A-Za-z0-9-]+)>/.exec(l)?.[1] ?? '', line: `APRS ${l}` }));
-  for (const x of hamSpots.logLines()) if (L[x.mode === 'FT8' ? 'ft8' : 'js8']) rows.push({ ms: x.ms, sel: `${x.mode.toLowerCase()}:${x.call}`, line: x.line });
+  for (const x of hamSpots.logLines()) if (L[spotLayer(x.mode) /* FORK: DV */]) rows.push({ ms: x.ms, sel: `${x.mode.toLowerCase()}:${x.call}`, line: x.line });
   rows.sort((a, b) => b.ms - a.ms);
   if (!rows.length) return emptyState('aprs');
   return rows.slice(0, 300).map((r, i) => `<div class="tap" data-hmsel="${esc(r.sel)}">${logLineHtml(r.line, rows.length - i)}</div>`).join('');
@@ -11302,7 +11326,7 @@ function refreshAprs(): void {
     ...aprs.filter(s => s.lat !== undefined && s.lon !== undefined).map(s => ({ id: s.call, lat: s.lat!, lon: s.lon!, heading: s.course, label: s.call, kind: (s.kind === 'station' ? 'station' : 'object') as GeoItem['kind'] })),
     ...spots.map(s => ({ id: s.id, lat: s.lat, lon: s.lon, label: s.call, kind: 'qso' as const, color: SPOT_COLOR[s.mode] })),
   ], sel);
-  geo?.setShapes(spots.map(s => ({ id: s.id, pts: gridRing(s.grid), line: false, color: SPOT_COLOR[s.mode], sel: s.id === sel, label: `${s.call} ${s.grid}` })));
+  geo?.setShapes(spots.filter(s => s.mode !== 'DV' /* FORK: an exact position, no square */).map(s => ({ id: s.id, pts: gridRing(s.grid), line: false, color: SPOT_COLOR[s.mode], sel: s.id === sel, label: `${s.call} ${s.grid}` })));
   const at = isSpotId(sel) ? hamSpots.get(sel) : undefined, home = hamHome();
   geo?.setLines(at && home && L[at.mode === 'FT8' ? 'ft8' : 'js8'] ? [[[home.lat, home.lon], [at.lat, at.lon]]] : []);
 }
@@ -11720,7 +11744,7 @@ function ensureWorker(): Worker {
       case 'trains': trainsUi.snap = m as TrainsSnap; refreshTrains(); break;
       case 'satcom': satcomUi.snap = m.snap as SatcomSnap; refreshSatcom(); break;
       case 'fleet': fleetUi.snap = m as unknown as FleetSnap; refreshFleet(); break;
-      case 'hamplus': hpUi.snap = m as unknown as HpSnap; refreshHamPlus(); break;
+      case 'hamplus': hpUi.snap = m as unknown as HpSnap; refreshHamPlus(); dvSpots(hpUi.snap, Date.now()); break;   // FORK: + DV positions
       case 'hamplusNote': hpNote(String(m.text)); break;
       case 'cb': cbUi.snap = m as unknown as CbSnap; refreshCb(); break;
       case 'cbNote': cbNote(String(m.text)); break;
@@ -11830,7 +11854,7 @@ function ensureWorker(): Worker {
       }
       case 'js8': js8OnDecodes(m.list as Js8Decode[], m.speed as Js8Speed, m.slot as number); break;
       case 'js8wf': js8OnWaterfall(m.row as Uint8Array, m.ms as number); break;
-      case 'ft8': { const g = state.ham.digi; g.ft8.unshift(...(m.list as typeof g.ft8)); if (g.ft8.length > 200) g.ft8.length = 200; refreshFt8(); const at = Date.now(); if (m.mode !== 'WSPR' && m.mode !== 'FST4W' && m.mode !== 'FST4' && m.mode !== 'MSK144' /* FORK: not FT8's (MSK144's are FT8 messages, but not FT8 spots) */) for (const d of m.list as typeof g.ft8) hamSpots.ft8(d, state.ham.freq, at); break; }
+      case 'ft8': { const g = state.ham.digi; g.ft8.unshift(...(m.list as typeof g.ft8)); if (g.ft8.length > 200) g.ft8.length = 200; refreshFt8(); const at = Date.now(); if (m.mode !== 'WSPR' && m.mode !== 'FST4W' && m.mode !== 'FST4' && m.mode !== 'JT65' && m.mode !== 'JT9' && m.mode !== 'Q65' && m.mode !== 'MSK144' /* FORK: not FT8's (MSK144's are FT8 messages, but not FT8 spots) */) for (const d of m.list as typeof g.ft8) hamSpots.ft8(d, state.ham.freq, at); break; }
       case 'dmr': state.ham.digi.dmr = m.status as DmrStatus; refreshDmr(); break;
       case 'p25': state.ham.digi.p25 = m.status as P25Status; refreshP25(); break;
       case 'sstv': onSstv(m); break;
