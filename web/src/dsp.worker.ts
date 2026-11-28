@@ -73,6 +73,7 @@ import { WefaxDecoder } from './dsp/ham/wefax.js';   // FORK: WEFAX
 import { Msk144Decoder } from './dsp/ham/msk144.js';   // FORK: MSK144
 import { Jt65Decoder } from './dsp/ham/jt65.js';   // FORK: JT65
 import { Jt9Decoder } from './dsp/ham/jt9.js';   // FORK: JT9
+import { PskDecoder } from './dsp/ham/psk.js';   // FORK: PSK63 / PSK125 / QPSK31
 import { Js8Decoder, type Js8Decode } from './dsp/js8/decoder.js';
 import { loadJsc } from './dsp/js8/varicode.js';
 import { DmrDecoder } from './dsp/ham/dmr.js';
@@ -269,6 +270,9 @@ const jt65 = new Jt65Decoder();
 jt65.onText = (t, meta) => { if (digiMode === 'jt65') post({ type: 'digi', from: 'JT65', text: t, meta }); };
 jt65.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT65', slot, list });
 const jt9 = new Jt9Decoder();   // FORK: JT9
+// FORK: PSK63, PSK125, QPSK31: their text into the DIGITAL text panel, on PSK31's centre frequency
+const pskMore = [new PskDecoder(62.5, false), new PskDecoder(125, false), new PskDecoder(31.25, true)];
+for (const d of pskMore) d.onText = (t, meta) => { if (digiMode === d.name.toLowerCase()) post({ type: 'digi', from: d.name, text: t, meta }); };
 jt9.onText = (t, meta) => { if (digiMode === 'jt9') post({ type: 'digi', from: 'JT9', text: t, meta }); };
 jt9.onDecodes = (list, slot) => post({ type: 'ft8', mode: 'JT9', slot, list });
 // FORK: MSK144: each ping's decode into FT8's list
@@ -338,14 +342,14 @@ function setDigital(mode: string, opts: Record<string, unknown>): void {
   digiMode = mode;
   ham.analogMute = mode === 'dmr' || mode === 'p25' || satKind === 'lrpt';
   if (typeof opts.pitch === 'number') cw.setPitch(opts.pitch);
-  if (typeof opts.pskHz === 'number') psk.setCenter(opts.pskHz);
+  if (typeof opts.pskHz === 'number') { psk.setCenter(opts.pskHz); for (const d of pskMore) d.setCenter(opts.pskHz); }   // FORK: + PSK63 / 125, QPSK31
   if (typeof opts.wefaxLpm === 'number') wefax.lpm = opts.wefaxLpm;   // FORK: WEFAX
   if (typeof opts.fst4wPeriod === 'number') fst4w.setPeriod(opts.fst4wPeriod);   // FORK: FST4W / FST4
   if (typeof opts.fst4Period === 'number') fst4.setPeriod(opts.fst4Period);
   if (typeof opts.fst4Rx === 'number') fst4.setCentre(opts.fst4Rx);
   if (typeof opts.jt65Sub === 'number') jt65.sub = opts.jt65Sub;   // FORK: JT65
   if (typeof opts.rttyBaud === 'number') rtty.configure(opts.rttyMark as number ?? 2125, opts.rttyShift as number ?? 170, opts.rttyBaud, !!opts.rttyRev);
-  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'jt9' ? [jt9] : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
+  const wanted = mode === 'off' ? [] : mode === 'auto' ? digiAll : mode === 'ft8' ? [ft8] : mode === 'wspr' ? [wspr] : mode === 'fst4w' ? [fst4w] : mode === 'fst4' ? [fst4] : mode === 'jt65' ? [jt65] : mode === 'jt9' ? [jt9] : pskMore.some(d => d.name.toLowerCase() === mode) ? pskMore.filter(d => d.name.toLowerCase() === mode) : mode === 'wefax' ? [wefax] : mode === 'msk144' ? [msk144] /* FORK: WSPR, FST4W, WEFAX, MSK144 */ : mode === 'sstv' ? [sstv] : digiAll.filter(d => d.name.toLowerCase() === mode);
   for (const d of wanted) if (!ham.digital.includes(d)) d.reset();
   ham.digital = wanted;
 }

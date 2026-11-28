@@ -113,7 +113,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | JT9 (JT9-1) in Ham Radio → DIGITAL | WSJT-X lib/gen9, jt9sync, entail, encode232 / conv232, interleave9, symspec2, jt9fano | GPL-3.0 ✔ |
 | [ ] | ★ | Q65 | WSJT-X | GPL-3.0 ✔ |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
-| [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
+| [x] | | PSK63, PSK125, QPSK31 in Ham Radio → DIGITAL | fldigi src/psk/psk.cxx, src/filters/viterbi.cxx (QPSK) | GPL-3.0-or-later ✔ (COPYING GPLv3; file headers "version 3 or later") |
+| [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
 | [ ] | | HF packet (300 Bd), ARDOP; KISS out via export bus | Dire Wolf; ARDOP spec | check |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
@@ -958,6 +959,17 @@ for "or later" first.
   Hardware: FST4/FST4W are mostly on 2200 m (136 kHz) and 630 m (474.2 kHz), below the HackRF's 1 MHz: an RTL-SDR with
   direct sampling (or an upconverter) and a large antenna; FST4W also on the WSPR dials above 1.8 MHz with a HackRF.
   Compare with WSJT-X in the same mode and T/R period.
+- **PSK63 / PSK125 / QPSK31** (`dsp/ham/psk.ts`, beside the upstream PSK31 decoder, untouched; FORK edits in the worker
+  (three decoders on PSK31's centre buttons) and main.ts (the DIGITAL tiles, USB/LSB)), `test/psk.test.ts`): BPSK at 62.5
+  and 125 baud as PSK31; QPSK31 after fldigi: the K=5 code (0x17, 0x19), fldigi's phase mapping (pair 0 → 180°, 1 → +90°,
+  2 → 0°, 3 → 270°), soft bits from the phase change and a Viterbi decoder (30-bit traceback). Demodulator (written here,
+  better than the upstream structure it started from, found while testing): the symbol centre from the smoothed
+  per-phase envelope, chosen once a symbol; a pulse-shaped matched filter over the whole symbol around it; and a real
+  frequency-tracking AFC (a tracked rate whose running total turns each symbol back; a fixed phase, as the upstream loop
+  applies, cancels in differential detection and corrects nothing), fast for the first 64 symbols. Tests: clean text
+  exactly in all three; PSK63 at −4 dB and PSK125 at −1 dB in 2500 Hz, 3 Hz off; QPSK31 at −6 dB, 2 Hz off (measured:
+  clean to −4 dB at 0-4 Hz off, a character or so lost at −8); noise and a plain carrier give no text. Hardware: 14.070
+  MHz USB (PSK63/125 around 14.070-14.073, QPSK31 rarer); compare with fldigi.
 - **JT9** (`dsp/ham/jt9.ts`; `wsprStackDecode` takes the code's length (WSPR 81 bits, JT9 103); FORK edits in the worker
   and main.ts beside JT65's (the DIGITAL tile, JT65's dials); `test/jt9.test.ts`, fixture
   `test/fixtures/wsjtx-jt9-130418_1742-4000sps.wav`): after WSJT-X. 85 symbols of 0.576 s, 9-FSK at 1.736 Hz (tone 0
