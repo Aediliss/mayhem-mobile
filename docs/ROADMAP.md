@@ -115,7 +115,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [x] | | PSK63, PSK125, QPSK31 in Ham Radio → DIGITAL | fldigi src/psk/psk.cxx, src/filters/viterbi.cxx (QPSK) | GPL-3.0-or-later ✔ (COPYING GPLv3; file headers "version 3 or later") |
 | [x] | | Feld Hell in Ham Radio → DIGITAL | the mode's definition (fldigi, the Feld Hell Club); nothing ported | — |
-| [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino | fldigi | GPL-3.0 ✔ |
+| [x] | | Olivia and Contestia in Ham Radio → DIGITAL | fldigi src/include/jalocha/pj_mfsk.h, pj_fht.h, pj_gray.h, src/olivia/olivia.cxx | GPL-3.0 ✔ (fldigi COPYING; pj_mfsk.h has no header of its own) |
+| [ ] | | fldigi modes: MFSK16/32, Thor, Domino | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
 | [ ] | | HF packet (300 Bd), ARDOP; KISS out via export bus | Dire Wolf; ARDOP spec | check |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
@@ -960,6 +961,18 @@ for "or later" first.
   Hardware: FST4/FST4W are mostly on 2200 m (136 kHz) and 630 m (474.2 kHz), below the HackRF's 1 MHz: an RTL-SDR with
   direct sampling (or an upconverter) and a large antenna; FST4W also on the WSPR dials above 1.8 MHz with a HackRF.
   Compare with WSJT-X in the same mode and T/R period.
+- **Olivia / Contestia** (`dsp/ham/olivia.ts`; FORK edits in the worker (two decoders on PSK31's centre buttons, the
+  preset) and main.ts (the DIGITAL tiles, an OLIVIA presets row: 8/250, 16/500, 32/1000, 4/125, 8/500, 16/1000, 4/250);
+  `test/olivia.test.ts`): after Jalocha's code in fldigi: N tones over B Hz, Gray-coded; b characters a block, each a
+  ±1 Walsh-Hadamard row (Jalocha's own butterflies), scrambled by 0xE257E6D0291574EC (Contestia 0xEDB88320) shifted 13
+  (5) a character, spread over 64 (32) symbols with the bit rotating each symbol; Contestia's 6-bit character set.
+  Receiver (written here): 8 kHz; one-symbol spectra with half-tone bins every quarter symbol; 4 symbol phases × ±60 Hz
+  of offsets as hypotheses with pj_mfsk's energy-weighted soft bits; each hypothesis's latest block decoded (de-scramble,
+  forward transform, the peak) and scored by its peaks over the rest; a block prints when its hypothesis and alignment
+  are within 90 % of the best and it is clean, once a block period (found while testing: printing only the single best
+  lost a block when a neighbouring phase briefly led). Tests: Olivia 32/1000, 8/250 and 16/500 clean (all of the text)
+  and at −10 dB in 2500 Hz 7 Hz off; Contestia 8/250 (upper case, its set); noise prints nothing. Hardware: Olivia nets
+  on 14.072-14.074 / 7.072 MHz USB (8/250 and 16/500 are common); compare with fldigi.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The

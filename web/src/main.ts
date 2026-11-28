@@ -217,7 +217,7 @@ const state = {
   viewLo: 0,                                   // the plain receiver's span center (radio LO); state.freq is the channel
   ham: { freq: 146_520_000, mode: 'NFM' as HamMode, lo: 300, hi: 6000, pitch: 600, agc: 'slow' as AgcMode, nr: false, anf: false, squelch: 6, volume: 1, shift: 0, rev: false, back: 0,
     db: -120, floor: -120, open: true, tone: 0, toneDb: 0, dcs: 0, dcsInv: false, gain: 1, audioPeak: 0,
-    digi: { mode: 'off' as 'off' | 'auto' | 'cw' | 'rtty' | 'psk31' | 'ft8' | 'ft4' | 'wspr' | 'fst4w' | 'fst4' | 'jt65' | 'jt9' | 'wefax' | 'msk144' | 'psk63' | 'psk125' | 'qpsk31' | 'hell' /* FORK */ | 'dmr' | 'p25' | 'sstv', dmrSlot: 0, dmr: null as DmrStatus | null, p25: null as P25Status | null, text: '', winner: '', conf: [] as [string, number][], wpm: 0, pskHz: 1000, rttyBaud: 45.45, rttyShift: 170, rttyRev: false, ft8: [] as { utc: string; snr: number; dt: number; hz: number; text: string }[], wefaxLpm: 120 /* FORK: WEFAX */, fst4Period: 60, fst4wPeriod: 120, fst4Rx: 1500 /* FORK: FST4 / FST4W */, jt65Sub: 1 /* FORK: JT65 A / B / C */ },
+    digi: { mode: 'off' as 'off' | 'auto' | 'cw' | 'rtty' | 'psk31' | 'ft8' | 'ft4' | 'wspr' | 'fst4w' | 'fst4' | 'jt65' | 'jt9' | 'wefax' | 'msk144' | 'psk63' | 'psk125' | 'qpsk31' | 'hell' | 'olivia' | 'contestia' /* FORK */ | 'dmr' | 'p25' | 'sstv', dmrSlot: 0, dmr: null as DmrStatus | null, p25: null as P25Status | null, text: '', winner: '', conf: [] as [string, number][], wpm: 0, pskHz: 1000, rttyBaud: 45.45, rttyShift: 170, rttyRev: false, ft8: [] as { utc: string; snr: number; dt: number; hz: number; text: string }[], wefaxLpm: 120 /* FORK: WEFAX */, fst4Period: 60, fst4wPeriod: 120, fst4Rx: 1500 /* FORK: FST4 / FST4W */, jt65Sub: 1 /* FORK: JT65 A / B / C */, olivia: '8/250' /* FORK: Olivia / Contestia tones/bandwidth */ },
     sat: { sel: 25544, svc: 0, view: 'track' as 'track' | 'orbcomm' | 'packet', tles: new Map<number, Tle>(), track: false, dopplerOn: true, passes: [] as Pass[], status: '', packets: [] as string[] },
     img: { mode: '', width: 0, height: 0, line: 0, done: false, apt: 0, lrpt: { planes: {} as Record<number, Uint8Array>, lines: 0, stats: '' } },
     log: { entries: loadLog(), draft: { call: '', rstS: '', rstR: '', name: '', qth: '', grid: '', notes: '', mode: '' }, info: null as CallInfo | null, editing: '' },
@@ -2665,7 +2665,7 @@ function monitorOpen(at?: number): void {
 }
 function digiSend(): void {
   const g = state.ham.digi;
-  worker?.postMessage({ type: 'digital', mode: g.mode, pitch: state.ham.pitch, pskHz: g.pskHz, rttyBaud: g.rttyBaud, rttyShift: g.rttyShift, rttyRev: g.rttyRev, dmrSlot: g.dmrSlot, wefaxLpm: g.wefaxLpm /* FORK: WEFAX */, fst4Period: g.fst4Period, fst4wPeriod: g.fst4wPeriod, fst4Rx: g.fst4Rx /* FORK: FST4 / FST4W */, jt65Sub: g.jt65Sub /* FORK: JT65 */ });
+  worker?.postMessage({ type: 'digital', mode: g.mode, pitch: state.ham.pitch, pskHz: g.pskHz, rttyBaud: g.rttyBaud, rttyShift: g.rttyShift, rttyRev: g.rttyRev, dmrSlot: g.dmrSlot, wefaxLpm: g.wefaxLpm /* FORK: WEFAX */, fst4Period: g.fst4Period, fst4wPeriod: g.fst4wPeriod, fst4Rx: g.fst4Rx /* FORK: FST4 / FST4W */, jt65Sub: g.jt65Sub /* FORK: JT65 */, olivia: g.olivia /* FORK: Olivia / Contestia */ });
   qa('[data-digi]').forEach(b => b.classList.toggle('on', b.dataset.digi === g.mode));
   qa('[data-dmrslot]').forEach(b => b.classList.toggle('on', Number(b.dataset.dmrslot) === g.dmrSlot));
   const dp = q('#dmr-panel'); if (dp) (dp as HTMLElement).hidden = !(g.mode === 'dmr' || g.mode === 'auto');
@@ -2676,6 +2676,7 @@ function digiSend(): void {
   qa('[data-wflpm]').forEach(b => b.classList.toggle('on', Number(b.dataset.wflpm) === g.wefaxLpm));
   // FORK: end WEFAX
   qa('[data-pskhz]').forEach(b => b.classList.toggle('on', Number(b.dataset.pskhz) === g.pskHz));
+  qa('[data-olivia]').forEach(b => b.classList.toggle('on', b.dataset.olivia === g.olivia));   // FORK: Olivia
   qa('[data-rtty]').forEach(b => b.classList.toggle('on', b.dataset.rtty === `${g.rttyBaud}/${g.rttyShift}`));
   const rv = q('#rtty-rev'); if (rv) rv.classList.toggle('on', g.rttyRev);
   const ftp = q('#ft8-panel'); if (ftp) (ftp as HTMLElement).hidden = !(g.mode === 'ft8' || g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'jt65' || g.mode === 'jt9' || g.mode === 'msk144' /* FORK */ || g.mode === 'auto');
@@ -2931,6 +2932,7 @@ function renderHam(view: HTMLElement): void {
           <div class="dmrslots"><div class="panel dmrslot" id="dmr-s1"></div><div class="panel dmrslot" id="dmr-s2"></div></div>
           <div class="ctlrow"><span class="rl">HEAR</span>${segHtml([['0', 'LATEST'], ['1', 'SLOT 1'], ['2', 'SLOT 2']].map(([v, l]) => `<button data-dmrslot="${v}">${l}</button>`))}</div><div class="note">Both time slots are decoded; you hear one.</div></div>
         <div class="ctlrow"><span class="rl">PSK Hz</span>${segHtml([500, 1000, 1500, 2000].map(f => `<button data-pskhz="${f}">${f}</button>`))}</div>
+        <div class="ctlrow"><span class="rl">OLIVIA</span>${segHtml(OLIVIA_PRESETS.map(p => `<button data-olivia="${p}">${p}</button>`)) /* FORK: Olivia / Contestia tones/bandwidth; centre = PSK Hz */}</div>
         <div class="ctlrow"><span class="rl">RTTY</span>${segHtml([['45.45', '170'], ['50', '170'], ['75', '170'], ['45.45', '450'], ['50', '850']].map(([b, s]) => `<button data-rtty="${b}/${s}">${b === '45.45' ? '45' : b}/${s}</button>`), 'tight')}<button id="rtty-rev" class="tog">REV</button></div>
         <div class="caption">TEXT</div><pre id="digi-text" class="panel digitext">${g.text}</pre>
         <div id="sstv-panel" hidden>${imgPanelHtml()}<div id="wefax-tiles" hidden>${wefaxTilesHtml() /* FORK: WEFAX */}</div><div id="sstv-tiles">${hsHtml(`<div class="tiles wide">${[['20m 14.230', 14_230_000, 'USB'], ['20m 14.233', 14_233_000, 'USB'], ['10m 28.680', 28_680_000, 'USB'], ['40m 7.171', 7_171_000, 'LSB'], ['ISS 145.800', 145_800_000, 'NFM']].map(([l, f, md]) => `<button class="tl" data-sstvf="${f}" data-sstvm="${md}"><b>${String(l).split(' ')[1]}</b><small>SSTV · ${String(l).split(' ')[0]} ${md}</small></button>`).join('')}</div>`)}</div></div>
@@ -2939,12 +2941,13 @@ function renderHam(view: HTMLElement): void {
       </section>`;
     scope = attach(tunableScope('scope', 200));
     qa<HTMLButtonElement>('[data-hamtab]', view).forEach(b => b.onclick = () => { h.tab = b.dataset.hamtab as typeof h.tab; open('ham'); });
-    qa<HTMLButtonElement>('[data-digi]', view).forEach(b => b.onclick = () => { g.mode = b.dataset.digi as typeof g.mode; if ((g.mode === 'ft8' || g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'jt65' || g.mode === 'jt9' || g.mode === 'wefax' || g.mode === 'msk144' /* FORK */) && h.mode !== 'USB') hamSetMode('USB'); if (g.mode === 'cw' && h.mode !== 'CW') hamSetMode('CW'); if ((g.mode === 'dmr' || g.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM'); if ((g.mode === 'psk31' || g.mode === 'psk63' || g.mode === 'psk125' || g.mode === 'qpsk31' || g.mode === 'hell' /* FORK */ || g.mode === 'rtty') && h.mode !== 'USB' && h.mode !== 'LSB') hamSetMode('USB'); digiSend(); });
+    qa<HTMLButtonElement>('[data-digi]', view).forEach(b => b.onclick = () => { g.mode = b.dataset.digi as typeof g.mode; if ((g.mode === 'ft8' || g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'jt65' || g.mode === 'jt9' || g.mode === 'wefax' || g.mode === 'msk144' /* FORK */) && h.mode !== 'USB') hamSetMode('USB'); if (g.mode === 'cw' && h.mode !== 'CW') hamSetMode('CW'); if ((g.mode === 'dmr' || g.mode === 'p25') && h.mode !== 'NFM') hamSetMode('NFM'); if ((g.mode === 'psk31' || g.mode === 'psk63' || g.mode === 'psk125' || g.mode === 'qpsk31' || g.mode === 'hell' || g.mode === 'olivia' || g.mode === 'contestia' /* FORK */ || g.mode === 'rtty') && h.mode !== 'USB' && h.mode !== 'LSB') hamSetMode('USB'); digiSend(); });
     qa<HTMLButtonElement>('[data-dmrslot]', view).forEach(b => b.onclick = () => { g.dmrSlot = Number(b.dataset.dmrslot); digiSend(); });
     bindWefax(view);   // FORK: WEFAX
     qa<HTMLButtonElement>('[data-sstvf]', view).forEach(b => b.onclick = () => { g.mode = 'sstv'; const md = b.dataset.sstvm as HamMode; if (h.mode !== md) hamSetMode(md); hamTune(Number(b.dataset.sstvf)); digiSend(); });
     imgBind();
     qa<HTMLButtonElement>('[data-hmode]', view).forEach(b => b.onclick = () => hamSetMode(b.dataset.hmode as HamMode));
+    qa<HTMLButtonElement>('[data-olivia]', view).forEach(b => b.onclick = () => { g.olivia = b.dataset.olivia!; digiSend(); });   // FORK: Olivia
     qa<HTMLButtonElement>('[data-pskhz]', view).forEach(b => b.onclick = () => { g.pskHz = Number(b.dataset.pskhz); digiSend(); });
     qa<HTMLButtonElement>('[data-rtty]', view).forEach(b => b.onclick = () => { const [bd, sh] = b.dataset.rtty!.split('/'); g.rttyBaud = Number(bd); g.rttyShift = Number(sh); digiSend(); });
     $('rtty-rev').onclick = () => { g.rttyRev = !g.rttyRev; digiSend(); };
@@ -3206,7 +3209,7 @@ function saveStation(): void { try { localStorage.setItem('mayhem.station', JSON
 function logModeNow(): string {
   const h = state.ham, d = h.digi.mode, ssb = h.mode === 'USB' || h.mode === 'LSB' || h.mode === 'CW';
   // a digital mode only counts when the receiver is set up for it: audio modems need sideband / CW, DMR needs NFM
-  if (ssb && (d === 'cw' || d === 'rtty' || d === 'psk31' || d === 'ft8' || d === 'ft4' || d === 'wspr' || d === 'fst4w' || d === 'fst4' || d === 'jt65' || d === 'jt9' || d === 'wefax' || d === 'msk144' || d === 'psk63' || d === 'psk125' || d === 'qpsk31' || d === 'hell' /* FORK */ || d === 'sstv')) return d.toUpperCase();
+  if (ssb && (d === 'cw' || d === 'rtty' || d === 'psk31' || d === 'ft8' || d === 'ft4' || d === 'wspr' || d === 'fst4w' || d === 'fst4' || d === 'jt65' || d === 'jt9' || d === 'wefax' || d === 'msk144' || d === 'psk63' || d === 'psk125' || d === 'qpsk31' || d === 'hell' || d === 'olivia' || d === 'contestia' /* FORK */ || d === 'sstv')) return d.toUpperCase();
   if (h.mode === 'NFM' && (d === 'dmr' || (d === 'auto' && h.digi.winner === 'DMR'))) return 'DMR';
   if (ssb && d === 'auto' && h.digi.winner && h.digi.winner !== 'ANALOG VOICE') return h.digi.winner.toUpperCase();
   return h.mode === 'NFM' ? 'FM' : h.mode;
@@ -3434,7 +3437,9 @@ function bindFtDials(root: HTMLElement): void {
   const g = state.ham.digi, h = state.ham;
   qa<HTMLButtonElement>('[data-ft8f]', root).forEach(b => b.onclick = () => { g.mode = g.mode === 'ft4' || g.mode === 'wspr' || g.mode === 'fst4w' || g.mode === 'fst4' || g.mode === 'jt65' || g.mode === 'jt9' || g.mode === 'msk144' ? g.mode : 'ft8'; if (h.mode !== 'USB') hamSetMode('USB'); hamTune(Number(b.dataset.ft8f)); digiSend(); });
 }
-const DIGI_TILES: [string, string][] = [['auto', 'picks one'], ['cw', 'morse'], ['rtty', 'teletype'], ['psk31', 'keyboard chat'], ['psk63', 'chat, faster'], ['psk125', 'chat, fastest'], ['qpsk31', 'chat with FEC'], ['hell', 'Feld Hell, text as a picture'] /* FORK */, ['ft8', '15 s slots'], ['ft4', '7.5 s slots'], ['wspr', '2 min beacons'], ['fst4w', 'beacons, deeper'], ['fst4', 'LF / MF QSOs'], ['jt65', '60 s, A / B / C'], ['jt9', '60 s, narrow'], ['wefax', 'weather charts'], ['msk144', 'meteor scatter'] /* FORK */, ['sstv', 'pictures'],
+/** FORK: Olivia / Contestia tones/bandwidth presets (the common ones on the air) */
+const OLIVIA_PRESETS = ['8/250', '16/500', '32/1000', '4/125', '8/500', '16/1000', '4/250'];
+const DIGI_TILES: [string, string][] = [['auto', 'picks one'], ['cw', 'morse'], ['rtty', 'teletype'], ['psk31', 'keyboard chat'], ['psk63', 'chat, faster'], ['psk125', 'chat, fastest'], ['qpsk31', 'chat with FEC'], ['hell', 'Feld Hell, text as a picture'], ['olivia', 'MFSK, deep FEC'], ['contestia', 'Olivia, faster'] /* FORK */, ['ft8', '15 s slots'], ['ft4', '7.5 s slots'], ['wspr', '2 min beacons'], ['fst4w', 'beacons, deeper'], ['fst4', 'LF / MF QSOs'], ['jt65', '60 s, A / B / C'], ['jt9', '60 s, narrow'], ['wefax', 'weather charts'], ['msk144', 'meteor scatter'] /* FORK */, ['sstv', 'pictures'],
   ['dmr', 'digital voice'], ['p25', 'digital voice'], ['off', 'audio only']];
 function renderPtt(view: HTMLElement, tabs: string): void {
   const h = state.ham, rin = repeaterInput(h.freq);
