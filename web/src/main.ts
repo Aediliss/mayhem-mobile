@@ -57,6 +57,7 @@ import { DSC_CH70_HZ, dscLine, type DscCall } from './dsp/dsc.js';   // FORK: ma
 import { B406_CENTRE_HZ } from './dsp/beacon406/phy.js';   // FORK: 406 MHz beacons
 import { HOMING_HZ, type HomingState } from './dsp/beacon406/homing.js';   // FORK: 121.5 MHz homing
 import { beaconLine, type Beacon406 } from './dsp/beacon406/frame.js';   // FORK: 406 MHz beacons
+import { CellWatch, type WatchFinding } from './cell-watch.js';   // FORK: rogue-cell heuristics
 import type { JamAlert, JamStatus } from './dsp/jam.js';   // FORK: jamming detection
 import { GPS_FS, GPS_L1_HZ, type GpsResult } from './dsp/gps/acq.js';   // FORK: GPS L1 monitor
 import { NAVTEX_CENTRE_HZ, type NavtexMessage } from './dsp/navtex.js';   // FORK: NAVTEX
@@ -7949,7 +7950,7 @@ const CELL_KEY = 'mm.cell.v1';
 const CELL_HACKRF_RATE = 15_360_000, CELL_WIDE_RATE = 20_000_000, CELL_RTL_RATE = 1_920_000;
 const CELL_WIDE = window.matchMedia('(min-width: 1000px)');
 CELL_WIDE.addEventListener('change', () => { if (state.app === 'cell') { const v = q<HTMLElement>('main#view'); if (v) renderCell(v); } });
-type CellView = 'alerts' | 'cells' | 'neighbors' | 'paging' | 'log';
+type CellView = 'alerts' | 'cells' | 'neighbors' | 'paging' | 'watch' | 'log';   // FORK: + watch (rogue-cell heuristics)
 interface CellDetail { key: string; mib: CellMib | null; sib1: Record<string, unknown> | null; sib1Hex: string; sibs: CellSibRec[] }
 const cellUi = {
   snap: null as CellSnap | null, view: 'alerts' as CellView, band: 'AUTO', sel: '', detail: null as CellDetail | null, detailAsked: 0,
@@ -8062,7 +8063,7 @@ function renderCell(view: HTMLElement): void {
   if (wide && cellUi.view === 'alerts') cellUi.view = 'cells';
   view.classList.toggle('clwide', wide);
   cellUi.html.clear();
-  const tabs = (wide ? ['cells', 'neighbors', 'paging', 'log'] : ['alerts', 'cells', 'neighbors', 'paging', 'log']) as CellView[];
+  const tabs = (wide ? ['cells', 'neighbors', 'paging', 'watch', 'log'] : ['alerts', 'cells', 'neighbors', 'paging', 'watch', 'log']) as CellView[];   // FORK: + watch
   view.innerHTML = `
     <section class="${visCls('cell')}">${readoutHtml()}${wide ? '<div id="cl-alertbox" class="cl-alertbox"><div class="cl-boxh"><b>MESSAGES</b><small id="cl-alertcount"></small></div><div id="cl-amapbox" class="cl-amapbox"><div id="cl-amap" class="panel map"></div><div id="cl-amapcap" class="cl-amapcap"></div></div><div id="cl-alerts" class="cl-alerts"></div></div>' : ''}<div id="scope" class="panel short"></div></section>
     <section class="controls">
@@ -8070,7 +8071,7 @@ function renderCell(view: HTMLElement): void {
       <div class="ctlrow">${segHtml([['AUTO', 'AUTO'], ...CELL_BANDS.map(b => [b.id, b.label])].map(([k, l]) => `<button data-clband="${k}">${l}</button>`))}</div>
       <div class="ctlrow">${segHtml(tabs.map(v => `<button data-clview="${v}">${v.toUpperCase()}</button>`))}<button id="cl-export" class="ib" title="export the log (CSV) and every decoded field (JSON)" aria-label="export"><svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm7-18-5.5 5.5 1.4 1.4L11 5.8V16h2V5.8l3.1 3.1 1.4-1.4L12 2z"/></svg></button></div>
       ${wide ? '<div id="cl-detail" class="mt-detail cl-detail cl-dock" hidden></div>' : ''}
-      <div id="cl-stage" class="mt-stage cl-stage">${wide ? '' : '<div id="cl-awrap" class="cl-awrap"><div id="cl-amapbox" class="cl-amapbox"><div id="cl-amap" class="panel map"></div><div id="cl-amapcap" class="cl-amapcap"></div></div><div id="cl-alerts" class="cl-alerts"></div></div>'}<div id="cl-cards" class="cl-cards"></div><div id="cl-nbrs" class="cl-nbrs"></div><div id="cl-paging" class="cl-nbrs"></div>${wide ? '' : '<div id="cl-detail" class="mt-detail cl-detail" hidden></div>'}</div>
+      <div id="cl-stage" class="mt-stage cl-stage">${wide ? '' : '<div id="cl-awrap" class="cl-awrap"><div id="cl-amapbox" class="cl-amapbox"><div id="cl-amap" class="panel map"></div><div id="cl-amapcap" class="cl-amapcap"></div></div><div id="cl-alerts" class="cl-alerts"></div></div>'}<div id="cl-cards" class="cl-cards"></div><div id="cl-nbrs" class="cl-nbrs"></div><div id="cl-paging" class="cl-nbrs"></div><div id="cl-watch" class="cl-nbrs"></div>${'' /* FORK: rogue-cell watch */}${wide ? '' : '<div id="cl-detail" class="mt-detail cl-detail" hidden></div>'}</div>
       <div id="cl-log">${logHtml('cell', 'watching for LTE cells…')}</div>
       <div class="note about">LTE cells and their emergency alerts, receive only. Cell reads what every LTE cell broadcasts to all phones: the MIB, SIB1 (operator, cell and tracking area IDs, band, SI schedule) and the other SIBs (access, reselection, intra and inter-frequency neighbors, NR neighbors from SIB24, CDMA2000 time from SIB8), and the warning messages: CMAS / Wireless Emergency Alerts in SIB12 and ETWS in SIB10/11, in every language sent. Paging is decoded too: every paging occasion SIB2 sets is read on P-RNTI, and each page is listed with the identity it calls (S-TMSI or IMSI, in full), its domain and how often that identity was paged, with the system information change, ETWS and CMAS flags. Phone traffic is left alone. SIBs and alerts need the whole carrier in the span (15.36 MS/s for a 10 or 15 MHz carrier, 20 MS/s for a 20 MHz one, which the app resamples to the LTE rate), which only a HackRF samples; an RTL-SDR covers about 2.4 MHz, enough for cell search and the MIB from the center 1.08 MHz. Carriers send SIB12 only while an alert is active. A WEA alert area is drawn on the map with your position and whether you are inside it; the area and geo-fencing trigger formats are derived from our own recordings (their defining document is outside the specs this app is built from). Cell positions are not on the air, so cells are not mapped. AUTO sweeps the US LTE downlink bands (B12/17, B13, B14, B5/26, B2/25, B4/66, B41), visits each carrier and stays for its whole SI cycle. MESSAGES lists every MIB and SIB as one plain line, newest first: a repeat only counts up, a changed value gets its own row, and warnings (SIB10/11/12) are red and stay pinned on top with their full text until you clear them. Tap a row or a cell for every decoded field. Paging is not decoded.</div>
     </section>`;
@@ -8095,11 +8096,11 @@ function renderCell(view: HTMLElement): void {
     else return;
     refreshCell(true);
   };
-  for (const id of ['cl-cards', 'cl-detail', 'cl-alerts', 'cl-nbrs', 'cl-paging', 'cl-head']) $(id).onclick = pick;
+  for (const id of ['cl-cards', 'cl-detail', 'cl-alerts', 'cl-nbrs', 'cl-paging', 'cl-watch' /* FORK */, 'cl-head']) $(id).onclick = pick;
   // a redraw between press and release would swap the element under the pointer and lose the tap
   const hold = () => { cellUi.hold = true; };
   const release = () => { if (!cellUi.hold) return; setTimeout(() => { cellUi.hold = false; refreshCell(true); }, 0); };
-  for (const id of ['cl-cards', 'cl-detail', 'cl-alerts', 'cl-nbrs', 'cl-paging', 'cl-head']) $(id).onpointerdown = hold;
+  for (const id of ['cl-cards', 'cl-detail', 'cl-alerts', 'cl-nbrs', 'cl-paging', 'cl-watch' /* FORK */, 'cl-head']) $(id).onpointerdown = hold;
   cellUi.mapSig = '';
   geo = new GeoMap($('cl-amap'), { home: state.home, start: mapStart(state.home), onPick: () => undefined, log });
   if (!cellUi.wired) { cellUi.wired = true; window.addEventListener('pointerup', release); window.addEventListener('pointercancel', release); }
@@ -8307,12 +8308,13 @@ function refreshCell(force = false): void {
   const nAlerts = s ? groupAlerts(s.alerts).length : 0, nb = s ? s.cells.filter(c => c.neighbors && (c.neighbors.intra.length || c.neighbors.inter.length || c.neighbors.nr.length)).length : 0;
   qa<HTMLButtonElement>('[data-clview]').forEach(b => {
     const v = b.dataset.clview as CellView; b.classList.toggle('on', v === view);
-    b.textContent = v === 'alerts' ? `MESSAGES${nAlerts ? ` · ${nAlerts} ALERT${nAlerts === 1 ? '' : 'S'}` : ` ${s?.feed?.length ?? 0}`}` : v === 'cells' ? `CELLS ${s?.cells.length ?? 0}` : v === 'neighbors' ? `NEIGHBORS ${nb}` : v === 'paging' ? `PAGING ${s?.paging?.total ?? 0}` : 'LOG';
+    b.textContent = v === 'alerts' ? `MESSAGES${nAlerts ? ` · ${nAlerts} ALERT${nAlerts === 1 ? '' : 'S'}` : ` ${s?.feed?.length ?? 0}`}` : v === 'cells' ? `CELLS ${s?.cells.length ?? 0}` : v === 'neighbors' ? `NEIGHBORS ${nb}` : v === 'paging' ? `PAGING ${s?.paging?.total ?? 0}` : v === 'watch' ? `WATCH${cellWatchFound.some(f => f.level === 'warn') ? ` · ${new Set(cellWatchFound.filter(f => f.level === 'warn').map(f => f.key)).size} FLAGGED` : ''}` /* FORK */ : 'LOG';
   });
   const alerts = q('#cl-alerts'), cards = q('#cl-cards'), nbrs = q('#cl-nbrs'), pg = q('#cl-paging'), det = q('#cl-detail'), stage = q('#cl-stage'), logEl = q('#cl-log');
   if (!alerts || !cards || !nbrs || !pg || !det || !stage || !logEl) return;
   if (!wide) { const w = q('#cl-awrap'); if (w) w.hidden = view !== 'alerts'; }
   cards.hidden = view !== 'cells'; nbrs.hidden = view !== 'neighbors'; pg.hidden = view !== 'paging';
+  const wt = q('#cl-watch'); if (wt) wt.hidden = view !== 'watch';   // FORK: rogue-cell watch
   stage.hidden = view === 'log'; logEl.hidden = view !== 'log';
   const ac = q('#cl-alertcount'); if (ac) ac.textContent = nAlerts ? `${nAlerts} kept until cleared` : '';
   if (!paused.has('cell')) {
@@ -8320,6 +8322,7 @@ function refreshCell(force = false): void {
     if (view === 'cells') put(cards, 'cards', s && s.cells.length ? s.cells.map(c => cellCard(c, now)).join('') : `<div class="es"><span class="es-g">${glyph('cell', 'currentColor', 44)}</span><b>No cells yet</b><ul><li>AUTO sweeps the LTE downlink bands and stops on each carrier it finds</li><li>A cell appears within a second of its carrier being tuned; SIB1 and the other SIBs follow over a few seconds</li></ul></div>`);
     if (view === 'neighbors') put(nbrs, 'nbrs', s ? cellNbrsHtml(s, now) : '');
     if (view === 'paging') put(pg, 'paging', s ? cellPagingHtml(s, now) : '');
+    if (view === 'watch') put(wt, 'watch', cellWatchHtml(s, now));   // FORK: rogue-cell watch
   }
   if (cellUi.sel && s) {
     if (!cellUi.detail || now - cellUi.detailAsked > 5000) { cellUi.detailAsked = now; worker?.postMessage({ type: 'cell', cmd: 'detail', key: cellUi.sel }); }
@@ -8340,6 +8343,17 @@ function refreshCell(force = false): void {
   else if (s && s.cells.some(c => now - c.lastMs < 10_000)) setLamp(`${s.cells.filter(c => now - c.lastMs < 10_000).length} CELL${s.cells.filter(c => now - c.lastMs < 10_000).length === 1 ? '' : 'S'}`, 'ok');
   else if (s?.lte) setLamp('LTE HEARD', 'amber', true);
   else setLamp(state.connected ? 'SEARCHING' : 'NO RADIO', state.connected ? 'amber' : '', state.connected);
+}
+// FORK: rogue-cell heuristics (src/cell-watch.ts): the WATCH tab
+const cellWatch = new CellWatch();
+let cellWatchFound: WatchFinding[] = [];
+function cellWatchHtml(s: CellSnap | null, now: number): string {
+  const f = cellWatchFound, cells = s?.cells ?? [], name = (key: string) => { const c = cells.find(x => x.key === key); return c ? `${(c.hz / 1e6).toFixed(1)} MHz · PCI ${c.pci}${c.summary ? ` · ${c.summary.plmns.map(p => p.name || p.id).join(', ')} · cell ${c.summary.cellIdentity}` : ''}` : key; };
+  const head = `<div class="caption">Signs of a fake base station in what the cells broadcast (identity and metadata only). Each is a reason to look closer, not proof: real networks trip some of them. ${cells.filter(c => c.summary).length} cell${cells.filter(c => c.summary).length === 1 ? '' : 's'} with SIB1 checked.</div>`;
+  if (!f.length) return head + `<div class="es"><b>Nothing flagged</b><ul><li>Checked: test PLMNs (001 / 999), unknown operators, a cell changing or sharing its identity, a tracking area of its own, reselection settings that pull phones in (priority 7, q-RxLevMin −140 dBm, q-Hyst 0), no neighbour list, paging by IMSI, a broadcast clock off by over a minute, one cell far louder than its siblings</li><li>Leave AUTO running for a few minutes: the comparisons need the operator's other cells</li></ul></div>`;
+  const keys = [...new Set(f.map(x => x.key))];
+  return head + keys.map(k => { const xs = f.filter(x => x.key === k), warn = xs.some(x => x.level === 'warn');
+    return `<div class="li tap" data-clsel="${esc(k)}"${warn ? ' style="border-left:3px solid var(--danger)"' : ''}><b>${esc(name(k))}</b>${xs.map(x => `<div class="row2"><span${x.level === 'warn' ? ' style="color:var(--danger)"' : ''}>${esc(x.code)}</span><span>${esc(x.text)} · ${bleAgo(now - x.lastMs)}</span></div>`).join('')}</div>`; }).join('');
 }
 function cellExport(csv: string, json: string): void {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -11307,7 +11321,7 @@ function clearApp(id: string): void {
     case 'satcom': if (satcomUi.snap) satcomUi.snap.messages = []; worker?.postMessage({ type: 'satcom', cmd: 'clear' }); break;
     case 'fleet': fleetUi.snap = null; fleetUi.sel = null; fleetUi.unit = null; try { localStorage.removeItem(KNOWN_KEY); } catch { /* storage blocked */ } break;
     case 'hd': hdUi.snap = null; hdUi.sel = ''; for (const o of hdUi.objects) URL.revokeObjectURL(o.url); hdUi.objects = []; hdUi.tileUrls.clear(); hdUi.mapKey = ''; break;
-    case 'cell': cellUi.sel = ''; cellUi.detail = null; break;
+    case 'cell': cellUi.sel = ''; cellUi.detail = null; cellWatch.clear(); cellWatchFound = []; break;   // FORK: + the rogue-cell watch
     case 'atsc': atscUi.snap = null; atscUi.sel = ''; atscUi.detail = null; atscUi.stills.clear(); atscGuide.clear(); worker?.postMessage({ type: 'atsc', cmd: 'clear' }); void atscDb().then(db => { try { db?.transaction('stills', 'readwrite').objectStore('stills').clear(); } catch { /* storage blocked */ } }); try { localStorage.removeItem(ATSC_KEY); } catch { /* storage blocked */ } break;
   }
   worker?.postMessage({ type: 'clear' });
@@ -11884,7 +11898,7 @@ function ensureWorker(): Worker {
       case 'fleetExport': fleetExport(m.csv as string, m.json as string); break;
       case 'fleetVu': if (state.app === 'fleet') dispatchVu(m.key as string, Number(m.db)); break;
       case 'fleetKnown': dispatchSaveKnown(m.known); break;
-      case 'cell': cellUi.snap = m as unknown as CellSnap; refreshCell(); break;
+      case 'cell': cellUi.snap = m as unknown as CellSnap; cellWatchFound = cellWatch.update(cellUi.snap.cells ?? [], cellUi.snap.paging, Date.now()); refreshCell(); break;   // FORK: + rogue-cell watch
       case 'cellDetail': cellUi.detail = m as unknown as CellDetail; refreshCell(true); break;
       case 'cellExport': cellExport(m.csv as string, m.json as string); break;
       case 'cellState': cellSave(m.state); break;
