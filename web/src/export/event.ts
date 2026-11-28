@@ -12,6 +12,7 @@
  *   aprs.station    a station whose state changed                         ← worker 'stations' (Ham Map)
  *   device          an rtl_433-style report (sensor, key, remote)         ← worker 'r433'
  *   ble.adv         a BLE advertising PDU (hex, dB, channel)              ← worker 'ble'
+ *   jam.alert       a jamming alert opening (endS null) or closing       ← worker 'jamAlert'
  */
 
 export interface DecodeEvent {
@@ -55,6 +56,7 @@ export class EventAdapter {
       case 'aisRaw': return [{ ...base(), kind: 'ais.frame', hex: hexOf(m.bytes as number[]), bits: m.bits as number }];
       case 'ax25': return [{ ...base(), kind: 'aprs.frame', hex: hexOf(m.bytes as number[]) }];
       case 'ble': return [{ ...base(), kind: 'ble.adv', hex: hexOf(m.pdu as number[]), data: { db: m.db, ch: m.ch, ...(m.phy ? { phy: m.phy } : {}) } }];
+      case 'jamAlert': { const a = m.alert as Row | undefined; return a ? [{ ...base(), kind: 'jam.alert', text: String(m.band ?? ''), data: { band: m.band, ...a } }] : []; }
       case 'r433': {
         const data = m.data as Row | undefined;
         return data ? [{ ...base(), kind: 'device', data: { ...data } }] : [];

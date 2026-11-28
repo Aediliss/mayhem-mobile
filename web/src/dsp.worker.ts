@@ -11,6 +11,8 @@ import { NavaidProcessor } from './dsp/navaid.js';   // FORK: Navaids
 import { AdslDecoder } from './dsp/adsl/adsl.js';   // FORK: ADS-L
 import { DscDecoder } from './dsp/dsc.js';   // FORK: marine DSC
 import { Beacon406Decoder, HomingProcessor } from './dsp/beacon406/beacon406.js';   // FORK: distress beacons
+import { JamProcessor } from './dsp/jam.js';   // FORK: jamming detection
+import { GpsProcessor } from './dsp/gps/acq.js';   // FORK: GPS L1 monitor
 import { NavtexDecoder } from './dsp/navtex.js';   // FORK: NAVTEX
 import { CarrierMeter } from './dsp/ppm.js';
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
@@ -163,6 +165,8 @@ const dsc = new DscDecoder(emit);   // FORK: marine DSC (dsp/dsc.ts)
 const beacon406 = new Beacon406Decoder(emit);   // FORK: 406 MHz beacons (dsp/beacon406/)
 const homing = new HomingProcessor(emit);   // FORK: 121.5 MHz homing
 const navtex = new NavtexDecoder(emit);   // FORK: NAVTEX (dsp/navtex.ts)
+const jam = new JamProcessor(emit);   // FORK: jamming detection (dsp/jam.ts)
+const gps = new GpsProcessor(emit);   // FORK: GPS L1 monitor (dsp/gps/acq.ts)
 const tpms = new TpmsDecoder(emit);
 const acars = new AcarsDecoder(emit);
 const vdl2 = new Vdl2Decoder(emit);
@@ -492,6 +496,8 @@ drainPort.port1.onmessage = () => {
   while (queue.length && performance.now() - t0 < 8) { const b = queue.shift()!; process(b); if (ackAfter.delete(b)) post({ type: 'iqAck' }); }   // FORK: ack after processing
   armDrain();
 };
+/** Samples processed since the last health line. */
+let dspSamples = 0;
 /** A frequency correction measurement under way (RADIO panel, MEASURE). */
 let meter: CarrierMeter | null = null;
 function armDrain(): void { if (!drainArmed && queue.length) { drainArmed = true; drainPort.port2.postMessage(0); } }
@@ -656,6 +662,8 @@ function makeProcessor(app: string, m: Record<string, unknown>): IqProcessor | n
     case 'beacon406': beacon406.centerHz = centreHz; return beacon406;   // FORK: 406 MHz beacons
     case 'homing': homing.centerHz = centreHz; return homing;   // FORK: 121.5 MHz homing
     case 'navtex': navtex.centerHz = centreHz; return navtex;   // FORK: NAVTEX
+    case 'gps': if (typeof m.gpsClockHz === 'number') gps.setClock(m.gpsClockHz); return gps;   // FORK: GPS L1 monitor
+    case 'jam': jam.retune(Number(m.jamHz) || centreHz, String(m.jamBand ?? '')); return jam;   // FORK: jamming detection (the band and its tuning come with the app)
     case 'navaid': navaid.centerHz = centreHz; navaid.tunedHz = centreHz + offsetHz; return navaid;   // FORK: Navaids
     case 'sonde': sonde.setCenter(centreHz); return sonde;
     case 'uat': return uat;
@@ -703,6 +711,7 @@ async function captureCmd(m: Record<string, unknown>): Promise<void> {
 function process(iq: Int8Array): void {
   const nSamp = iq.length >> 1;
   if (nSamp < 4) return;
+  dspSamples += nSamp;
   const p = processor;
   if (p && (p !== lastProc || rate !== lastProcRate)) { try { p.reset(rate); } catch (e) { emit({ type: 'log', line: `processor reset: ${(e as Error).message}` }); } lastProc = p; lastProcRate = rate; }
   else if (!p) lastProc = null;
@@ -743,6 +752,9 @@ function process(iq: Int8Array): void {
       post({ type: 'signals', list: sigs.map(s => ({ hz: s.hz, db: s.db, snr: s.snr, bw: s.bw6, cls: s.cls, conf: s.conf, val: Math.min(1, Math.max(0, (s.db - base) / SPEC_RANGE_DB)) })) });
     }
     if (now - lastDiag > 1000) {
+      // how much of the radio's real time this second's work covered: under 100% the decoder is falling behind
+      const dspPct = lastDiag ? Math.round(100 * dspSamples / (rate * (now - lastDiag) / 1000)) : 100;
+      dspSamples = 0;
       lastDiag = now;
       let sI = 0, sQ = 0, sSq = 0;
       const nn = Math.min(nSamp, 4096);
@@ -751,9 +763,10 @@ function process(iq: Int8Array): void {
       let peak = -999, peakIdx = 0;
       for (let k = 0; k < bins; k++) if (pdb[k] > peak) { peak = pdb[k]; peakIdx = k; }
       const offKhz = (peakIdx - bins / 2) * (rate / bins) / 1000;
-      const line = `RX: iqRMS=${rms.toFixed(1)} dcI=${(sI / nn).toFixed(1)} dcQ=${(sQ / nn).toFixed(1)} · peak ${offKhz >= 0 ? '+' : ''}${offKhz.toFixed(0)} kHz ${peak.toFixed(0)}dB vs floor ${median.toFixed(0)}dB (Δ${(peak - median).toFixed(0)})`;
+      let line = `RX: iqRMS=${rms.toFixed(1)} dcI=${(sI / nn).toFixed(1)} dcQ=${(sQ / nn).toFixed(1)} · peak ${offKhz >= 0 ? '+' : ''}${offKhz.toFixed(0)} kHz ${peak.toFixed(0)}dB vs floor ${median.toFixed(0)}dB (Δ${(peak - median).toFixed(0)})`;
       // LoRa's gain steers by its strongest burst and its clips (loraAgc in main), measured in the scanner's looks
       const loraLevel = processor === lora ? { ...lora.scanner.takeLevel(), agoMs: lora.scanner.loraAtMs > 0 ? Date.now() - lora.scanner.loraAtMs : -1 } : undefined;
+      if (dspPct < 97) line += ` · DSP ${dspPct}% of real time`;
       post({ type: 'health', line: processor === ham || processor === monitor || processor === hamplus || processor === cb || processor === gmrs || processor === murs ? `${line} · audio chunks ${audioChunks}${audioPort ? '' : ' (NO PORT)'}` : line, levelDb: peak - median, audioPeak, rms, audio: mode !== 'NONE', lora: loraLevel });
       audioPeak = 0;
     }
