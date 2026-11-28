@@ -131,7 +131,7 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | Done | ★ | Item | Reference | License |
 |---|---|---|---|---|
 | [x] | ★ | Jamming detection (319.5/345/433.92/915 MHz, GNSS L1): sustained floor rise / CW carrier → alert card + bus event | own | — |
-| [ ] | ★ | GPS L1 C/A monitor: acquisition (PRN, Doppler, C/N0), jamming + spoofing flags; fix = stretch | IS-GPS-200; GNSS-SDR | spec · GNSS-SDR GPL-3.0 ✔ |
+| [x] | ★ | GPS L1 C/A monitor: acquisition (PRN, Doppler, C/N0), jamming + spoofing flags; fix = stretch (not done) | IS-GPS-200; GNSS-SDR | spec · GNSS-SDR GPL-3.0 ✔ |
 | [ ] | ★ | Rogue cell heuristics on the LTE decoder (identity/metadata only) | 3GPP TS 36.331; SeaGlass/Crocodile Hunter papers | spec · check any code |
 | [ ] | | RF baseline per site + new-emitter alerts, JSON + printable HTML report | own | — |
 | [ ] | | PowerG presence + supervision timing only (encrypted) | own measurements | — |
@@ -1076,6 +1076,24 @@ for "or later" first.
   or a second SDR transmitting into a dummy load next to the receiver (never over the air): a steady carrier on 433.92
   MHz for 5 s → CARRIER; wideband noise → BARRAGE; a swept tone → SWEEP; then a real alarm sensor's test button and a
   key fob held down → nothing.
+- **GPS L1 monitor** (`dsp/gps/acq.ts`; FORK edits in the worker (the processor), main.ts (the GPS Monitor app: status,
+  spoofing flags, the jamming line, satellites with C/N0, Doppler and code phase), radio.ts (APP_NEEDS: 1575.42 MHz at
+  2.048 MS/s); `test/gps.test.ts`): written from IS-GPS-200: the C/A codes (G1, G2 and Table 3-Ia's tap pairs), the
+  parallel code-phase search at 2.048 MS/s (one FFT per millisecond and Doppler bin, one inverse per PRN, 20 ms summed),
+  C/N0 from the peak over the mean. A wide search (±40 kHz in 500 Hz bins: a radio's clock is ±20 ppm at L1) finds the
+  clock; then ±6 kHz around it, so Dopplers are the satellites' own; the search runs in slices of 12 ms CPU per IQ buffer.
+  The jamming detector (dsp/jam.ts) runs on the same IQ. Spoofing flags (heuristics): UNIFORM (4+ satellites within
+  1.5 dB), STRONG (above 51 dB-Hz as measured), DOUBLE (a PRN at two code phases). Found while testing: noise alone
+  reached a peak/mean of 3.9 over the wide search at 10 ms, so 20 ms (noise under 3, threshold 4, about 35 dB-Hz);
+  strong signals leak into other PRNs through the codes' cross-correlation and raise the noise everyone sees, so PRNs
+  more than 15 dB under the strongest are dropped and the STRONG limit is on the measured scale. Tests: PRN 1-10's first
+  10 chips against Table 3-Ia (octal) and every code's 512 ones; five satellites at 38-48 dB-Hz with the clock 18 kHz
+  off: PRN, Doppler (±250 Hz), code phase (±0.6 chip), C/N0 (±3.5 dB); noise finds nothing; a spoofer (five at 62
+  dB-Hz over a real PRN 5) raises UNIFORM, STRONG and DOUBLE; the worker processor on int8 IQ. Browser: the app opens,
+  no console errors. Not done: tracking, navigation data and a position fix; Galileo / GLONASS; a real off-air
+  recording. Hardware: an active GPS patch outdoors with bias-tee power (RTL-SDR Blog V3/V4 or HackRF): 6-10
+  satellites at 35-50 dB-Hz within a minute, the clock offset steady; then a GPS simulator (e.g. gps-sdr-sim into a
+  dummy load, never over the air) should raise UNIFORM / STRONG.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The
