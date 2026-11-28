@@ -111,7 +111,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
 | [ ] | | HF packet (300 Bd), ARDOP; KISS out via export bus | Dire Wolf; ARDOP spec | check |
-| [ ] | | WEFAX; digital SSTV (HamDRM / EasyPal) | Mayhem `wefax_rx`; QSSTV | Mayhem GPL-3.0 ✔ · QSSTV check |
+| [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
+| [ ] | | digital SSTV (HamDRM / EasyPal) | QSSTV | check |
 | [ ] | | 2G ALE (MIL-STD-188-141A), CODAN selcall | spec | spec |
 
 ## Phase 8 — Security and situational awareness
@@ -895,3 +896,21 @@ for "or later" first.
   caption, countdown and WSPR's dials.
   Hardware: as WSPR (FST4W shares its sub-band, 1400-1600 Hz above the WSPR dial): 20 m 14.0956 MHz or 40 m 7.0386
   MHz USB with a wire antenna; spots every two minutes on the even minute; compare with WSJT-X in FST4W mode, T/R 120.
+- **WEFAX** (`dsp/ham/wefax.ts`; FORK edits in the worker (its rows go out as SSTV's picture messages; the LPM
+  option) and main.ts (the DIGITAL tile; SSTV's picture panel with WEFAX's own station and LPM buttons in place of
+  SSTV's; the caption), `test/wefax.test.ts`): written from the published parameters. USB audio, FM around 1900 Hz,
+  black 1500 / white 2300 Hz; 120 LPM by default (60, 90, 240 chosen by hand); a quadrature detector; Goertzel filters
+  on the frequency hear the start signal (300 Hz: IOC 576, 1810 pixels a line; 675 Hz: IOC 288) and the stop signal
+  (450 Hz); the phasing lines' 5 % pulse (either polarity) sets the line start; each line's samples are averaged into
+  its pixels; without a start signal the lines run free. Station buttons: NMF, NMG, NMC, DWD Hamburg, JMH (published
+  carrier frequencies from memory, the dial 1.9 kHz below; check each station's schedule). Tests: a chart (smooth bands
+  that drift down the lines) after 3.37 s of noise: start heard, line start found, start → phasing → image → stop, 118-123
+  lines, mean pixel error under 0.08; IOC 288 told by its 675 Hz start (905 pixels); noise alone hears no start or stop.
+  Measured while building: mean error 0.01 at 30 dB SNR in 2500 Hz to 0.06 at 13 dB, the line start within 2 pixels
+  every time. In Chromium: a WAV of a synthetic chart through AUDIO IN (Ham Radio, USB, MAX speed) gave the start,
+  phasing and stop lines and the chart (grid lines straight, left edge in place) in the picture panel.
+  Not done: slant correction for a sample clock that is off (a few ppm leans the chart slightly), cropping the canvas
+  to the chart's length, a manual line-start shift for charts tuned in mid-way, the schedules themselves.
+  Hardware: a HackRF (or an HF-capable RTL-SDR) with a wire antenna on NMF 6340.5 or 9110 kHz (dial 6338.6 / 9108.1
+  USB) or DWD Hamburg 7880 kHz, at a scheduled chart time: the start tone, phasing and a surface analysis should
+  draw over ~10-20 minutes; compare with fldigi's or SeaTTY's WEFAX on the same audio.
