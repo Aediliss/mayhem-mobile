@@ -45,6 +45,8 @@ export class FileRadio implements Radio {
   readonly delivery = new DeliveryMeter();
   readonly kind = 'file' as const;
   readonly caps = NO_CAPS;
+  /** No crystal to correct: a recording / audio is played as it is. */
+  ppm = 0;
   readonly limits: RadioLimits;
   running = false;
   /** Playback speed: 1 = real time, Infinity = as fast as the worker keeps up. */

@@ -12,6 +12,7 @@ import { AdslDecoder } from './dsp/adsl/adsl.js';   // FORK: ADS-L
 import { DscDecoder } from './dsp/dsc.js';   // FORK: marine DSC
 import { Beacon406Decoder, HomingProcessor } from './dsp/beacon406/beacon406.js';   // FORK: distress beacons
 import { NavtexDecoder } from './dsp/navtex.js';   // FORK: NAVTEX
+import { CarrierMeter } from './dsp/ppm.js';
 import { fft, hann, loadIqAt, accumulatePower, powerDbFrom } from './fft.js';
 import type { Emit, IqProcessor } from './dsp/core.js';
 import { AdsbDecoder } from './dsp/adsb.js';
@@ -33,6 +34,7 @@ import { Vdl2Decoder } from './dsp/vdl2.js';
 import { TrainsProcessor } from './dsp/trains.js';
 import { FleetProcessor, type TgPrefs, type KnownState } from './dsp/fleet/fleet.js';
 import { setPlans, type LcnPlan } from './dsp/fleet/plugins.js';   // FORK: plug-in protocols' channel plans
+import type { OswCustom } from './dsp/fleet/smartnet.js';
 import { AudioFader, MAKEUP } from './dsp/fleet/codec.js';
 import { CellProcessor } from './dsp/cell/cell.js';
 import { AtscProcessor } from './dsp/atsc/atsc.js';
@@ -425,6 +427,8 @@ drainPort.port1.onmessage = () => {
   while (queue.length && performance.now() - t0 < 8) { const b = queue.shift()!; process(b); if (ackAfter.delete(b)) post({ type: 'iqAck' }); }   // FORK: ack after processing
   armDrain();
 };
+/** A frequency correction measurement under way (RADIO panel, MEASURE). */
+let meter: CarrierMeter | null = null;
 function armDrain(): void { if (!drainArmed && queue.length) { drainArmed = true; drainPort.port2.postMessage(0); } }
 function dropQueued(): void { for (const b of queue) if (ackAfter.delete(b)) post({ type: 'iqAck' }); queue.length = 0; }   // FORK: release acks
 /** FORK: queued recording buffers (fileradio.ts) to acknowledge once processed. */
@@ -439,6 +443,7 @@ self.onmessage = (e: MessageEvent) => {
       // at most about 0.2 s of samples waits (whatever the buffer size and rate): the oldest go first, so a slow
       // start never leaves the waterfall and decoders seconds behind
       const b = new Int8Array(m.buf as ArrayBuffer);
+      if (meter && meter.push(b)) { post({ type: 'measured', ...(meter.result() ?? { offsetHz: NaN, snrDb: 0 }) }); meter = null; }
       // only LoRa queues (its channels catch up in bursts); every other app processes each buffer as it arrives,
       // exactly as before the queue existed
       if (processor !== lora && queue.length === 0) { process(b); if (m.ack) post({ type: 'iqAck' }); break; }   // FORK: ack paces fileradio.ts
@@ -478,6 +483,8 @@ self.onmessage = (e: MessageEvent) => {
       else if (m.cmd === 'restore') fleet.restore(m.known as KnownState);
       else if (m.cmd === 'prefs') fleet.setPrefs(m.prefs as TgPrefs);
       else if (m.cmd === 'plans') setPlans(m.plans as LcnPlan[]);   // FORK: EDACS / MPT1327 / LTR channel plans
+      // a Type II channel plan entered (or forgotten) for a control channel: kept on the device at once
+      else if (m.cmd === 'plan') { fleet.setOswPlan(Number(m.ccHz), (m.plan as OswCustom | null) ?? null); emit({ type: 'fleetKnown', known: fleet.known() }); }
       else if (m.cmd === 'audio') { if (!m.on && fleetAudio.on) { const t = fleetFader.tail(); if (t) toAudio(t); } fleetAudio.on = !!m.on; fleetAudio.gain = Math.max(0, Math.min(1.5, Number(m.gain ?? fleetAudio.gain))); }
       else if (m.cmd === 'replay') {
         const pcm = fleet.callAudio(m.key as string);
@@ -555,6 +562,7 @@ self.onmessage = (e: MessageEvent) => {
     case 'digital': setDigital(m.mode as string, m); break;
     case 'js8Speeds': js8.enabled = { ...js8.enabled, ...(m.speeds as Record<string, boolean>) }; break;
     case 'satService': if (typeof m.baud === 'number') g3ruh.setBaud(m.baud); setSatService(m.kind as string); break;
+    case 'measure': meter = m.cancel ? null : new CarrierMeter(rate, m.offset as number, m.half as number, m.seconds as number); break;
     case 'tapFm': fmTap = new Float32Array(Math.round((m.seconds as number) * 50_000)); fmTapN = 0; applyTaps(); fmBurst = !!m.bursts; fmBurstEnd = performance.now() + ((m.wall as number) ?? m.seconds as number) * 1000; fmPre = new Float32Array(20_000); fmPreN = 0; fmHold = 0; fmAcc = 0; fmAccN = 0; fmFloor = 0; fmBurstCount = 0; break;
   }
 };
