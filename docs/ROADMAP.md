@@ -116,7 +116,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | PSK63, PSK125, QPSK31 in Ham Radio → DIGITAL | fldigi src/psk/psk.cxx, src/filters/viterbi.cxx (QPSK) | GPL-3.0-or-later ✔ (COPYING GPLv3; file headers "version 3 or later") |
 | [x] | | Feld Hell in Ham Radio → DIGITAL | the mode's definition (fldigi, the Feld Hell Club); nothing ported | — |
 | [x] | | Olivia and Contestia in Ham Radio → DIGITAL | fldigi src/include/jalocha/pj_mfsk.h, pj_fht.h, pj_gray.h, src/olivia/olivia.cxx | GPL-3.0 ✔ (fldigi COPYING; pj_mfsk.h has no header of its own) |
-| [ ] | | fldigi modes: MFSK16/32, Thor, Domino | fldigi | GPL-3.0 ✔ |
+| [x] | | MFSK16 and MFSK32 in Ham Radio → DIGITAL | fldigi src/mfsk/mfsk.cxx, interleave.cxx, mfskvaricode.cxx, src/include/mfsk.h | GPL-3.0-or-later ✔ (file headers) |
+| [ ] | | fldigi modes: Thor, DominoEX | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
 | [ ] | | HF packet (300 Bd), ARDOP; KISS out via export bus | Dire Wolf; ARDOP spec | check |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
@@ -973,6 +974,15 @@ for "or later" first.
   lost a block when a neighbouring phase briefly led). Tests: Olivia 32/1000, 8/250 and 16/500 clean (all of the text)
   and at −10 dB in 2500 Hz 7 Hz off; Contestia 8/250 (upper case, its set); noise prints nothing. Hardware: Olivia nets
   on 14.072-14.074 / 7.072 MHz USB (8/250 and 16/500 are common); compare with fldigi.
+- **MFSK16 / MFSK32** (`dsp/ham/mfsk.ts`, `dsp/ham/mfsk-varicode.ts`; FORK edits in the worker (two decoders on PSK31's
+  centre buttons, beside PSK63/125 and QPSK31) and main.ts (the DIGITAL tiles); `test/mfsk.test.ts`): after fldigi: 16
+  Gray-coded tones at 8 kHz, 512 / 256 samples a symbol; IZ8BLY's varicode → the K=7 rate-1/2 code (0x6d, 0x4f) → 4 bits
+  a symbol through fldigi's diagonal interleaver (4×4, 10 deep; REV at the receiver). Receiver: one-symbol spectra with
+  half-tone bins every quarter symbol; 4 symbol phases × ±2 tones of offset decoded side by side (soft bits as fldigi,
+  Viterbi, varicode); the text comes from the stream the code fits best (found while testing: picking by the strongest
+  tone chose streams a whole tone off, whose symbols are all wrong), squelched until one tone stands out above noise.
+  Tests: the text clean, MFSK16 at −10 dB and MFSK32 at −8 dB in 2500 Hz 4 Hz off; noise prints (almost) nothing.
+  Hardware: MFSK16 around 14.080 / 7.080 MHz USB (also used for MFSK pictures, not decoded here); compare with fldigi.
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The
