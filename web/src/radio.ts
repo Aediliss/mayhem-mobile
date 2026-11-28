@@ -146,6 +146,7 @@ export const APP_NEEDS: Record<string, AppNeeds> = {
   navaid: { freqHz: 113_900_000 },   // FORK: Navaids (VOR/ILS at VHF, glide path 329-335 MHz, DME 962-1213 MHz: any radio here reaches them)
   navtex: { freqHz: 1_000_000 },   // FORK: NAVTEX: the span at 1 MHz reaches 490/518 kHz (a HackRF; a dongle that samples HF directly)
   jam: { freqHz: 433_920_000 },
+  survey: { freqHz: 433_920_000 },   // FORK: Site Survey (its presets are 315-928 MHz: any radio here)
   gps: { freqHz: 1_575_420_000, rateHz: 2_048_000 },   // FORK: GPS L1 monitor (an RTL-SDR or a HackRF)   // FORK: jamming detection (319.5-915 MHz and GPS L1: any radio here reaches them)
   beacons: { freqHz: 406_045_000 },   // FORK: distress beacons (406 MHz and 121.5 MHz: any radio here reaches both)
   adsl: { freqHz: 868_300_000 },   // FORK: ADS-L (868.2/868.4 MHz: any radio here reaches it)
