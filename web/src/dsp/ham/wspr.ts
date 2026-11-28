@@ -296,11 +296,12 @@ export class WsprFrontEnd {
   private readonly s1: Stage; private readonly s2: Stage;
   /** The output's delay behind the input, seconds. */
   readonly delayS: number;
-  constructor(readonly inRate = 48_000, private readonly out: (i: number, q: number) => void = () => undefined) {
+  /** [outRate]: 375 (WSPR) or 300 (FST4W); 3000 / outRate must be a whole number. */
+  constructor(readonly inRate = 48_000, private readonly out: (i: number, q: number) => void = () => undefined, readonly outRate = 375) {
     const D1 = inRate / 3000;
     this.dr = Math.cos(-2 * Math.PI * AUDIO_CENTRE / inRate); this.di = Math.sin(-2 * Math.PI * AUDIO_CENTRE / inRate);
     this.s1 = new Stage(lowpass(400 / inRate, Math.round(5 * D1) | 1), D1);
-    this.s2 = new Stage(lowpass(190 / 3000, 161), 8);
+    this.s2 = outRate === 375 ? new Stage(lowpass(190 / 3000, 161), 8) : new Stage(lowpass(0.5 * outRate / 3000, 201), Math.round(3000 / outRate));
     this.delayS = this.s1.delay / inRate + this.s2.delay / 3000;
   }
   push(a: ArrayLike<number>, n = a.length): void {
