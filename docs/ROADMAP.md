@@ -109,7 +109,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | ★ | MSK144 (meteor scatter) in Ham Radio → DIGITAL | WSJT-X lib/genmsk_128_90, encode_128_90, crc13.cpp, ldpc_128_90_*, bpdecode128_90, msk144spd / msk144sync / msk144_freq_search / msk144decodeframe | GPL-3.0 ✔ (WSJT-X COPYING) |
 | [x] | ★ | FST4 (15 s to 30 min) and FST4W-300/900/1800 in Ham Radio → DIGITAL | WSJT-X lib/fst4 (ldpc_240_101_*, genfst4's message scrambling), lib/fst4_decode.f90 (the periods' timing) | GPL-3.0 ✔ |
 | [x] | ★ | JT65 (A, B, C) in Ham Radio → DIGITAL | WSJT-X lib/gen65, setup65, interleave63, igray.c, wrapkarn.c, packjt.f90; Karn's init_rs / encode_rs / decode_rs | WSJT-X GPL-3.0 ✔; Karn's RS: "may be used under the terms of the GNU General Public License (GPL)" (no version: any, so 3 ✔) |
-| [ ] | ★ | JT9, Q65, MSK40 short messages | WSJT-X | GPL-3.0 ✔ |
+| [x] | ★ | MSK40 short messages (in MSK144) | WSJT-X lib/genmsk40, encode_msk40, bpdecode40, msk40decodeframe | GPL-3.0 ✔ |
+| [ ] | ★ | JT9, Q65 | WSJT-X | GPL-3.0 ✔ |
 | [ ] | ★ | FreeDV 700D/700E/1600 modems (Codec 2 already in `dsp/hamid/codec2.ts`) | codec2 | LGPL-2.1 ✔ |
 | [ ] | | fldigi modes: Olivia, Contestia, MFSK16/32, Thor, Domino, Hell, PSK63/125, QPSK31 | fldigi | GPL-3.0 ✔ |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
@@ -956,6 +957,16 @@ for "or later" first.
   Hardware: FST4/FST4W are mostly on 2200 m (136 kHz) and 630 m (474.2 kHz), below the HackRF's 1 MHz: an RTL-SDR with
   direct sampling (or an upconverter) and a large antenna; FST4W also on the WSPR dials above 1.8 MHz with a HackRF.
   Compare with WSJT-X in the same mode and T/R period.
+- **MSK40** (in `dsp/ham/msk144.ts`; the frame search generalised over frame length, sync positions and frame decoder;
+  `test/msk144.test.ts`): after WSJT-X. When no MSK144 frame decodes in a ping, its 20 ms frames are tried as MSK40: the
+  reversed sync word, matched-filtered bits, BP over the (32,16) code (bpdecode40's checks, encode_msk40's generator and
+  column order), then msk40decodeframe's tests (≤ 3 sync bits wrong, ≤ 4 code bits off the hard decisions, their summed
+  reliability < 0.65, an R / RRR / 73 report). Shown only when the 12-bit hash (WSJT-X's lookup3 over the 37-character
+  "CALL1 CALL2") matches a pair of calls seen together in an MSK144 decode lately: tried at every offset, a 32-bit code
+  matches by chance (WSJT-X's own sample gave three such "<hash>" decodes when bare hashes were shown, so they are not).
+  Tests: the generator and the parity checks agree for every report and a spread of hashes; after "K1ABC W9XYZ R-09",
+  a "<W9XYZ K1ABC> RRR" ping decodes, and a ping from a pair never seen gives nothing; the two real recordings still give
+  exactly their three messages. Hardware: as MSK144; short messages follow a QSO's full ones.
 - **JT65** (`dsp/ham/jt65.ts`; FORK edits in the worker and main.ts beside FT8's: the DIGITAL tile, A/B/C chips, the HF
   JT65 dials plus 6 m and 2 m EME, the 60 s countdown, its own empty text; not Ham Map spots; `test/jt65.test.ts`):
   after WSJT-X and Karn's RS codec (ported). 60 s slots; 126 symbols of 0.3715 s, the sync tone on the pattern's 63
