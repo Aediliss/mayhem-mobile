@@ -119,7 +119,8 @@ GPL-2.0-only.** "check" means not verified yet: verify before porting any code; 
 | [x] | | MFSK16 and MFSK32 in Ham Radio → DIGITAL | fldigi src/mfsk/mfsk.cxx, interleave.cxx, mfskvaricode.cxx, src/include/mfsk.h | GPL-3.0-or-later ✔ (file headers) |
 | [x] | | DominoEX and Thor in Ham Radio → DIGITAL | fldigi src/dominoex/dominoex.cxx, dominovar.cxx, src/thor/thor.cxx, thorvaricode.cxx | GPL-3.0-or-later ✔ (file headers) |
 | [ ] | | D-STAR slow data + DPRS → Ham Map; Fusion data | DSD-FME; JARL spec | ISC ✔ / spec |
-| [ ] | | HF packet (300 Bd), ARDOP; KISS out via export bus | Dire Wolf; ARDOP spec | check |
+| [x] | | HF packet (300 Bd AX.25) in Ham Radio → DIGITAL; KISS / TNC2 out via the export bus | AX.25 2.2; the HF 1600/1800 Hz convention | spec only (Dire Wolf GPL-2.0-or-later: not ported) |
+| [ ] | | ARDOP monitor (receive only: frame types, 4FSK / PSK / QAM data frames) | ardopcf (pflarue/ardop) | MIT ✔ (LICENSE: Rick Muething, John Wiseman, Peter LaRue); a whole ARQ protocol, own item |
 | [x] | | WEFAX (HF radiofacsimile) in Ham Radio → DIGITAL | the published broadcast parameters (NOAA's radiofacsimile schedules; WMO practice); Mayhem's `wefax_rx` not used | written from the parameters, nothing ported |
 | [ ] | | digital SSTV (HamDRM / EasyPal) | QSSTV | check |
 | [ ] | | 2G ALE (MIL-STD-188-141A), CODAN selcall | spec | spec |
@@ -994,6 +995,16 @@ for "or later" first.
   Tests: DominoEX 11 / 22 / 8 and Thor 11 / 22 / 16 clean and through noise (−3 to −9 dB in 2500 Hz) 47 Hz off; noise
   prints (almost) nothing. Hardware: DominoEX 11 / Thor 11 and 22 on 3.583 / 7.073 / 14.073 MHz USB and NBEMS nets
   (Thor 22 / DominoEX 11 are common there); compare with fldigi.
+- **HF packet** (`dsp/ham/hfpacket.ts`; FORK edits in the worker (the decoder, its text into DIGITAL, each frame posted as
+  `ax25` for the export bus) and main.ts (the DIGITAL tile); `test/hfpacket.test.ts`): written from AX.25 and the HF
+  convention (300 baud, mark 1600 Hz, space 1800 Hz on USB audio): 8 kHz, five tunings −60..+60 Hz each with one-bit
+  sliding DFTs at mark and space, a bit clock and core.ts's HDLC deframer (shared with APRS); good frames de-duplicated
+  by FCS, printed as TNC2 text (connected-mode frames as addresses, the control field and any I-frame text). KISS out:
+  nothing new, the export bus already turns `ax25` messages into `aprs.frame` events and KISS / TNC2 lines. Not done:
+  HF APRS positions on Ham Map; ARDOP (own row). Tests: the Transmit app's AX.25 encoder → 300 Bd AFSK: two frames to
+  TNC2 text and the exact bytes, 45 Hz off tune at 6 dB in 2500 Hz, noise and a corrupted frame give nothing.
+  Hardware: 10.1476 MHz USB (HF APRS, tones 1600/1800) or 14.105 MHz; with EXPORT on in Settings, a KISS sink should
+  get the frames (compare with Dire Wolf on the same audio, `-B 300`).
 - **Feld Hell** (`dsp/ham/hell.ts`; FORK edits in the worker (the strip to SSTV's picture panel, PSK31's
   centre buttons) and main.ts (the DIGITAL tile, the panel without SSTV's or WEFAX's buttons, the caption);
   `test/hell.test.ts`): written from the mode's definition: one keyed tone, 245 pixels a second, 14 to a column. The
